@@ -1,41 +1,34 @@
-//
-//  BetterUITests.swift
-//  BetterUITests
-//
-//  Created by Nikhil Khatale on 04/05/26.
-//
-
 import XCTest
 
 final class BetterUITests: XCTestCase {
-
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testShellRendersFiveTabs() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-    }
+        // All five tabs are present
+        XCTAssertTrue(app.tabBars.buttons["Sleep"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.buttons["Insights"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Protocol"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Alerts"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Settings"].exists)
 
-    @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
-        }
+        // Sleep tab shows the real dashboard (BETTER SLEEP header label)
+        XCTAssertTrue(app.staticTexts["BETTER SLEEP"].waitForExistence(timeout: 5))
+
+        // Phase 6 tabs render their real headers.
+        app.tabBars.buttons["Insights"].tap()
+        XCTAssertTrue(app.staticTexts["Insights"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Protocol"].tap()
+        XCTAssertTrue(app.staticTexts["Protocol"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["Alerts"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.staticTexts["Settings"].waitForExistence(timeout: 3))
     }
 }

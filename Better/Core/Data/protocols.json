@@ -1,0 +1,32 @@
+[
+  {
+    "id": "A1B2C3D4-0000-0000-0000-000000000001",
+    "name": "Magnesium Glycinate",
+    "dose": "400 mg",
+    "benefit": "Supports relaxation and deep sleep consistency",
+    "instructions": "Take 30-60 min before bed with water.",
+    "isActive": true,
+    "sortOrder": 0,
+    "colorHex": "#5E5CE6"
+  },
+  {
+    "id": "A1B2C3D4-0000-0000-0000-000000000002",
+    "name": "Melatonin",
+    "dose": "0.5 mg",
+    "benefit": "Supports sleep onset timing",
+    "instructions": "Take 1-2 hrs before target bedtime.",
+    "isActive": true,
+    "sortOrder": 1,
+    "colorHex": "#64D2FF"
+  },
+  {
+    "id": "A1B2C3D4-0000-0000-0000-000000000003",
+    "name": "L-Theanine",
+    "dose": "200 mg",
+    "benefit": "Supports a calmer wind-down routine",
+    "instructions": "Take with the evening protocol or caffeine-free tea.",
+    "isActive": true,
+    "sortOrder": 2,
+    "colorHex": "#32D74B"
+  }
+]
