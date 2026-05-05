@@ -3,6 +3,8 @@ import UIKit
 
 struct SettingsTabView: View {
     @Bindable var viewModel: SettingsViewModel
+    @State private var exportDocument: ResearchExportDocument?
+    @State private var showExportError = false
 
     var body: some View {
         ZStack {
@@ -24,9 +26,17 @@ struct SettingsTabView: View {
                     ResearchExportView(
                         isResearchMode: viewModel.profile.isResearchMode,
                         isExporting: viewModel.isExporting,
-                        exportURL: viewModel.exportURL
+                        exportURL: viewModel.exportURL,
+                        insightSummary: viewModel.insightSummary
                     ) {
-                        Task { await viewModel.exportRecentCSV() }
+                        Task {
+                            await viewModel.exportRecentCSV()
+                            if let exportURL = viewModel.exportURL {
+                                exportDocument = ResearchExportDocument(url: exportURL)
+                            } else if viewModel.errorMessage != nil {
+                                showExportError = true
+                            }
+                        }
                     }
                     about
                 }
@@ -37,6 +47,15 @@ struct SettingsTabView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.onAppear() }
         .refreshable { await viewModel.loadSettings() }
+        .sheet(item: $exportDocument) { document in
+            ResearchExportDocumentPicker(url: document.url)
+                .ignoresSafeArea()
+        }
+        .alert("Export Failed", isPresented: $showExportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(viewModel.errorMessage ?? "An unknown error occurred.")
+        }
     }
 
     private var header: some View {
@@ -87,6 +106,45 @@ struct SettingsTabView: View {
     private func openAppSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+}
+
+private struct ResearchExportDocument: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct ResearchExportDocumentPicker: UIViewControllerRepresentable {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+        picker.delegate = context.coordinator
+        picker.shouldShowFileExtensions = true
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(dismiss: dismiss)
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let dismiss: DismissAction
+
+        init(dismiss: DismissAction) {
+            self.dismiss = dismiss
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            dismiss()
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            dismiss()
+        }
     }
 }
 

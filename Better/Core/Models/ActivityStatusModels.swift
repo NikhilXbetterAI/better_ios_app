@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-enum UserActivityStatus: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+nonisolated enum UserActivityStatus: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case active
     case traveling
     case sick
@@ -40,6 +40,7 @@ enum UserActivityStatus: String, Codable, CaseIterable, Hashable, Sendable, Iden
         }
     }
 
+    @MainActor
     var accentColor: Color {
         switch self {
         case .active: BetterColors.success
@@ -66,7 +67,7 @@ enum UserActivityStatus: String, Codable, CaseIterable, Hashable, Sendable, Iden
     }
 }
 
-struct ActivityStatusLog: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct ActivityStatusLog: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var dateKey: String
     var status: UserActivityStatus

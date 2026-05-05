@@ -1,6 +1,6 @@
 import Foundation
 
-enum BiometricType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+nonisolated enum BiometricType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case heartRate
     case heartRateVariabilitySDNN
     case oxygenSaturation
@@ -85,7 +85,7 @@ enum BiometricType: String, Codable, CaseIterable, Hashable, Sendable, Identifia
     }
 }
 
-struct BiometricSample: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct BiometricSample: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var type: BiometricType
     var value: Double
@@ -113,7 +113,7 @@ struct BiometricSample: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-enum BiologyMetricKind: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+nonisolated enum BiologyMetricKind: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case vo2Max
     case hrvBaseline
     case restingHeartRateBaseline
@@ -127,7 +127,7 @@ enum BiologyMetricKind: String, Codable, CaseIterable, Hashable, Sendable, Ident
     var id: String { rawValue }
 }
 
-struct BiologyMetric: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct BiologyMetric: Codable, Hashable, Sendable, Identifiable {
     var id: BiologyMetricKind { kind }
     var kind: BiologyMetricKind
     var title: String
@@ -136,6 +136,8 @@ struct BiologyMetric: Codable, Hashable, Sendable, Identifiable {
     var rating: String
     var trend: String
     var history: [Double]
+    /// `true` when the value came from a user-entered manual entry rather than Apple Health.
+    var isManualEntry: Bool
 
     init(
         kind: BiologyMetricKind,
@@ -144,7 +146,8 @@ struct BiologyMetric: Codable, Hashable, Sendable, Identifiable {
         unit: String,
         rating: String,
         trend: String = "Stable",
-        history: [Double] = []
+        history: [Double] = [],
+        isManualEntry: Bool = false
     ) {
         self.kind = kind
         self.title = title
@@ -153,10 +156,11 @@ struct BiologyMetric: Codable, Hashable, Sendable, Identifiable {
         self.rating = rating
         self.trend = trend
         self.history = history
+        self.isManualEntry = isManualEntry
     }
 }
 
-struct ActivityMetricSummary: Codable, Hashable, Sendable {
+nonisolated struct ActivityMetricSummary: Codable, Hashable, Sendable {
     var steps: Double?
     var activeEnergy: Double?
     var exerciseMinutes: Double?
@@ -181,7 +185,7 @@ struct ActivityMetricSummary: Codable, Hashable, Sendable {
     }
 }
 
-struct NightlyBiometricSummary: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct NightlyBiometricSummary: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var sleepSessionID: UUID
     var sleepDateKey: String

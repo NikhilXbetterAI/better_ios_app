@@ -4,8 +4,8 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
     case sleep
     case insights
     case `protocol`
-    case alerts
-    case settings
+    case biology
+    case activity
 
     var id: String { rawValue }
 
@@ -17,10 +17,10 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
             "Insights"
         case .protocol:
             "Protocol"
-        case .alerts:
-            "Alerts"
-        case .settings:
-            "Settings"
+        case .biology:
+            "Biology"
+        case .activity:
+            "Activity"
         }
     }
 
@@ -32,10 +32,10 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
             "chart.bar.xaxis"
         case .protocol:
             "pills.fill"
-        case .alerts:
-            "bell.fill"
-        case .settings:
-            "gearshape.fill"
+        case .biology:
+            "heart.fill"
+        case .activity:
+            "figure.run"
         }
     }
 
@@ -47,10 +47,10 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
             BetterColors.stageCore
         case .protocol:
             BetterColors.brand
-        case .alerts:
-            BetterColors.stageREM
-        case .settings:
-            BetterColors.stageAwake
+        case .biology:
+            BetterColors.heartRate
+        case .activity:
+            BetterColors.activity
         }
     }
 }

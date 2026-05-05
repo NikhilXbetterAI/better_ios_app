@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import HealthKit
 
-protocol HealthKitRepositoryProtocol: Sendable {
+nonisolated protocol HealthKitRepositoryProtocol: Sendable {
     func isHealthDataAvailable() -> Bool
     func requestAuthorization() async throws -> HealthAuthorizationResult
     func fetchSleepSamples(from: Date, to: Date) async throws -> [HKCategorySample]
@@ -12,7 +12,7 @@ protocol HealthKitRepositoryProtocol: Sendable {
     func fetchIncrementalSleepChanges(anchor: Data?) async throws -> HealthKitAnchoredResult
 }
 
-protocol LocalDataRepositoryProtocol: Sendable {
+nonisolated protocol LocalDataRepositoryProtocol: Sendable {
     func saveSessions(_ sessions: [SleepSession]) async throws
     func replaceSessions(_ sessions: [SleepSession], from: Date, to: Date) async throws
     func fetchCachedSessions(from: Date, to: Date) async throws -> [SleepSession]
@@ -21,10 +21,13 @@ protocol LocalDataRepositoryProtocol: Sendable {
     func fetchAvailableSleepDates(from startKey: String, to endKey: String) async throws -> [SleepDaySummary]
     func fetchLatestSession() async throws -> SleepSession?
     func saveBiometricSummary(_ summary: NightlyBiometricSummary) async throws
+    func saveDailyActivitySummary(_ summary: DailyActivitySummary) async throws
+    func fetchDailyActivitySummaries(from startKey: String, to endKey: String) async throws -> [DailyActivitySummary]
     func saveBaseline(_ baseline: SleepBaseline) async throws
     func fetchLatestBaseline(windowDays: Int) async throws -> SleepBaseline?
     func saveAlerts(_ alerts: [SleepAlert]) async throws
     func fetchAlerts(unreadOnly: Bool) async throws -> [SleepAlert]
+    func fetchAlerts(unreadOnly: Bool, fromSleepDateKey: String?, limit: Int?) async throws -> [SleepAlert]
     func markAlertRead(id: UUID) async throws
     func saveAdherence(_ adherence: ProtocolAdherence) async throws
     func fetchAdherence(from: Date, to: Date) async throws -> [ProtocolAdherence]
@@ -35,9 +38,18 @@ protocol LocalDataRepositoryProtocol: Sendable {
     func fetchProfile() async throws -> UserProfile
     func saveSyncAnchor(_ data: Data?, for typeIdentifier: String) async throws
     func fetchSyncAnchor(for typeIdentifier: String) async throws -> Data?
+    func saveManualBiologyEntry(_ entry: ManualBiologyEntry) async throws
+    func fetchManualBiologyEntries() async throws -> [ManualBiologyEntry]
+    func deleteManualBiologyEntry(id: UUID) async throws
 }
 
-struct HealthAuthorizationResult: Sendable, Hashable {
+extension LocalDataRepositoryProtocol {
+    func fetchAlerts(unreadOnly: Bool) async throws -> [SleepAlert] {
+        try await fetchAlerts(unreadOnly: unreadOnly, fromSleepDateKey: nil, limit: nil)
+    }
+}
+
+nonisolated struct HealthAuthorizationResult: Sendable, Hashable {
     var requestCompleted: Bool
     var healthDataAvailable: Bool
     var canQuerySleep: Bool
@@ -56,7 +68,7 @@ struct HealthAuthorizationResult: Sendable, Hashable {
     }
 }
 
-enum HealthAuthorizationPresentationState: Sendable, Hashable {
+nonisolated enum HealthAuthorizationPresentationState: Sendable, Hashable {
     case notRequested
     case healthDataUnavailable
     case requestCompleted
@@ -65,7 +77,7 @@ enum HealthAuthorizationPresentationState: Sendable, Hashable {
     case failed(String)
 }
 
-struct HealthKitChangeEvent: @unchecked Sendable {
+nonisolated struct HealthKitChangeEvent: @unchecked Sendable {
     var typeIdentifier: String
     var occurredAt: Date
     var acknowledge: () -> Void
@@ -81,7 +93,7 @@ struct HealthKitChangeEvent: @unchecked Sendable {
     }
 }
 
-struct HealthKitAnchoredResult: @unchecked Sendable {
+nonisolated struct HealthKitAnchoredResult: @unchecked Sendable {
     var samples: [HKCategorySample]
     var deletedObjects: [HKDeletedObject]
     var newAnchor: Data?

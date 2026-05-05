@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import HealthKit
 
-struct SleepDataProcessor: Sendable {
+nonisolated struct SleepDataProcessor: Sendable {
     static let minimumSleepDuration: TimeInterval = 300
     static let sessionGapThreshold: TimeInterval = 1_800
 
@@ -57,10 +57,10 @@ struct SleepDataProcessor: Sendable {
             respiratoryRateStandardDeviation: Self.standardDeviation(validSessions.compactMap(\.biometrics?.respiratoryRateAverage)),
             oxygenSaturationAverage: Self.average(validSessions.compactMap(\.biometrics?.oxygenSaturationAverage)),
             oxygenSaturationStandardDeviation: Self.standardDeviation(validSessions.compactMap(\.biometrics?.oxygenSaturationAverage)),
-            bedtimeMinuteAverage: Self.average(validSessions.map { minuteOfDay(for: $0.startDate) }),
-            bedtimeMinuteStandardDeviation: Self.standardDeviation(validSessions.map { minuteOfDay(for: $0.startDate) }),
-            wakeMinuteAverage: Self.average(validSessions.map { minuteOfDay(for: $0.endDate) }),
-            wakeMinuteStandardDeviation: Self.standardDeviation(validSessions.map { minuteOfDay(for: $0.endDate) })
+            bedtimeMinuteAverage: Self.circularMeanMinute(validSessions.map { minuteOfDay(for: $0.inBedStartDate ?? $0.startDate) }),
+            bedtimeMinuteStandardDeviation: Self.circularStandardDeviationMinute(validSessions.map { minuteOfDay(for: $0.inBedStartDate ?? $0.startDate) }),
+            wakeMinuteAverage: Self.circularMeanMinute(validSessions.map { minuteOfDay(for: $0.inBedEndDate ?? $0.endDate) }),
+            wakeMinuteStandardDeviation: Self.circularStandardDeviationMinute(validSessions.map { minuteOfDay(for: $0.inBedEndDate ?? $0.endDate) })
         )
     }
 
@@ -90,7 +90,7 @@ struct SleepDataProcessor: Sendable {
     }
 }
 
-private extension SleepDataProcessor {
+nonisolated private extension SleepDataProcessor {
     func process(rawIntervals: [RawSleepInterval]) -> [SleepSession] {
         let cleanedIntervals = Self.cleanedIntervals(from: rawIntervals)
         let groupedIntervals = Self.groupSessions(from: cleanedIntervals)
@@ -255,7 +255,7 @@ private extension SleepDataProcessor {
     }
 }
 
-private extension SleepDataProcessor {
+nonisolated private extension SleepDataProcessor {
     static func rawInterval(from sample: HKCategorySample) -> RawSleepInterval? {
         guard let stage = SleepStageType(healthKitRawValue: sample.value) else {
             return nil
@@ -461,6 +461,32 @@ private extension SleepDataProcessor {
         return sqrt(variance)
     }
 
+    static func circularMeanMinute(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+
+        let radians = values.map { $0 / 1_440 * 2 * Double.pi }
+        let sinAverage = radians.map(sin).reduce(0, +) / Double(radians.count)
+        let cosAverage = radians.map(cos).reduce(0, +) / Double(radians.count)
+        let angle = atan2(sinAverage, cosAverage)
+        let normalizedAngle = angle >= 0 ? angle : angle + 2 * Double.pi
+        let minute = normalizedAngle / (2 * Double.pi) * 1_440
+        return minute >= 1_439.9 ? 0 : minute
+    }
+
+    static func circularStandardDeviationMinute(_ values: [Double]) -> Double {
+        guard values.count > 1 else { return 0 }
+
+        let mean = circularMeanMinute(values)
+        let deltas = values.map { circularMinuteDistance($0, mean) }
+        let variance = deltas.reduce(0) { $0 + pow($1, 2) } / Double(deltas.count)
+        return sqrt(variance)
+    }
+
+    static func circularMinuteDistance(_ lhs: Double, _ rhs: Double) -> Double {
+        let rawDifference = abs(lhs - rhs).truncatingRemainder(dividingBy: 1_440)
+        return min(rawDifference, 1_440 - rawDifference)
+    }
+
     static func median(_ values: [Double]) -> Double? {
         guard !values.isEmpty else { return nil }
         let sorted = values.sorted()
@@ -490,7 +516,7 @@ private extension SleepDataProcessor {
     }
 }
 
-private struct RawSleepInterval: Sendable, Hashable {
+nonisolated private struct RawSleepInterval: Sendable, Hashable {
     var stage: SleepStageType
     var startDate: Date
     var endDate: Date
@@ -520,7 +546,7 @@ private struct RawSleepInterval: Sendable, Hashable {
     }
 }
 
-private struct CleanedSleepInterval: Sendable, Hashable {
+nonisolated private struct CleanedSleepInterval: Sendable, Hashable {
     var stage: SleepStageType
     var startDate: Date
     var endDate: Date
@@ -531,7 +557,7 @@ private struct CleanedSleepInterval: Sendable, Hashable {
     }
 }
 
-private extension SleepStageType {
+nonisolated private extension SleepStageType {
     init?(healthKitRawValue: Int) {
         switch healthKitRawValue {
         case HKCategoryValueSleepAnalysis.inBed.rawValue:
@@ -574,19 +600,19 @@ private extension SleepStageType {
     }
 }
 
-private extension Array where Element == CleanedSleepInterval {
+nonisolated private extension Array where Element == CleanedSleepInterval {
     func duration(for stage: SleepStageType) -> TimeInterval {
         filter { $0.stage == stage }.reduce(0) { $0 + $1.duration }
     }
 }
 
-private extension Array where Element == BiometricSample {
+nonisolated private extension Array where Element == BiometricSample {
     func values(for type: BiometricType) -> [Double] {
         filter { $0.type == type }.map(\.value)
     }
 }
 
-private extension SleepSource {
+nonisolated private extension SleepSource {
     var sourceKey: String {
         [
             name,

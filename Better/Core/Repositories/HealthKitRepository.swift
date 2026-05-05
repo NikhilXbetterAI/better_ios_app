@@ -1,14 +1,14 @@
 import Foundation
 @preconcurrency import HealthKit
 
-enum HealthKitRepositoryError: Error {
+nonisolated enum HealthKitRepositoryError: Error {
     case healthDataUnavailable
     case unsupportedBiometricType(BiometricType)
     case invalidAnchorData
     case unexpectedSampleType
 }
 
-final class HealthKitRepository: HealthKitRepositoryProtocol, @unchecked Sendable {
+nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unchecked Sendable {
     private let healthStore: HKHealthStore
     private let sleepProcessor: SleepDataProcessor
     private let observerLock = NSLock()
@@ -222,7 +222,7 @@ final class HealthKitRepository: HealthKitRepositoryProtocol, @unchecked Sendabl
     }
 }
 
-private extension HealthKitRepository {
+nonisolated extension HealthKitRepository {
     static var sleepType: HKCategoryType {
         HKCategoryType(.sleepAnalysis)
     }
@@ -354,7 +354,7 @@ private extension HealthKitRepository {
     }
 }
 
-private extension SleepSource {
+nonisolated private extension SleepSource {
     var sourceKey: String {
         [
             name,

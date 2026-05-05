@@ -1,6 +1,6 @@
 import Foundation
 
-enum SleepDateKey {
+nonisolated enum SleepDateKey {
     static func calendarDateKey(for date: Date, calendar: Calendar = .current) -> String {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         return String(

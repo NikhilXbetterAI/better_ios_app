@@ -115,8 +115,15 @@ final class LocalDataRepositoryTests: XCTestCase {
     }
 
     @MainActor
-    func testSyncCoordinatorInitialSyncCachesSessionsBaselineBiometricsAndAlerts() async throws {
+    func testSyncCoordinatorInitialSyncCachesSessionsBaselineBiometricsAndSuppressesOlderAlerts() async throws {
         let localRepository = try await makeRepository()
+        try await localRepository.saveProfile(
+            UserProfile(
+                sleepGoalHours: 8,
+                baselineWindowDays: 30,
+                createdAt: Self.date("2026-05-05T00:00:00Z")
+            )
+        )
         let healthRepository = FakeHealthKitRepository(
             sleepSamples: [
                 sample(.inBed, start: "2026-05-03T22:00:00Z", end: "2026-05-04T06:00:00Z"),
@@ -155,7 +162,7 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertEqual(cached[0].sleepDateKey, "2026-05-04")
         XCTAssertEqual(cached[0].biometrics?.heartRateAverage, 58)
         XCTAssertEqual(baseline?.validNights, 1)
-        XCTAssertEqual(alerts.map(\.kind), [.analysisReady])
+        XCTAssertEqual(alerts.map(\.kind), [])
         XCTAssertEqual(coordinator.phase, .idle)
         XCTAssertEqual(coordinator.lastSyncedAt, Self.date("2026-05-04T14:00:00Z"))
     }
@@ -203,6 +210,94 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedBaseline?.validNights, 6)
         XCTAssertEqual(viewModel.selectedBaseline?.totalSleepAverage, 7 * 3_600)
         XCTAssertEqual(viewModel.baselineConfidenceLabel, "warming up")
+    }
+
+    @MainActor
+    func testSleepDashboardLoadsRecentSessionsEndingAtSelectedDate() async throws {
+        let sessions = (1...35).map { day in
+            let end = Self.utcCalendar.date(
+                byAdding: .day,
+                value: day - 1,
+                to: Self.date("2026-04-01T06:00:00Z")
+            )!
+            let start = end.addingTimeInterval(-8 * 3_600)
+            return Self.session(
+                key: SleepDateKey.calendarDateKey(for: end, calendar: Self.utcCalendar),
+                start: start,
+                end: end,
+                score: Double(60 + day)
+            )
+        }
+        let localRepository = MockLocalDataRepository(
+            sessions: sessions,
+            profile: UserProfile(sleepGoalHours: 8, baselineWindowDays: 30)
+        )
+        let coordinator = SyncCoordinator(
+            healthRepository: FakeHealthKitRepository(),
+            localRepository: localRepository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar)
+        )
+        let viewModel = SleepDashboardViewModel(
+            syncCoordinator: coordinator,
+            localRepository: localRepository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar),
+            calendar: Self.utcCalendar
+        )
+
+        await viewModel.selectDate("2026-05-05")
+
+        XCTAssertEqual(viewModel.recentSessions.count, 30)
+        XCTAssertEqual(viewModel.recentSessions.first?.sleepDateKey, "2026-04-06")
+        XCTAssertEqual(viewModel.recentSessions.last?.sleepDateKey, "2026-05-05")
+    }
+
+    func testScheduleChartMetricsAverageSleepTimesAcrossMidnight() {
+        let sessions = [
+            Self.session(
+                key: "2026-05-01",
+                start: Self.date("2026-04-30T23:50:00Z"),
+                end: Self.date("2026-05-01T07:00:00Z")
+            ),
+            Self.session(
+                key: "2026-05-02",
+                start: Self.date("2026-05-02T00:10:00Z"),
+                end: Self.date("2026-05-02T07:00:00Z")
+            )
+        ]
+
+        let metrics = SleepScheduleChartMetrics(sessions: sessions, calendar: Self.utcCalendar)
+        let midnightDistance = min(
+            abs(metrics.bedtimeAverageMinute),
+            abs(metrics.bedtimeAverageMinute - 1_440)
+        )
+
+        XCTAssertLessThan(midnightDistance, 1)
+        XCTAssertEqual(metrics.bedtimeVariationMinutes, 10, accuracy: 0.1)
+        XCTAssertEqual(metrics.wakeAverageMinute, 7 * 60, accuracy: 0.1)
+        XCTAssertEqual(ScheduleConsistencyView.formatMinuteOfDay(metrics.bedtimeAverageMinute), "12:00 AM")
+    }
+
+    func testBiometricHistoryOmitsMissingValues() {
+        let sessions = [
+            Self.session(
+                key: "2026-05-01",
+                start: Self.date("2026-04-30T22:00:00Z"),
+                end: Self.date("2026-05-01T06:00:00Z")
+            ),
+            Self.session(
+                key: "2026-05-02",
+                start: Self.date("2026-05-01T22:00:00Z"),
+                end: Self.date("2026-05-02T06:00:00Z"),
+                biometrics: NightlyBiometricSummary(
+                    sleepSessionID: UUID(),
+                    sleepDateKey: "2026-05-02",
+                    respiratoryRateAverage: 14.4
+                )
+            )
+        ]
+
+        XCTAssertEqual(sessions.biometricTrendPoints { $0.heartRateAverage }, [])
+        XCTAssertEqual(sessions.biometricTrendPoints { $0.respiratoryRateAverage }.map(\.value), [14.4])
     }
 
     @MainActor
@@ -276,6 +371,153 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertEqual(viewModel.comparisonSummary?.previousValidNights, 2)
         XCTAssertEqual(viewModel.comparisonSummary?.percentChange ?? 0, 1.0, accuracy: 0.0001)
     }
+
+    func testActivityStatusLogPersistsAndOverwritesSameDate() async throws {
+        let repository = try await makeRepository()
+        let first = ActivityStatusLog(
+            dateKey: "2026-05-04",
+            status: .traveling,
+            note: "Flight day",
+            createdAt: Self.date("2026-05-04T08:00:00Z"),
+            updatedAt: Self.date("2026-05-04T08:00:00Z")
+        )
+        let replacement = ActivityStatusLog(
+            dateKey: "2026-05-04",
+            status: .jetLagged,
+            note: "Adjusting",
+            createdAt: first.createdAt,
+            updatedAt: Self.date("2026-05-04T20:00:00Z")
+        )
+        let nextDay = ActivityStatusLog(dateKey: "2026-05-05", status: .active)
+
+        try await repository.saveActivityStatusLog(first)
+        try await repository.saveActivityStatusLog(replacement)
+        try await repository.saveActivityStatusLog(nextDay)
+
+        let selected = try await repository.fetchActivityStatusLog(forDateKey: "2026-05-04")
+        let range = try await repository.fetchActivityStatusLogs(from: "2026-05-04", to: "2026-05-05")
+
+        XCTAssertEqual(selected?.status, .jetLagged)
+        XCTAssertEqual(selected?.note, "Adjusting")
+        XCTAssertEqual(range.map(\.dateKey), ["2026-05-04", "2026-05-05"])
+        XCTAssertEqual(range.first?.status, .jetLagged)
+    }
+
+    func testDailyActivitySummaryPersistsOverwritesAndFetchesRange() async throws {
+        let repository = try await makeRepository()
+        let first = DailyActivitySummary(
+            dateKey: "2026-05-04",
+            steps: 8_000,
+            activeEnergy: 300,
+            exerciseMinutes: 20,
+            standHours: 9,
+            flights: 4,
+            distanceMeters: 5_000,
+            generatedAt: Self.date("2026-05-04T12:00:00Z")
+        )
+        let replacement = DailyActivitySummary(
+            dateKey: "2026-05-04",
+            steps: 9_000,
+            activeEnergy: 350,
+            exerciseMinutes: 30,
+            standHours: 10,
+            flights: 5,
+            distanceMeters: 6_000,
+            generatedAt: Self.date("2026-05-04T13:00:00Z")
+        )
+        let nextDay = DailyActivitySummary(dateKey: "2026-05-05", steps: 7_500)
+
+        try await repository.saveDailyActivitySummary(first)
+        try await repository.saveDailyActivitySummary(replacement)
+        try await repository.saveDailyActivitySummary(nextDay)
+
+        let range = try await repository.fetchDailyActivitySummaries(from: "2026-05-04", to: "2026-05-05")
+
+        XCTAssertEqual(range.map(\.dateKey), ["2026-05-04", "2026-05-05"])
+        XCTAssertEqual(range.first?.steps, 9_000)
+        XCTAssertEqual(range.first?.exerciseMinutes, 30)
+    }
+
+    func testHealthKitQuantityMappingIncludesBiologyAndActivityTypes() {
+        let mappedTypes: [BiometricType] = [
+            .vo2Max,
+            .bodyMass,
+            .leanBodyMass,
+            .bodyFatPercentage,
+            .bodyTemperature,
+            .stepCount,
+            .activeEnergyBurned,
+            .appleExerciseTime,
+            .appleStandTime,
+            .flightsClimbed,
+            .distanceWalkingRunning
+        ]
+
+        for type in mappedTypes {
+            XCTAssertNotNil(HealthKitRepository.quantityType(for: type), "\(type) should map to a HealthKit quantity type")
+        }
+    }
+
+    @MainActor
+    func testActivityViewModelSavesManualStatusAndReloadsSelectedDay() async throws {
+        let repository = MockLocalDataRepository(
+            sessions: [
+                Self.session(
+                    key: "2026-05-04",
+                    start: Self.date("2026-05-03T22:00:00Z"),
+                    end: Self.date("2026-05-04T06:00:00Z"),
+                    score: 81
+                )
+            ]
+        )
+        let viewModel = ActivityViewModel(
+            localRepository: repository,
+            healthRepository: FakeHealthKitRepository(),
+            calendar: Self.utcCalendar,
+            now: Self.date("2026-05-04T12:00:00Z")
+        )
+
+        await viewModel.load()
+        await viewModel.saveStatus(.sick, note: "Cold symptoms")
+
+        XCTAssertEqual(viewModel.selectedStatusLog?.status, .sick)
+        XCTAssertEqual(viewModel.selectedStatusLog?.note, "Cold symptoms")
+        XCTAssertEqual(viewModel.weekSummaries.map(\.sleepDateKey), ["2026-05-04"])
+    }
+
+    @MainActor
+    func testBiologyViewModelBuildsPartialDataState() async throws {
+        let session = Self.session(
+            key: "2026-05-04",
+            start: Self.date("2026-05-03T22:00:00Z"),
+            end: Self.date("2026-05-04T06:00:00Z")
+        )
+        let repository = MockLocalDataRepository(sessions: [session], baselines: [PreviewSleepData.sampleBaseline])
+        let healthRepository = FakeHealthKitRepository(
+            biometricSamples: [
+                .vo2Max: [
+                    BiometricSample(
+                        type: .vo2Max,
+                        value: 47,
+                        unit: BiometricType.vo2Max.unitSymbol,
+                        startDate: Self.date("2026-05-04T08:00:00Z"),
+                        endDate: Self.date("2026-05-04T08:01:00Z")
+                    )
+                ]
+            ]
+        )
+        let viewModel = BiologyViewModel(
+            localRepository: repository,
+            healthRepository: healthRepository,
+            calendar: Self.utcCalendar
+        )
+
+        await viewModel.load(now: Self.date("2026-05-04T12:00:00Z"))
+
+        XCTAssertEqual(viewModel.metrics.first { $0.kind == .vo2Max }?.value, 47)
+        XCTAssertEqual(viewModel.metrics.first { $0.kind == .hrvBaseline }?.value, PreviewSleepData.sampleBaseline.hrvAverage)
+        XCTAssertEqual(viewModel.metrics.first { $0.kind == .bodyTemperature }?.rating, "Not available")
+    }
 }
 
 private extension LocalDataRepositoryTests {
@@ -296,13 +538,16 @@ private extension LocalDataRepositoryTests {
         end: Date,
         totalSleep: TimeInterval? = nil,
         score: Double = 82,
-        dataQuality: SleepDataQuality = .detailedStages
+        dataQuality: SleepDataQuality = .detailedStages,
+        biometrics: NightlyBiometricSummary? = nil
     ) -> SleepSession {
         let totalSleep = totalSleep ?? end.timeIntervalSince(start)
         return SleepSession(
             sleepDateKey: key,
             startDate: start,
             endDate: end,
+            inBedStartDate: start,
+            inBedEndDate: end,
             dataQuality: dataQuality,
             totalInBedTime: end.timeIntervalSince(start),
             totalSleepTime: totalSleep,
@@ -314,7 +559,8 @@ private extension LocalDataRepositoryTests {
                 remScore: score,
                 deepScore: score,
                 isPartial: dataQuality == .unspecifiedSleepOnly
-            )
+            ),
+            biometrics: biometrics
         )
     }
 

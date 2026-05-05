@@ -5,45 +5,59 @@ import SwiftUI
 struct ScheduleConsistencyView: View {
     let session: SleepSession
     let baseline: SleepBaseline
+    let recentSessions: [SleepSession]
 
-    private var bedtimeSD: Double { baseline.bedtimeMinuteStandardDeviation }
-    private var wakeSD: Double { baseline.wakeMinuteStandardDeviation }
+    init(
+        session: SleepSession,
+        baseline: SleepBaseline,
+        recentSessions: [SleepSession] = []
+    ) {
+        self.session = session
+        self.baseline = baseline
+        self.recentSessions = recentSessions
+    }
 
-    // Consistency score: 0 = inconsistent (≥60 min SD), 1 = perfect (0 min SD)
-    private func consistencyPct(sd: Double) -> Double {
-        max(0, min(1, 1 - sd / 60))
+    private var metrics: SleepScheduleChartMetrics {
+        let sessions = recentSessions.isEmpty ? [session] : recentSessions
+        return SleepScheduleChartMetrics(sessions: sessions)
     }
 
     var body: some View {
-        VStack(spacing: BetterSpacing.medium) {
-            scheduleRow(
-                label: "Avg Bed Time",
-                timeLabel: formatMinuteOfDay(baseline.bedtimeMinuteAverage),
-                spreadLabel: "±\(Int(bedtimeSD)) min",
-                consistencyPct: consistencyPct(sd: bedtimeSD),
-                color: BetterColors.brand
+        VStack(spacing: BetterSpacing.large) {
+            scheduleChartSection(
+                title: "Sleep time",
+                timeLabel: Self.formatMinuteOfDay(metrics.bedtimeAverageMinute),
+                spreadLabel: "±\(Int(metrics.bedtimeVariationMinutes.rounded())) min",
+                chart: ScheduleDotChart(
+                    points: metrics.bedtimePoints,
+                    averageMinute: metrics.bedtimeAverageMinute,
+                    color: BetterColors.brand
+                )
             )
-            scheduleRow(
-                label: "Avg Wake Time",
-                timeLabel: formatMinuteOfDay(baseline.wakeMinuteAverage),
-                spreadLabel: "±\(Int(wakeSD)) min",
-                consistencyPct: consistencyPct(sd: wakeSD),
-                color: BetterColors.warning
+
+            scheduleChartSection(
+                title: "Wake time",
+                timeLabel: Self.formatMinuteOfDay(metrics.wakeAverageMinute),
+                spreadLabel: "±\(Int(metrics.wakeVariationMinutes.rounded())) min",
+                chart: ScheduleDotChart(
+                    points: metrics.wakePoints,
+                    averageMinute: metrics.wakeAverageMinute,
+                    color: BetterColors.warning
+                )
             )
         }
     }
 
-    private func scheduleRow(
-        label: String,
+    private func scheduleChartSection<ChartContent: View>(
+        title: String,
         timeLabel: String,
         spreadLabel: String,
-        consistencyPct: Double,
-        color: Color
+        chart: ChartContent
     ) -> some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: BetterSpacing.small) {
             HStack {
-                Text(label)
-                    .font(.system(size: 13, design: .rounded))
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(BetterColors.text)
                 Spacer()
                 HStack(spacing: 4) {
@@ -56,36 +70,154 @@ struct ScheduleConsistencyView: View {
                 }
             }
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(BetterColors.cardTertiary)
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(color)
-                        .frame(width: geo.size.width * CGFloat(consistencyPct))
-                }
-            }
-            .frame(height: 7)
-
-            HStack {
-                Text("Inconsistent")
-                    .font(.system(size: 9, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
-                Spacer()
-                Text("Consistent")
-                    .font(.system(size: 9, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
-            }
+            chart
         }
     }
 
-    private func formatMinuteOfDay(_ minuteOfDay: Double) -> String {
-        let totalMinutes = Int(minuteOfDay)
-        let hour = (totalMinutes / 60) % 24
-        let minute = totalMinutes % 60
+    static func formatMinuteOfDay(_ minuteOfDay: Double) -> String {
+        let totalMinutes = Int(minuteOfDay.rounded())
+        let normalizedMinutes = (totalMinutes % 1_440 + 1_440) % 1_440
+        let hour = normalizedMinutes / 60
+        let minute = normalizedMinutes % 60
         let ampm = hour >= 12 ? "PM" : "AM"
         let displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
         return String(format: "%d:%02d %@", displayHour, minute, ampm)
+    }
+}
+
+private struct ScheduleDotChart: View {
+    let points: [SleepScheduleChartPoint]
+    let averageMinute: Double
+    let color: Color
+
+    private var spread: Double {
+        max(45, points.map { abs(SleepScheduleChartMetrics.signedMinuteDistance($0.minuteOfDay, averageMinute)) }.max() ?? 45)
+    }
+
+    var body: some View {
+        if points.isEmpty {
+            Text("No 30-night history yet")
+                .font(.system(size: 12, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+                .frame(maxWidth: .infinity, minHeight: 92)
+                .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            GeometryReader { proxy in
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(BetterColors.cardSecondary)
+                    horizontalGrid(size: proxy.size)
+                    averageRule(size: proxy.size)
+                    ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
+                        Circle()
+                            .fill(color)
+                            .frame(width: 6, height: 6)
+                            .position(position(for: point, at: index, size: proxy.size))
+                    }
+                }
+            }
+            .frame(height: 104)
+        }
+    }
+
+    private func horizontalGrid(size: CGSize) -> some View {
+        Path { path in
+            for step in 1...2 {
+                let y = size.height * CGFloat(step) / 3
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+            }
+        }
+        .stroke(BetterColors.border, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+    }
+
+    private func averageRule(size: CGSize) -> some View {
+        Path { path in
+            let y = size.height / 2
+            path.move(to: CGPoint(x: 0, y: y))
+            path.addLine(to: CGPoint(x: size.width, y: y))
+        }
+        .stroke(BetterColors.text.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+    }
+
+    private func position(for point: SleepScheduleChartPoint, at index: Int, size: CGSize) -> CGPoint {
+        let x = points.count == 1 ? size.width / 2 : size.width * CGFloat(index) / CGFloat(points.count - 1)
+        let offset = SleepScheduleChartMetrics.signedMinuteDistance(point.minuteOfDay, averageMinute)
+        let normalized = min(1, max(-1, offset / spread))
+        let y = size.height / 2 - CGFloat(normalized) * (size.height / 2 - 12)
+        return CGPoint(x: x, y: min(max(12, y), size.height - 12))
+    }
+}
+
+struct SleepScheduleChartPoint: Identifiable, Hashable {
+    var id: String { dateKey }
+    let dateKey: String
+    let minuteOfDay: Double
+}
+
+struct SleepScheduleChartMetrics: Hashable {
+    let bedtimePoints: [SleepScheduleChartPoint]
+    let wakePoints: [SleepScheduleChartPoint]
+    let bedtimeAverageMinute: Double
+    let wakeAverageMinute: Double
+    let bedtimeVariationMinutes: Double
+    let wakeVariationMinutes: Double
+
+    init(sessions: [SleepSession], calendar: Calendar = .current) {
+        let validSessions = sessions
+            .filter { $0.totalSleepTime >= SleepDataProcessor.minimumSleepDuration }
+            .filter { $0.dataQuality != .inBedOnly && $0.dataQuality != .noData }
+            .sorted { $0.sleepDateKey < $1.sleepDateKey }
+            .suffix(30)
+
+        bedtimePoints = validSessions.map {
+            SleepScheduleChartPoint(
+                dateKey: $0.sleepDateKey,
+                minuteOfDay: Self.minuteOfDay(for: $0.inBedStartDate ?? $0.startDate, calendar: calendar)
+            )
+        }
+        wakePoints = validSessions.map {
+            SleepScheduleChartPoint(
+                dateKey: $0.sleepDateKey,
+                minuteOfDay: Self.minuteOfDay(for: $0.inBedEndDate ?? $0.endDate, calendar: calendar)
+            )
+        }
+        bedtimeAverageMinute = Self.circularAverage(bedtimePoints.map(\.minuteOfDay))
+        wakeAverageMinute = Self.circularAverage(wakePoints.map(\.minuteOfDay))
+        bedtimeVariationMinutes = Self.circularVariation(points: bedtimePoints, averageMinute: bedtimeAverageMinute)
+        wakeVariationMinutes = Self.circularVariation(points: wakePoints, averageMinute: wakeAverageMinute)
+    }
+
+    static func minuteOfDay(for date: Date, calendar: Calendar = .current) -> Double {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return Double((components.hour ?? 0) * 60 + (components.minute ?? 0))
+    }
+
+    static func signedMinuteDistance(_ minute: Double, _ reference: Double) -> Double {
+        var difference = (minute - reference).truncatingRemainder(dividingBy: 1_440)
+        if difference > 720 { difference -= 1_440 }
+        if difference < -720 { difference += 1_440 }
+        return difference
+    }
+
+    static func circularAverage(_ minutes: [Double]) -> Double {
+        guard !minutes.isEmpty else { return 0 }
+        let vectors = minutes.reduce((sin: 0.0, cos: 0.0)) { result, minute in
+            let angle = minute / 1_440 * 2 * Double.pi
+            return (result.sin + sin(angle), result.cos + cos(angle))
+        }
+        let angle = atan2(vectors.sin / Double(minutes.count), vectors.cos / Double(minutes.count))
+        let normalized = angle < 0 ? angle + 2 * Double.pi : angle
+        return normalized / (2 * Double.pi) * 1_440
+    }
+
+    private static func circularVariation(points: [SleepScheduleChartPoint], averageMinute: Double) -> Double {
+        guard !points.isEmpty else { return 0 }
+        let meanSquare = points
+            .map { signedMinuteDistance($0.minuteOfDay, averageMinute) }
+            .map { $0 * $0 }
+            .reduce(0, +) / Double(points.count)
+        return sqrt(meanSquare)
     }
 }
 

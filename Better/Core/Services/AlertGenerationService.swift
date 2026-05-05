@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import UserNotifications
 
-struct AlertGenerationSettings: Sendable, Hashable {
+nonisolated struct AlertGenerationSettings: Sendable, Hashable {
     var lowScoreThreshold: Double
     var shortSleepGrace: TimeInterval
     var lowDeepAbsoluteMinimum: TimeInterval
@@ -33,18 +33,18 @@ struct AlertGenerationSettings: Sendable, Hashable {
     )
 }
 
-enum LocalNotificationAuthorizationState: Sendable, Hashable {
+nonisolated enum LocalNotificationAuthorizationState: Sendable, Hashable {
     case notDetermined
     case denied
     case authorized
 }
 
-protocol LocalNotificationScheduling: Sendable {
+nonisolated protocol LocalNotificationScheduling: Sendable {
     func authorizationState() async -> LocalNotificationAuthorizationState
     func scheduleNotification(identifier: String, title: String, body: String) async throws
 }
 
-actor UserNotificationScheduler: LocalNotificationScheduling {
+nonisolated actor UserNotificationScheduler: LocalNotificationScheduling {
     private let center: UNUserNotificationCenter
 
     init(center: UNUserNotificationCenter = .current()) {

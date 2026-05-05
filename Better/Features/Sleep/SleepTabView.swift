@@ -4,7 +4,9 @@ import SwiftUI
 
 struct SleepTabView: View {
     @Bindable var viewModel: SleepDashboardViewModel
+    var onOpenProfile: () -> Void = {}
     @State private var isHistoryPresented = false
+    @State private var isSleepScoreCalculationVisible = false
 
     var body: some View {
         ZStack {
@@ -66,7 +68,7 @@ struct SleepTabView: View {
                     iconColor: BetterColors.brand,
                     defaultExpanded: true,
                     summary: {
-                        SleepScoreBadge(score: Int(session.qualityScore.overall))
+                        SleepScoreBadge(score: healthSleepScore(for: session).overall)
                     },
                     content: {
                         scoreCardContent(session: session)
@@ -119,8 +121,14 @@ struct SleepTabView: View {
                 )
                 .padding(.horizontal, BetterSpacing.screen)
 
-                // ── Heart Rate ──────────────────────────────────────────
-                if let biometrics = session.biometrics, biometrics.heartRateAverage != nil {
+                // ── Sleep Latency ───────────────────────────────────────
+                if session.sleepLatency > 0 {
+                    sleepLatencyCard(session: session)
+                        .padding(.horizontal, BetterSpacing.screen)
+                }
+
+                // ── Heart Rate & Biometrics ─────────────────────────────
+                if let biometrics = session.biometrics {
                     SleepMetricCard(
                         title: "Heart Rate",
                         iconName: "heart.fill",
@@ -129,7 +137,11 @@ struct SleepTabView: View {
                             HeartRateSummary(biometrics: biometrics)
                         },
                         content: {
-                            HeartRateCardContent(biometrics: biometrics, baseline: viewModel.selectedBaseline)
+                            BiometricsTabContent(
+                                biometrics: biometrics,
+                                baseline: viewModel.selectedBaseline,
+                                recentSessions: viewModel.recentSessions
+                            )
                         }
                     )
                     .padding(.horizontal, BetterSpacing.screen)
@@ -152,7 +164,11 @@ struct SleepTabView: View {
                             }
                         },
                         content: {
-                            RespiratoryRateCardContent(rate: rate, baseline: viewModel.selectedBaseline)
+                            RespiratoryRateCardContent(
+                                rate: rate,
+                                baseline: viewModel.selectedBaseline,
+                                recentSessions: viewModel.recentSessions
+                            )
                         }
                     )
                     .padding(.horizontal, BetterSpacing.screen)
@@ -168,7 +184,11 @@ struct SleepTabView: View {
                             ScheduleConsistencySummary(baseline: baseline)
                         },
                         content: {
-                            ScheduleConsistencyView(session: session, baseline: baseline)
+                            ScheduleConsistencyView(
+                                session: session,
+                                baseline: baseline,
+                                recentSessions: viewModel.recentSessions
+                            )
                         }
                     )
                     .padding(.horizontal, BetterSpacing.screen)
@@ -224,20 +244,32 @@ struct SleepTabView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
 
-                Button {
-                    isHistoryPresented = true
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(selectedDateLabel)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
+                HStack(spacing: 8) {
+                    Button {
+                        isHistoryPresented = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "calendar")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(selectedDateLabel)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .bold))
+                        }
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(BetterColors.subtext)
                     }
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
+                    .buttonStyle(.plain)
+
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .tint(BetterColors.brand)
+                            .scaleEffect(0.75)
+                    } else if viewModel.lastSyncedAt != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(BetterColors.success)
+                    }
                 }
-                .buttonStyle(.plain)
             }
 
             Spacer()
@@ -256,22 +288,21 @@ struct SleepTabView: View {
                 .buttonStyle(.plain)
             }
 
-            // Sync status indicator
-            if viewModel.isLoading {
-                ProgressView()
-                    .tint(BetterColors.brand)
-                    .scaleEffect(0.85)
-            } else if let syncedAt = viewModel.lastSyncedAt {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(BetterColors.success)
-                    Text(syncedAt, style: .relative)
-                        .font(.system(size: 9, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
-                }
-            }
+            profileButton
         }
+    }
+
+    private var profileButton: some View {
+        Button { onOpenProfile() } label: {
+            Text("B")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(BetterColors.brand)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Profile")
     }
 
     private var headerNoSession: some View {
@@ -315,6 +346,7 @@ struct SleepTabView: View {
                 }
                 .buttonStyle(.plain)
             }
+            profileButton
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, BetterSpacing.screen)
@@ -332,11 +364,22 @@ struct SleepTabView: View {
     // MARK: - Score card content
 
     private func scoreCardContent(session: SleepSession) -> some View {
-        HStack(alignment: .center, spacing: BetterSpacing.large) {
-            SleepQualityRingView(
-                score: Int(session.qualityScore.overall),
-                isPartial: session.qualityScore.isPartial
-            )
+        let healthScore = healthSleepScore(for: session)
+
+        return HStack(alignment: .center, spacing: BetterSpacing.large) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isSleepScoreCalculationVisible.toggle()
+                }
+            } label: {
+                SleepQualityRingView(
+                    score: healthScore.overall,
+                    isPartial: viewModel.selectedBaseline?.validNights ?? 0 < 5
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Sleep score")
+            .accessibilityHint(isSleepScoreCalculationVisible ? "Hide sleep score calculation" : "Show sleep score calculation")
 
             VStack(spacing: BetterSpacing.small) {
                 metricRow(label: "Time Asleep",  value: formatDuration(session.totalSleepTime))
@@ -344,12 +387,24 @@ struct SleepTabView: View {
                 metricRow(label: "Efficiency",   value: String(format: "%.0f%%", session.efficiency * 100))
                 metricRow(label: "Latency",      value: "\(Int(session.sleepLatency / 60)) min")
 
+                if isSleepScoreCalculationVisible {
+                    Divider().background(BetterColors.border)
+
+                    metricRow(label: "Duration Score", value: "\(healthScore.duration)/50")
+                    metricRow(label: "Bedtime Score", value: "\(healthScore.bedtime)/30")
+                    metricRow(label: "Interruptions", value: "\(healthScore.interruptions)/20")
+                }
+
                 Divider().background(BetterColors.border)
 
-                metricRow(label: "Bed",   value: session.startDate,   icon: "bed.double.fill")
-                metricRow(label: "Wake",  value: session.endDate,     icon: "bolt.fill")
+                metricRow(label: "Bed",   value: session.inBedStartDate ?? session.startDate,   icon: "bed.double.fill")
+                metricRow(label: "Wake",  value: session.inBedEndDate ?? session.endDate,       icon: "bolt.fill")
             }
         }
+    }
+
+    private func healthSleepScore(for session: SleepSession) -> HealthSleepScoreEstimate {
+        HealthSleepScoreEstimator.estimate(session: session, baseline: viewModel.selectedBaseline, sleepGoalHours: viewModel.sleepGoalHours)
     }
 
     private func metricRow(label: String, value: String) -> some View {
@@ -437,31 +492,28 @@ struct SleepTabView: View {
                 sessionEnd: session.endDate
             )
 
+            StageDistributionSummaryView(session: session)
+
             StageLegendRow(showAll: true)
 
             Divider().background(BetterColors.border)
 
-            // Stage bars
-            StageBreakdownView(session: session, baseline: viewModel.selectedBaseline)
+            SleepStageGridView(session: session)
         }
     }
 
     private func stageSummaryBadge(session: SleepSession) -> some View {
-        let items: [(SleepStageType, Int)] = [
-            (.deep,  Int(session.deepDuration / 60)),
-            (.core,  Int(session.coreDuration / 60)),
-            (.rem,   Int(session.remDuration / 60)),
-            (.awake, Int(session.awakeDuration / 60)),
-        ]
-        return HStack(spacing: BetterSpacing.small) {
-            ForEach(items, id: \.0) { type, mins in
-                HStack(spacing: 3) {
-                    Circle().fill(type.color).frame(width: 6, height: 6)
-                    Text("\(mins)m")
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(BetterColors.text)
-                }
-            }
+        HStack(spacing: 5) {
+            Circle()
+                .fill(BetterColors.stageCore)
+                .frame(width: 7, height: 7)
+            Text("Core")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+            Text(formatDuration(session.coreDuration))
+                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(BetterColors.text)
+                .lineLimit(1)
         }
     }
 
@@ -497,12 +549,6 @@ struct SleepTabView: View {
     }
 
     // MARK: - Formatting helpers
-
-    private func formatDuration(_ interval: TimeInterval) -> String {
-        let h = Int(interval) / 3600
-        let m = (Int(interval) % 3600) / 60
-        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-    }
 
     private var selectedDateLabel: String {
         guard let date = SleepDateKey.date(from: viewModel.selectedSleepDateKey) else {
@@ -687,6 +733,321 @@ private struct SleepHistoryCalendarSheet: View {
         guard let month = calendar.date(byAdding: .month, value: value, to: selectedMonth) else { return }
         onMonthChange(month)
     }
+}
+
+// MARK: - Sleep Latency Card
+
+extension SleepTabView {
+    private func sleepLatencyCard(session: SleepSession) -> some View {
+        let rating = SleepLatencyRating(session.sleepLatency)
+        let latencyMin = Int(session.sleepLatency / 60)
+        return SleepMetricCard(
+            title: "Time to Fall Asleep",
+            iconName: "timer",
+            iconColor: rating.color,
+            summary: {
+                HStack(spacing: 6) {
+                    Text("\(latencyMin) min")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(BetterColors.text)
+                    Text(rating.label)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(rating.color)
+                }
+            },
+            content: {
+                SleepLatencyGaugeView(latency: session.sleepLatency)
+            }
+        )
+    }
+}
+
+// MARK: - Sleep Stage Detail Rows
+
+private struct StageDistributionSummaryView: View {
+    let session: SleepSession
+
+    private var total: TimeInterval {
+        max(session.totalSleepTime, 1)
+    }
+
+    var body: some View {
+        HStack(spacing: BetterSpacing.small) {
+            Image(systemName: "waveform.path.ecg")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(BetterColors.brand)
+            Text(summaryText)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, BetterSpacing.medium)
+        .padding(.vertical, BetterSpacing.small)
+        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var summaryText: String {
+        let core = Int(((session.coreDuration / total) * 100).rounded())
+        let rem = Int(((session.remDuration / total) * 100).rounded())
+        let deep = Int(((session.deepDuration / total) * 100).rounded())
+        let awake = Int(((session.awakeDuration / total) * 100).rounded())
+        return "Core \(core)% • REM \(rem)% • Deep \(deep)% • Awake \(awake)%"
+    }
+}
+
+private struct SleepStageGridView: View {
+    let session: SleepSession
+
+    private struct StageItem {
+        let name: String
+        let duration: TimeInterval
+        let color: Color
+    }
+
+    private var items: [StageItem] {
+        [
+            StageItem(name: "Deep", duration: session.deepDuration, color: BetterColors.stageDeep),
+            StageItem(name: "Core", duration: session.coreDuration, color: BetterColors.stageCore),
+            StageItem(name: "REM", duration: session.remDuration, color: BetterColors.stageREM),
+            StageItem(name: "Awake", duration: session.awakeDuration, color: BetterColors.stageAwake),
+        ]
+    }
+
+    var body: some View {
+        VStack(spacing: BetterSpacing.small) {
+            ForEach(items, id: \.name) { item in
+                stageRow(item)
+            }
+        }
+    }
+
+    private func stageRow(_ item: StageItem) -> some View {
+        let pct = session.totalSleepTime > 0 ? min(item.duration / session.totalSleepTime, 1.0) : 0
+        return VStack(spacing: 7) {
+            HStack(spacing: BetterSpacing.small) {
+                Circle()
+                    .fill(item.color)
+                    .frame(width: 8, height: 8)
+                Text(item.name)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(BetterColors.text)
+                    .frame(width: 52, alignment: .leading)
+                Spacer()
+                Text(formatDuration(item.duration))
+                    .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(BetterColors.text)
+                    .frame(width: 58, alignment: .trailing)
+                Text("\(Int((pct * 100).rounded()))%")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(item.color)
+                    .frame(width: 42, alignment: .trailing)
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(BetterColors.cardTertiary)
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(item.color)
+                        .frame(width: max(3, proxy.size.width * CGFloat(pct)))
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(.horizontal, BetterSpacing.medium)
+        .padding(.vertical, 10)
+        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+}
+
+// MARK: - Sleep Latency Gauge
+
+private enum SleepLatencyRating {
+    case fast, normal, late
+
+    init(_ latency: TimeInterval) {
+        if latency < 300 { self = .fast }
+        else if latency < 1200 { self = .normal }
+        else { self = .late }
+    }
+
+    var color: Color {
+        switch self {
+        case .fast:   BetterColors.success
+        case .normal: BetterColors.brand
+        case .late:   BetterColors.warning
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .fast:   "Fast"
+        case .normal: "Normal"
+        case .late:   "Late"
+        }
+    }
+}
+
+private struct SleepLatencyGaugeView: View {
+    let latency: TimeInterval
+
+    private var minutes: Int { Int(latency / 60) }
+    private var position: Double { min(latency / (25 * 60), 1.0) }
+    private var rating: SleepLatencyRating { SleepLatencyRating(latency) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(minutes)")
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .foregroundStyle(BetterColors.text)
+                Text("min")
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .foregroundStyle(BetterColors.subtext)
+                Spacer()
+                Text(rating.label)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(rating.color)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(rating.color.opacity(0.15), in: Capsule())
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(BetterColors.cardSecondary)
+                        .frame(height: 6)
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [BetterColors.success, BetterColors.brand, BetterColors.warning],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geo.size.width, height: 6)
+                    Circle()
+                        .fill(BetterColors.text)
+                        .frame(width: 14, height: 14)
+                        .offset(x: max(0, min(geo.size.width * position - 7, geo.size.width - 14)))
+                }
+            }
+            .frame(height: 14)
+
+            HStack {
+                Text("Fast")
+                Spacer()
+                Text("Normal")
+                Spacer()
+                Text("Late")
+            }
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .foregroundStyle(BetterColors.subtext)
+        }
+    }
+}
+
+// MARK: - Biometrics Tab Content
+
+private enum BiometricTab: String, CaseIterable {
+    case hr   = "HR"
+    case hrv  = "HRV"
+    case rr   = "RR"
+    case spo2 = "SpO2"
+
+    var icon: String {
+        switch self {
+        case .hr:   return "heart.fill"
+        case .hrv:  return "waveform.path.ecg"
+        case .rr:   return "lungs.fill"
+        case .spo2: return "drop.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .hr:   return BetterColors.heartRate
+        case .hrv:  return BetterColors.hrv
+        case .rr:   return BetterColors.brand
+        case .spo2: return BetterColors.cyan
+        }
+    }
+}
+
+private struct BiometricsTabContent: View {
+    let biometrics: NightlyBiometricSummary
+    let baseline: SleepBaseline?
+    let recentSessions: [SleepSession]
+
+    @State private var selectedTab: BiometricTab = .hr
+
+    var body: some View {
+        VStack(spacing: BetterSpacing.large) {
+            HeartRateCardContent(
+                biometrics: biometrics,
+                baseline: baseline,
+                recentSessions: recentSessions
+            )
+
+            HStack(spacing: 4) {
+                ForEach(BiometricTab.allCases, id: \.self) { tab in
+                    tabButton(tab)
+                }
+            }
+            .padding(4)
+            .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private func tabButton(_ tab: BiometricTab) -> some View {
+        let isSelected = tab == selectedTab
+        let value = metricValue(for: tab)
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) { selectedTab = tab }
+        } label: {
+            VStack(spacing: 2) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(tab.rawValue)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                if let v = value {
+                    Text(v)
+                        .font(.system(size: 10, design: .rounded))
+                        .foregroundStyle(isSelected ? tab.color : BetterColors.subtext)
+                }
+            }
+            .foregroundStyle(isSelected ? tab.color : BetterColors.subtext)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                isSelected ? BetterColors.card : Color.clear,
+                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .opacity(value == nil ? 0.35 : 1)
+    }
+
+    private func metricValue(for tab: BiometricTab) -> String? {
+        switch tab {
+        case .hr:   return biometrics.heartRateAverage.map { "\(Int($0)) bpm" }
+        case .hrv:  return biometrics.hrvAverage.map { String(format: "%.0f ms", $0) }
+        case .rr:   return biometrics.respiratoryRateAverage.map { String(format: "%.1f br/min", $0) }
+        case .spo2: return biometrics.oxygenSaturationAverage.map { "\(Int($0 * 100))%" }
+        }
+    }
+}
+
+// MARK: - Shared Formatting
+
+private func formatDuration(_ interval: TimeInterval) -> String {
+    let h = Int(interval) / 3600
+    let m = (Int(interval) % 3600) / 60
+    return h > 0 ? "\(h)h \(m)m" : "\(m)m"
 }
 
 // MARK: - Preview

@@ -4,30 +4,36 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     private var sessionsBySleepDateKey: [String: SleepSession]
     private var summariesBySessionID: [UUID: NightlyBiometricSummary]
     private var baselines: [SleepBaseline]
+    private var dailyActivitySummariesByDateKey: [String: DailyActivitySummary]
     private var alertsByID: [UUID: SleepAlert]
     private var adherenceByKey: [String: ProtocolAdherence]
     private var activityStatusLogsByDateKey: [String: ActivityStatusLog]
     private var profile: UserProfile?
     private var anchorsByTypeIdentifier: [String: Data?]
+    private var manualBiologyEntriesByKind: [BiologyMetricKind: ManualBiologyEntry]
 
     init(
         sessions: [SleepSession] = [],
         summaries: [NightlyBiometricSummary] = [],
+        dailyActivitySummaries: [DailyActivitySummary] = [],
         baselines: [SleepBaseline] = [],
         alerts: [SleepAlert] = [],
         adherence: [ProtocolAdherence] = [],
         activityStatusLogs: [ActivityStatusLog] = [],
         profile: UserProfile? = nil,
-        anchors: [String: Data?] = [:]
+        anchors: [String: Data?] = [:],
+        manualBiologyEntries: [ManualBiologyEntry] = []
     ) {
         self.sessionsBySleepDateKey = Dictionary(sessions.map { ($0.sleepDateKey, $0) }, uniquingKeysWith: { _, new in new })
         self.summariesBySessionID = Dictionary(summaries.map { ($0.sleepSessionID, $0) }, uniquingKeysWith: { _, new in new })
+        self.dailyActivitySummariesByDateKey = Dictionary(dailyActivitySummaries.map { ($0.dateKey, $0) }, uniquingKeysWith: { _, new in new })
         self.baselines = baselines
         self.alertsByID = Dictionary(uniqueKeysWithValues: alerts.map { ($0.id, $0) })
         self.adherenceByKey = Dictionary(uniqueKeysWithValues: adherence.map { (Self.adherenceKey($0), $0) })
         self.activityStatusLogsByDateKey = Dictionary(uniqueKeysWithValues: activityStatusLogs.map { ($0.dateKey, $0) })
         self.profile = profile
         self.anchorsByTypeIdentifier = anchors
+        self.manualBiologyEntriesByKind = Dictionary(uniqueKeysWithValues: manualBiologyEntries.map { ($0.kind, $0) })
     }
 
     func saveSessions(_ sessions: [SleepSession]) async throws {
@@ -86,6 +92,16 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
         summariesBySessionID[summary.sleepSessionID] = summary
     }
 
+    func saveDailyActivitySummary(_ summary: DailyActivitySummary) async throws {
+        dailyActivitySummariesByDateKey[summary.dateKey] = summary
+    }
+
+    func fetchDailyActivitySummaries(from startKey: String, to endKey: String) async throws -> [DailyActivitySummary] {
+        dailyActivitySummariesByDateKey.values
+            .filter { $0.dateKey >= startKey && $0.dateKey <= endKey }
+            .sorted { $0.dateKey < $1.dateKey }
+    }
+
     func saveBaseline(_ baseline: SleepBaseline) async throws {
         baselines.removeAll { $0.id == baseline.id }
         baselines.append(baseline)
@@ -104,9 +120,21 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     }
 
     func fetchAlerts(unreadOnly: Bool) async throws -> [SleepAlert] {
-        alertsByID.values
+        try await fetchAlerts(unreadOnly: unreadOnly, fromSleepDateKey: nil, limit: nil)
+    }
+
+    func fetchAlerts(unreadOnly: Bool, fromSleepDateKey: String?, limit: Int?) async throws -> [SleepAlert] {
+        let filtered = alertsByID.values
             .filter { unreadOnly ? !$0.isRead : true }
+            .filter { alert in
+                guard let startKey = fromSleepDateKey else { return true }
+                guard let sleepDateKey = alert.sleepDateKey else { return false }
+                return sleepDateKey >= startKey
+            }
             .sorted { $0.createdAt > $1.createdAt }
+
+        guard let limit else { return filtered }
+        return Array(filtered.prefix(max(0, limit)))
     }
 
     func markAlertRead(id: UUID) async throws {
@@ -163,9 +191,23 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     func fetchSyncAnchor(for typeIdentifier: String) async throws -> Data? {
         anchorsByTypeIdentifier[typeIdentifier] ?? nil
     }
+
+    // MARK: - Manual Biology Entries
+
+    func saveManualBiologyEntry(_ entry: ManualBiologyEntry) async throws {
+        manualBiologyEntriesByKind[entry.kind] = entry
+    }
+
+    func fetchManualBiologyEntries() async throws -> [ManualBiologyEntry] {
+        Array(manualBiologyEntriesByKind.values).sorted { $0.enteredAt > $1.enteredAt }
+    }
+
+    func deleteManualBiologyEntry(id: UUID) async throws {
+        manualBiologyEntriesByKind = manualBiologyEntriesByKind.filter { $0.value.id != id }
+    }
 }
 
-private extension MockLocalDataRepository {
+nonisolated private extension MockLocalDataRepository {
     static func adherenceKey(_ adherence: ProtocolAdherence) -> String {
         "\(adherence.protocolID)|\(adherence.dateKey)"
     }

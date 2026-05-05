@@ -62,13 +62,22 @@ struct TrendChartPoint: Identifiable, Sendable {
     let date: Date
     let dateKey: String
     let value: Double
+    let details: TrendPointDetails
 
-    init(date: Date, dateKey: String, value: Double) {
+    init(date: Date, dateKey: String, value: Double, details: TrendPointDetails) {
         self.id = UUID()
         self.date = date
         self.dateKey = dateKey
         self.value = value
+        self.details = details
     }
+}
+
+struct TrendPointDetails: Sendable, Hashable {
+    let totalSleep: TimeInterval
+    let timeInBed: TimeInterval
+    let efficiency: Double
+    let score: SleepQualityScore
 }
 
 struct StageCompositionPoint: Identifiable, Sendable {
@@ -79,8 +88,23 @@ struct StageCompositionPoint: Identifiable, Sendable {
     let corePercent: Double
     let remPercent: Double
     let awakePercent: Double
+    let deepDuration: TimeInterval
+    let coreDuration: TimeInterval
+    let remDuration: TimeInterval
+    let awakeDuration: TimeInterval
 
-    init(date: Date, dateKey: String, deepPercent: Double, corePercent: Double, remPercent: Double, awakePercent: Double) {
+    init(
+        date: Date,
+        dateKey: String,
+        deepPercent: Double,
+        corePercent: Double,
+        remPercent: Double,
+        awakePercent: Double,
+        deepDuration: TimeInterval,
+        coreDuration: TimeInterval,
+        remDuration: TimeInterval,
+        awakeDuration: TimeInterval
+    ) {
         self.id = UUID()
         self.date = date
         self.dateKey = dateKey
@@ -88,6 +112,10 @@ struct StageCompositionPoint: Identifiable, Sendable {
         self.corePercent = corePercent
         self.remPercent = remPercent
         self.awakePercent = awakePercent
+        self.deepDuration = deepDuration
+        self.coreDuration = coreDuration
+        self.remDuration = remDuration
+        self.awakeDuration = awakeDuration
     }
 }
 
@@ -166,7 +194,17 @@ private extension TrendsViewModel {
     func updateChartPoints() {
         chartPoints = sessions.compactMap { session in
             guard let value = metricValue(for: session) else { return nil }
-            return TrendChartPoint(date: session.startDate, dateKey: session.sleepDateKey, value: value)
+            return TrendChartPoint(
+                date: session.startDate,
+                dateKey: session.sleepDateKey,
+                value: value,
+                details: TrendPointDetails(
+                    totalSleep: session.totalSleepTime,
+                    timeInBed: session.totalInBedTime,
+                    efficiency: session.efficiency,
+                    score: session.qualityScore
+                )
+            )
         }
     }
 
@@ -180,7 +218,11 @@ private extension TrendsViewModel {
                 deepPercent: session.deepDuration / total,
                 corePercent: session.coreDuration / total,
                 remPercent: session.remDuration / total,
-                awakePercent: session.awakeDuration / total
+                awakePercent: session.awakeDuration / total,
+                deepDuration: session.deepDuration,
+                coreDuration: session.coreDuration,
+                remDuration: session.remDuration,
+                awakeDuration: session.awakeDuration
             )
         }
     }

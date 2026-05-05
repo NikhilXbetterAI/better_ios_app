@@ -1,6 +1,6 @@
 import Foundation
 
-enum SleepAlertKind: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+nonisolated enum SleepAlertKind: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case analysisReady
     case lowScore
     case lowDeepSleep
@@ -43,7 +43,7 @@ enum SleepAlertKind: String, Codable, CaseIterable, Hashable, Sendable, Identifi
     }
 }
 
-struct SleepAlert: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct SleepAlert: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var kind: SleepAlertKind
     var title: String
@@ -77,7 +77,7 @@ struct SleepAlert: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-struct ProtocolItem: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct ProtocolItem: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var name: String
     var dose: String
@@ -108,7 +108,7 @@ struct ProtocolItem: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-struct ProtocolAdherence: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct ProtocolAdherence: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var protocolID: String
     var dateKey: String
@@ -139,7 +139,7 @@ struct ProtocolAdherence: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-struct UserProfile: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct UserProfile: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var sleepGoalHours: Double
     var baselineWindowDays: Int

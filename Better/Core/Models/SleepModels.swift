@@ -1,6 +1,6 @@
 import Foundation
 
-enum SleepStageType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+nonisolated enum SleepStageType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case inBed
     case unspecified
     case awake
@@ -37,7 +37,7 @@ enum SleepStageType: String, Codable, CaseIterable, Hashable, Sendable, Identifi
     }
 }
 
-enum SleepDataQuality: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+nonisolated enum SleepDataQuality: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case detailedStages
     case unspecifiedSleepOnly
     case inBedOnly
@@ -62,7 +62,7 @@ enum SleepDataQuality: String, Codable, CaseIterable, Hashable, Sendable, Identi
     }
 }
 
-struct SleepSource: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct SleepSource: Codable, Hashable, Sendable, Identifiable {
     var id: UUID = UUID()
     var name: String
     var bundleIdentifier: String?
@@ -87,7 +87,7 @@ struct SleepSource: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-struct SleepStage: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct SleepStage: Codable, Hashable, Sendable, Identifiable {
     var id: UUID = UUID()
     var type: SleepStageType
     var startDate: Date
@@ -109,7 +109,7 @@ struct SleepStage: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-struct SleepQualityScore: Codable, Hashable, Sendable {
+nonisolated struct SleepQualityScore: Codable, Hashable, Sendable {
     var overall: Double
     var durationScore: Double
     var efficiencyScore: Double
@@ -127,7 +127,7 @@ struct SleepQualityScore: Codable, Hashable, Sendable {
     )
 }
 
-struct SleepSession: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct SleepSession: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var sleepDateKey: String
     var startDate: Date
@@ -197,7 +197,7 @@ struct SleepSession: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-struct SleepDaySummary: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct SleepDaySummary: Codable, Hashable, Sendable, Identifiable {
     var id: String { sleepDateKey }
     var sleepDateKey: String
     var score: Double?
@@ -220,7 +220,70 @@ struct SleepDaySummary: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-struct SleepBaseline: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct HealthSleepScoreEstimate: Hashable, Sendable {
+    var overall: Int
+    var duration: Int
+    var bedtime: Int
+    var interruptions: Int
+}
+
+nonisolated enum HealthSleepScoreEstimator {
+    static func estimate(
+        session: SleepSession,
+        baseline: SleepBaseline?,
+        sleepGoalHours: Double = 8.0,
+        calendar: Calendar = .current
+    ) -> HealthSleepScoreEstimate {
+        let duration = durationComponent(totalSleepTime: session.totalSleepTime, sleepGoalHours: sleepGoalHours)
+        let bedtime = bedtimeComponent(session: session, baseline: baseline, calendar: calendar)
+        let interruptions = interruptionsComponent(session: session)
+
+        return HealthSleepScoreEstimate(
+            overall: duration + bedtime + interruptions,
+            duration: duration,
+            bedtime: bedtime,
+            interruptions: interruptions
+        )
+    }
+
+    private static func durationComponent(totalSleepTime: TimeInterval, sleepGoalHours: Double) -> Int {
+        let targetSleepSeconds = sleepGoalHours * 3_600
+        return clamp(Int((totalSleepTime / targetSleepSeconds * 50).rounded()), lower: 0, upper: 50)
+    }
+
+    private static func bedtimeComponent(
+        session: SleepSession,
+        baseline: SleepBaseline?,
+        calendar: Calendar
+    ) -> Int {
+        guard let baseline, baseline.validNights >= 5 else { return 0 }
+
+        let bedMinute = minuteOfDay(for: session.inBedStartDate ?? session.startDate, calendar: calendar)
+        let deviation = circularMinuteDistance(bedMinute, baseline.bedtimeMinuteAverage)
+        return clamp(Int(((1 - deviation / 166) * 30).rounded()), lower: 0, upper: 30)
+    }
+
+    private static func interruptionsComponent(session: SleepSession) -> Int {
+        let wasoPenalty = min(20, max(0, (session.waso - 5 * 60) / (55 * 60) * 20))
+        return clamp(Int((20 - wasoPenalty).rounded()), lower: 0, upper: 20)
+    }
+
+    private static func minuteOfDay(for date: Date, calendar: Calendar) -> Double {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return Double((components.hour ?? 0) * 60 + (components.minute ?? 0))
+    }
+
+    private static func circularMinuteDistance(_ lhs: Double, _ rhs: Double) -> Double {
+        let rawDifference = abs(lhs - rhs).truncatingRemainder(dividingBy: 1_440)
+        return min(rawDifference, 1_440 - rawDifference)
+    }
+
+    private static func clamp(_ value: Int, lower: Int, upper: Int) -> Int {
+        min(upper, max(lower, value))
+    }
+}
+
+nonisolated struct SleepBaseline: Codable, Hashable, Sendable, Identifiable {
     var id: UUID
     var windowDays: Int
     var generatedAt: Date

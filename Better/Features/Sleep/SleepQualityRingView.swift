@@ -11,6 +11,7 @@ struct SleepQualityRingView: View {
         case 90...: BetterColors.success
         case 80...: BetterColors.brand
         case 70...: BetterColors.warning
+        case 50...: BetterColors.warning
         default:    BetterColors.danger
         }
     }
@@ -18,9 +19,10 @@ struct SleepQualityRingView: View {
     private var label: String {
         switch score {
         case 90...: "Excellent"
-        case 80...: "Good"
-        case 70...: "Fair"
-        default:    "Poor"
+        case 80...: "High"
+        case 70...: "Good"
+        case 50...: "OK"
+        default:    "Low"
         }
     }
 
@@ -77,6 +79,7 @@ struct SleepScoreBadge: View {
         case 90...: BetterColors.success
         case 80...: BetterColors.brand
         case 70...: BetterColors.warning
+        case 50...: BetterColors.warning
         default:    BetterColors.danger
         }
     }
@@ -95,9 +98,10 @@ struct SleepScoreBadge: View {
     private var scoreLabel: String {
         switch score {
         case 90...: "Excellent"
-        case 80...: "Good"
-        case 70...: "Fair"
-        default:    "Poor"
+        case 80...: "High"
+        case 70...: "Good"
+        case 50...: "OK"
+        default:    "Low"
         }
     }
 }

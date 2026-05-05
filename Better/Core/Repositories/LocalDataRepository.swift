@@ -110,6 +110,33 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.save()
     }
 
+    func saveDailyActivitySummary(_ summary: DailyActivitySummary) async throws {
+        let dateKey = summary.dateKey
+        let descriptor = FetchDescriptor<StoredDailyActivitySummary>(
+            predicate: #Predicate { stored in
+                stored.dateKey == dateKey
+            }
+        )
+
+        for storedSummary in try modelContext.fetch(descriptor) {
+            modelContext.delete(storedSummary)
+        }
+
+        modelContext.insert(StoredDailyActivitySummary(domain: summary))
+        try modelContext.save()
+    }
+
+    func fetchDailyActivitySummaries(from startKey: String, to endKey: String) async throws -> [DailyActivitySummary] {
+        let descriptor = FetchDescriptor<StoredDailyActivitySummary>(
+            predicate: #Predicate { summary in
+                summary.dateKey >= startKey && summary.dateKey <= endKey
+            },
+            sortBy: [SortDescriptor(\.dateKey)]
+        )
+
+        return try modelContext.fetch(descriptor).map { $0.toDomain() }
+    }
+
     func saveBaseline(_ baseline: SleepBaseline) async throws {
         let id = baseline.id
         let descriptor = FetchDescriptor<StoredBaseline>(
@@ -158,6 +185,10 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
     }
 
     func fetchAlerts(unreadOnly: Bool) async throws -> [SleepAlert] {
+        try await fetchAlerts(unreadOnly: unreadOnly, fromSleepDateKey: nil, limit: nil)
+    }
+
+    func fetchAlerts(unreadOnly: Bool, fromSleepDateKey: String?, limit: Int?) async throws -> [SleepAlert] {
         let descriptor: FetchDescriptor<StoredAlert>
         if unreadOnly {
             descriptor = FetchDescriptor<StoredAlert>(
@@ -172,7 +203,20 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             )
         }
 
-        return try modelContext.fetch(descriptor).map { $0.toDomain() }
+        var limitedDescriptor = descriptor
+        if fromSleepDateKey == nil, let limit {
+            limitedDescriptor.fetchLimit = max(0, limit)
+        }
+
+        let alerts = try modelContext.fetch(limitedDescriptor).map { $0.toDomain() }
+        let filteredAlerts = alerts.filter { alert in
+            guard let fromSleepDateKey else { return true }
+            guard let sleepDateKey = alert.sleepDateKey else { return false }
+            return sleepDateKey >= fromSleepDateKey
+        }
+
+        guard let limit else { return filteredAlerts }
+        return Array(filteredAlerts.prefix(max(0, limit)))
     }
 
     func markAlertRead(id: UUID) async throws {
@@ -317,6 +361,41 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
 
         return try modelContext.fetch(descriptor).first?.anchorData
     }
+
+    // MARK: - Manual Biology Entries
+
+    func saveManualBiologyEntry(_ entry: ManualBiologyEntry) async throws {
+        let kindRaw = entry.kind.rawValue
+        let descriptor = FetchDescriptor<StoredManualBiologyEntry>(
+            predicate: #Predicate { stored in
+                stored.kindRawValue == kindRaw
+            }
+        )
+        for existing in try modelContext.fetch(descriptor) {
+            modelContext.delete(existing)
+        }
+        modelContext.insert(StoredManualBiologyEntry(domain: entry))
+        try modelContext.save()
+    }
+
+    func fetchManualBiologyEntries() async throws -> [ManualBiologyEntry] {
+        let descriptor = FetchDescriptor<StoredManualBiologyEntry>(
+            sortBy: [SortDescriptor(\.enteredAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor).compactMap { $0.toDomain() }
+    }
+
+    func deleteManualBiologyEntry(id: UUID) async throws {
+        let descriptor = FetchDescriptor<StoredManualBiologyEntry>(
+            predicate: #Predicate { stored in
+                stored.id == id
+            }
+        )
+        for existing in try modelContext.fetch(descriptor) {
+            modelContext.delete(existing)
+        }
+        try modelContext.save()
+    }
 }
 
 private extension LocalDataRepository {
@@ -334,7 +413,7 @@ private extension LocalDataRepository {
         }
     }
 
-    static func dateKey(for date: Date) -> String {
+    nonisolated static func dateKey(for date: Date) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
         let components = calendar.dateComponents([.year, .month, .day], from: date)

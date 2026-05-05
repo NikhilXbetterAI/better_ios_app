@@ -8,9 +8,12 @@ struct RootTabView: View {
     @State private var protocolViewModel: ProtocolViewModel
     @State private var alertsViewModel: AlertsViewModel
     @State private var settingsViewModel: SettingsViewModel
+    @State private var biologyViewModel: BiologyViewModel
+    @State private var activityViewModel: ActivityViewModel
     @State private var onboardingViewModel: OnboardingViewModel
     @State private var hasLoadedProfile = false
     @State private var hasCompletedOnboarding = false
+    @State private var secondarySheet: SecondarySheet?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -31,6 +34,14 @@ struct RootTabView: View {
             localRepository: environment.localRepository,
             healthRepository: environment.healthRepository,
             syncCoordinator: environment.syncCoordinator
+        ))
+        _biologyViewModel = State(initialValue: BiologyViewModel(
+            localRepository: environment.localRepository,
+            healthRepository: environment.healthRepository
+        ))
+        _activityViewModel = State(initialValue: ActivityViewModel(
+            localRepository: environment.localRepository,
+            healthRepository: environment.healthRepository
         ))
         _onboardingViewModel = State(initialValue: OnboardingViewModel(
             localRepository: environment.localRepository,
@@ -71,7 +82,10 @@ struct RootTabView: View {
         TabView(selection: $selectedTab) {
             // ── Sleep ────────────────────────────────────────────────────
             NavigationStack {
-                SleepTabView(viewModel: sleepViewModel)
+                SleepTabView(
+                    viewModel: sleepViewModel,
+                    onOpenProfile: { secondarySheet = .settings }
+                )
             }
             .tabItem { Label(AppTab.sleep.title, systemImage: AppTab.sleep.systemImageName) }
             .tag(AppTab.sleep)
@@ -93,21 +107,39 @@ struct RootTabView: View {
             .tabItem { Label(AppTab.protocol.title, systemImage: AppTab.protocol.systemImageName) }
             .tag(AppTab.protocol)
 
-            // ── Alerts ───────────────────────────────────────────────────
+            // ── Biology ─────────────────────────────────────────────────
             NavigationStack {
-                AlertsTabView(viewModel: alertsViewModel)
+                BiologyTabView(viewModel: biologyViewModel)
             }
-            .tabItem { Label(AppTab.alerts.title, systemImage: AppTab.alerts.systemImageName) }
-            .tag(AppTab.alerts)
+            .tabItem { Label(AppTab.biology.title, systemImage: AppTab.biology.systemImageName) }
+            .tag(AppTab.biology)
 
-            // ── Settings ─────────────────────────────────────────────────
+            // ── Activity ────────────────────────────────────────────────
             NavigationStack {
-                SettingsTabView(viewModel: settingsViewModel)
+                ActivityTabView(
+                    viewModel: activityViewModel,
+                    onOpenAlerts: { secondarySheet = .alerts }
+                )
             }
-            .tabItem { Label(AppTab.settings.title, systemImage: AppTab.settings.systemImageName) }
-            .tag(AppTab.settings)
+            .tabItem { Label(AppTab.activity.title, systemImage: AppTab.activity.systemImageName) }
+            .tag(AppTab.activity)
         }
         .tint(BetterColors.brand)
+        .onChange(of: sleepViewModel.selectedSleepDateKey) { _, newKey in
+            if let date = SleepDateKey.date(from: newKey) {
+                Task { await activityViewModel.selectDate(date) }
+            }
+        }
+        .sheet(item: $secondarySheet) { sheet in
+            NavigationStack {
+                switch sheet {
+                case .alerts:
+                    AlertsTabView(viewModel: alertsViewModel)
+                case .settings:
+                    SettingsTabView(viewModel: settingsViewModel)
+                }
+            }
+        }
         .task {
             await protocolViewModel.onAppear()
         }
@@ -124,6 +156,13 @@ struct RootTabView: View {
         }
         hasLoadedProfile = true
     }
+}
+
+private enum SecondarySheet: String, Identifiable {
+    case alerts
+    case settings
+
+    var id: String { rawValue }
 }
 
 #Preview("Root Tabs") {

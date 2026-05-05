@@ -23,7 +23,9 @@ final class BiologyViewModel {
     }
 
     func onAppear(now: Date = Date()) async {
-        guard metrics.isEmpty else { return }
+        guard !isLoading else { return }
+        let hasData = metrics.contains { $0.value != nil }
+        guard !hasData else { return }
         await load(now: now)
     }
 
@@ -32,31 +34,56 @@ final class BiologyViewModel {
         errorMessage = nil
 
         let start = calendar.date(byAdding: .day, value: -30, to: now) ?? now.addingTimeInterval(-30 * 86_400)
+
+        // Fetch manual entries unconditionally — they must survive HealthKit failures.
+        let manualEntries = (try? await localRepository.fetchManualBiologyEntries()) ?? []
+
         do {
             async let vo2 = samples(for: .vo2Max, from: start, to: now)
             async let weight = samples(for: .bodyMass, from: start, to: now)
             async let leanMass = samples(for: .leanBodyMass, from: start, to: now)
             async let bodyFat = samples(for: .bodyFatPercentage, from: start, to: now)
             async let bodyTemp = samples(for: .bodyTemperature, from: start, to: now)
+            async let rhr = samples(for: .restingHeartRate, from: start, to: now)
+            let sessions = try await localRepository.fetchCachedSessions(from: start, to: now)
             let latestSession = try await localRepository.fetchLatestSession()
             let profile = try await localRepository.fetchProfile()
             let baseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
 
-            metrics = try await makeMetrics(
+            var built = try await makeMetrics(
                 vo2: vo2,
                 weight: weight,
                 leanMass: leanMass,
                 bodyFat: bodyFat,
                 bodyTemp: bodyTemp,
+                rhr: rhr,
+                sessions: sessions,
                 latestSession: latestSession,
                 baseline: baseline
             )
+            metrics = mergeManualEntries(manualEntries, into: built)
         } catch {
             errorMessage = error.localizedDescription
-            metrics = Self.placeholderMetrics
+            // Still apply any saved manual entries so user-entered values remain visible.
+            metrics = mergeManualEntries(manualEntries, into: Self.placeholderMetrics)
         }
 
         isLoading = false
+    }
+
+    /// Saves a user-provided value for a metric kind and refreshes the metrics list.
+    func saveManualEntry(kind: BiologyMetricKind, value: Double) async {
+        let entry = ManualBiologyEntry(kind: kind, value: value)
+        try? await localRepository.saveManualBiologyEntry(entry)
+        await load()
+    }
+
+    /// Deletes the stored manual entry for a metric kind and refreshes.
+    func deleteManualEntry(kind: BiologyMetricKind) async {
+        if let entry = try? await localRepository.fetchManualBiologyEntries().first(where: { $0.kind == kind }) {
+            try? await localRepository.deleteManualBiologyEntry(id: entry.id)
+        }
+        await load()
     }
 }
 
@@ -71,10 +98,17 @@ private extension BiologyViewModel {
         leanMass: [BiometricSample],
         bodyFat: [BiometricSample],
         bodyTemp: [BiometricSample],
+        rhr: [BiometricSample],
+        sessions: [SleepSession],
         latestSession: SleepSession?,
         baseline: SleepBaseline?
     ) -> [BiologyMetric] {
         let biometrics = latestSession?.biometrics
+        let sortedSessions = sessions.sorted { $0.startDate < $1.startDate }
+        let hrvHistory  = Array(sortedSessions.suffix(12).compactMap { $0.biometrics?.hrvAverage })
+        let o2History   = Array(sortedSessions.suffix(12).compactMap { $0.biometrics?.oxygenSaturationAverage }.map(percentValue))
+        let respHistory = Array(sortedSessions.suffix(12).compactMap { $0.biometrics?.respiratoryRateAverage })
+
         return [
             BiologyMetric(
                 kind: .vo2Max,
@@ -91,17 +125,17 @@ private extension BiologyViewModel {
                 value: biometrics?.hrvAverage ?? baseline?.hrvAverage,
                 unit: "ms",
                 rating: hrvRating(biometrics?.hrvAverage ?? baseline?.hrvAverage),
-                trend: "Stabilizing",
-                history: syntheticHistory(around: biometrics?.hrvAverage ?? baseline?.hrvAverage)
+                trend: trendFromValues(hrvHistory),
+                history: hrvHistory
             ),
             BiologyMetric(
                 kind: .restingHeartRateBaseline,
                 title: "RHR Baselines",
-                value: restingHeartRateFallback(latestSession: latestSession),
+                value: latestValue(rhr),
                 unit: "bpm",
-                rating: rhrRating(restingHeartRateFallback(latestSession: latestSession)),
-                trend: "Stable",
-                history: syntheticHistory(around: restingHeartRateFallback(latestSession: latestSession))
+                rating: rhrRating(latestValue(rhr)),
+                trend: trend(for: rhr),
+                history: history(rhr)
             ),
             BiologyMetric(
                 kind: .weight,
@@ -136,8 +170,8 @@ private extension BiologyViewModel {
                 value: percentValue(biometrics?.oxygenSaturationAverage ?? baseline?.oxygenSaturationAverage),
                 unit: "%",
                 rating: oxygenRating(percentValue(biometrics?.oxygenSaturationAverage ?? baseline?.oxygenSaturationAverage)),
-                trend: "Normal",
-                history: syntheticHistory(around: percentValue(biometrics?.oxygenSaturationAverage ?? baseline?.oxygenSaturationAverage))
+                trend: trendFromValues(o2History),
+                history: o2History
             ),
             BiologyMetric(
                 kind: .respiratoryRate,
@@ -145,8 +179,8 @@ private extension BiologyViewModel {
                 value: biometrics?.respiratoryRateAverage ?? baseline?.respiratoryRateAverage,
                 unit: "br/min",
                 rating: "Normal",
-                trend: "Stable",
-                history: syntheticHistory(around: biometrics?.respiratoryRateAverage ?? baseline?.respiratoryRateAverage)
+                trend: trendFromValues(respHistory),
+                history: respHistory
             ),
             BiologyMetric(
                 kind: .bodyTemperature,
@@ -158,6 +192,25 @@ private extension BiologyViewModel {
                 history: history(bodyTemp)
             )
         ]
+    }
+
+    /// For every metric whose value is nil, substitute the most-recent manual entry (if one exists).
+    /// HealthKit values always take precedence — manual entries only fill gaps.
+    func mergeManualEntries(_ entries: [ManualBiologyEntry], into metrics: [BiologyMetric]) -> [BiologyMetric] {
+        let byKind = Dictionary(entries.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
+        return metrics.map { metric in
+            guard metric.value == nil, let manual = byKind[metric.kind] else { return metric }
+            return BiologyMetric(
+                kind: metric.kind,
+                title: metric.title,
+                value: manual.value,
+                unit: metric.unit,
+                rating: metric.rating,
+                trend: "Manual",
+                history: metric.history,
+                isManualEntry: true
+            )
+        }
     }
 
     func latestValue(_ samples: [BiometricSample]) -> Double? {
@@ -177,9 +230,11 @@ private extension BiologyViewModel {
         value <= 1 ? value * 100 : value
     }
 
-    func syntheticHistory(around value: Double?) -> [Double] {
-        guard let value else { return [] }
-        return [-0.08, -0.04, -0.02, 0.01, -0.01, 0.02, 0.0].map { value * (1 + $0) }
+    func trendFromValues(_ values: [Double]) -> String {
+        guard let first = values.first, let last = values.last, values.count > 1 else { return "No trend" }
+        if last > first * 1.02 { return "Increasing" }
+        if last < first * 0.98 { return "Decreasing" }
+        return "Stable"
     }
 
     func trend(for samples: [BiometricSample]) -> String {
@@ -190,17 +245,13 @@ private extension BiologyViewModel {
         return "Stable"
     }
 
-    func restingHeartRateFallback(latestSession: SleepSession?) -> Double? {
-        latestSession?.biometrics?.heartRateAverage
-    }
-
     func vo2Rating(_ value: Double?) -> String {
         guard let value else { return "No data" }
         switch value {
-        case ..<35: "Low"
-        case ..<45: "Fair"
-        case ..<55: "Good"
-        default: "Excellent"
+        case ..<35: return "Low"
+        case ..<45: return "Fair"
+        case ..<55: return "Good"
+        default: return "Excellent"
         }
     }
 

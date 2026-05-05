@@ -1,0 +1,402 @@
+import Foundation
+
+nonisolated struct ResearchAnalysisService: Sendable {
+    private let localRepository: LocalDataRepositoryProtocol
+    private let healthRepository: HealthKitRepositoryProtocol
+    private let calendar: Calendar
+
+    init(
+        localRepository: LocalDataRepositoryProtocol,
+        healthRepository: HealthKitRepositoryProtocol,
+        calendar: Calendar = .current
+    ) {
+        self.localRepository = localRepository
+        self.healthRepository = healthRepository
+        self.calendar = calendar
+    }
+
+    func buildExportPackage(
+        from startDate: Date,
+        to endDate: Date,
+        protocolItems: [ProtocolItem] = ProtocolCatalog.load(),
+        generatedAt: Date = Date()
+    ) async throws -> ResearchExportPackage {
+        let sessions = try await localRepository.fetchCachedSessions(from: startDate, to: endDate)
+        let profile = try await localRepository.fetchProfile()
+        let baseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
+        let adherence = try await localRepository.fetchAdherence(from: startDate, to: endDate)
+
+        let startKey = SleepDateKey.calendarDateKey(for: startDate, calendar: calendar)
+        let endKey = SleepDateKey.calendarDateKey(for: endDate, calendar: calendar)
+        let statusLogs = try await localRepository.fetchActivityStatusLogs(from: startKey, to: endKey)
+        let activitySummaries = try await loadActivitySummaries(from: startDate, to: endDate)
+
+        let rows = buildNightlyRows(
+            sessions: sessions,
+            adherence: adherence,
+            statusLogs: statusLogs,
+            activitySummaries: activitySummaries,
+            baseline: baseline,
+            protocolItems: protocolItems
+        )
+        let summaries = buildProtocolSummaries(rows: rows, protocolItems: protocolItems)
+        let insight = buildInsightSummary(rows: rows, summaries: summaries, generatedAt: generatedAt)
+
+        return ResearchExportPackage(
+            generatedAt: generatedAt,
+            rangeStart: startDate,
+            rangeEnd: endDate,
+            baselineWindowDays: profile.baselineWindowDays,
+            baselineValidNights: baseline?.validNights ?? 0,
+            isResearchMode: profile.isResearchMode,
+            nightlyRows: rows,
+            protocolSummaries: summaries,
+            insightSummary: insight
+        )
+    }
+}
+
+nonisolated private extension ResearchAnalysisService {
+    func buildNightlyRows(
+        sessions: [SleepSession],
+        adherence: [ProtocolAdherence],
+        statusLogs: [ActivityStatusLog],
+        activitySummaries: [DailyActivitySummary],
+        baseline: SleepBaseline?,
+        protocolItems: [ProtocolItem]
+    ) -> [NightlyResearchRow] {
+        let adherenceByDate = Dictionary(grouping: adherence.filter(\.taken), by: \.dateKey)
+        let statusByDate = Dictionary(uniqueKeysWithValues: statusLogs.map { ($0.dateKey, $0) })
+        let activityByDate = Dictionary(uniqueKeysWithValues: activitySummaries.map { ($0.dateKey, $0) })
+        let protocolNameByID = Dictionary(uniqueKeysWithValues: protocolItems.map { ($0.id.uuidString, $0.name) })
+
+        return sessions.sorted { $0.sleepDateKey < $1.sleepDateKey }.map { session in
+            let taken = adherenceByDate[session.sleepDateKey, default: []].sorted { lhs, rhs in
+                (lhs.takenAt ?? lhs.updatedAt) < (rhs.takenAt ?? rhs.updatedAt)
+            }
+            let status = statusByDate[session.sleepDateKey]
+            let activity = activityByDate[session.sleepDateKey]
+            let biometrics = session.biometrics
+            let hasDetailedStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
+
+            return NightlyResearchRow(
+                sleepDateKey: session.sleepDateKey,
+                sleepStart: session.startDate,
+                sleepEnd: session.endDate,
+                dataQuality: session.dataQuality,
+                totalSleepHours: session.totalSleepTime / 3_600,
+                inBedHours: session.totalInBedTime / 3_600,
+                efficiencyPercent: session.efficiency * 100,
+                deepHours: hasDetailedStages ? session.deepDuration / 3_600 : nil,
+                remHours: hasDetailedStages ? session.remDuration / 3_600 : nil,
+                coreHours: hasDetailedStages ? session.coreDuration / 3_600 : nil,
+                awakeHours: session.awakeDuration / 3_600,
+                wasoMinutes: session.waso / 60,
+                latencyMinutes: session.sleepLatency / 60,
+                sleepScore: session.qualityScore.overall,
+                durationScore: session.qualityScore.durationScore,
+                efficiencyScore: session.qualityScore.efficiencyScore,
+                remScore: session.qualityScore.remScore,
+                deepScore: session.qualityScore.deepScore,
+                hrvAverage: biometrics?.hrvAverage,
+                hrvMedian: biometrics?.hrvMedian,
+                heartRateAverage: biometrics?.heartRateAverage,
+                heartRateMinimum: biometrics?.heartRateMinimum,
+                heartRateMaximum: biometrics?.heartRateMaximum,
+                respiratoryRateAverage: biometrics?.respiratoryRateAverage,
+                oxygenSaturationAveragePercent: biometrics?.oxygenSaturationAverage.map { $0 * 100 },
+                oxygenSaturationMinimumPercent: biometrics?.oxygenSaturationMinimum.map { $0 * 100 },
+                steps: activity?.steps,
+                activeEnergyKcal: activity?.activeEnergy,
+                exerciseMinutes: activity?.exerciseMinutes,
+                standHours: activity?.standHours,
+                distanceMeters: activity?.distanceMeters,
+                activityStatus: status?.status,
+                isJetLagged: status?.status == .jetLagged,
+                activityNote: status?.note,
+                protocolTakenAny: !taken.isEmpty,
+                protocolIDsTaken: taken.map(\.protocolID),
+                protocolNamesTaken: taken.map { protocolNameByID[$0.protocolID] ?? $0.protocolID },
+                protocolTakenAt: taken.compactMap(\.takenAt),
+                minutesFromProtocolToSleep: taken.compactMap { adherence in
+                    adherence.takenAt.map { session.startDate.timeIntervalSince($0) / 60 }
+                },
+                baselineTotalSleepDeltaHours: baseline.map { (session.totalSleepTime - $0.totalSleepAverage) / 3_600 },
+                baselineEfficiencyDeltaPercent: baseline.map { (session.efficiency - $0.efficiencyAverage) * 100 },
+                baselineWASODeltaMinutes: baseline.map { (session.waso - $0.wasoAverage) / 60 },
+                baselineLatencyDeltaMinutes: baseline.map { (session.sleepLatency - $0.latencyAverage) / 60 },
+                baselineHRVDelta: baseline.flatMap { baseline in
+                    biometrics?.hrvAverage.map { $0 - baseline.hrvAverage }
+                },
+                sourceNames: session.sources.map(\.name)
+            )
+        }
+    }
+
+    func buildProtocolSummaries(rows: [NightlyResearchRow], protocolItems: [ProtocolItem]) -> [ProtocolEffectSummary] {
+        let any = effectSummary(
+            protocolID: "any_protocol",
+            protocolName: "Any Protocol",
+            rows: rows,
+            isTaken: { $0.protocolTakenAny }
+        )
+
+        let perProtocol = protocolItems.map { item in
+            effectSummary(
+                protocolID: item.id.uuidString,
+                protocolName: item.name,
+                rows: rows,
+                isTaken: { $0.protocolIDsTaken.contains(item.id.uuidString) }
+            )
+        }
+
+        return ([any] + perProtocol).sorted { lhs, rhs in
+            if lhs.protocolID == "any_protocol" { return true }
+            if rhs.protocolID == "any_protocol" { return false }
+            return lhs.protocolName < rhs.protocolName
+        }
+    }
+
+    func effectSummary(
+        protocolID: String,
+        protocolName: String,
+        rows: [NightlyResearchRow],
+        isTaken: (NightlyResearchRow) -> Bool
+    ) -> ProtocolEffectSummary {
+        let takenRows = rows.filter(isTaken)
+        let missedRows = rows.filter { !isTaken($0) }
+        let adjustedTakenRows = takenRows.filter { !$0.isConfounded }
+        let adjustedMissedRows = missedRows.filter { !$0.isConfounded }
+
+        let caveats = caveats(takenRows: takenRows, missedRows: missedRows, allRows: rows)
+        let confidence = confidence(takenRows: takenRows, missedRows: missedRows, caveats: caveats)
+
+        let (earlyRows, optimalRows, lateRows) = timingBuckets(protocolID: protocolID, takenRows: takenRows)
+        let minBucketSize = 5
+
+        return ProtocolEffectSummary(
+            protocolID: protocolID,
+            protocolName: protocolName,
+            takenNightCount: takenRows.count,
+            missedNightCount: missedRows.count,
+            sleepDifferenceHours: difference(takenRows.map(\.totalSleepHours), missedRows.map(\.totalSleepHours)),
+            scoreDifference: difference(takenRows.map(\.sleepScore), missedRows.map(\.sleepScore)),
+            efficiencyDifferencePercent: difference(takenRows.map(\.efficiencyPercent), missedRows.map(\.efficiencyPercent)),
+            wasoDifferenceMinutes: difference(takenRows.map(\.wasoMinutes), missedRows.map(\.wasoMinutes)),
+            latencyDifferenceMinutes: difference(takenRows.map(\.latencyMinutes), missedRows.map(\.latencyMinutes)),
+            hrvDifference: difference(takenRows.compactMap(\.hrvAverage), missedRows.compactMap(\.hrvAverage)),
+            jetLagAdjustedSleepDifferenceHours: difference(
+                adjustedTakenRows.map(\.totalSleepHours),
+                adjustedMissedRows.map(\.totalSleepHours)
+            ),
+            earlyTimingSleepDelta: earlyRows.count >= minBucketSize && missedRows.count >= minBucketSize
+                ? difference(earlyRows.map(\.totalSleepHours), missedRows.map(\.totalSleepHours))
+                : nil,
+            optimalTimingSleepDelta: optimalRows.count >= minBucketSize && missedRows.count >= minBucketSize
+                ? difference(optimalRows.map(\.totalSleepHours), missedRows.map(\.totalSleepHours))
+                : nil,
+            lateTimingSleepDelta: lateRows.count >= minBucketSize && missedRows.count >= minBucketSize
+                ? difference(lateRows.map(\.totalSleepHours), missedRows.map(\.totalSleepHours))
+                : nil,
+            confidence: confidence,
+            caveats: caveats
+        )
+    }
+
+    func timingBuckets(protocolID: String, takenRows: [NightlyResearchRow]) -> (early: [NightlyResearchRow], optimal: [NightlyResearchRow], late: [NightlyResearchRow]) {
+        guard protocolID != "any_protocol" else { return ([], [], []) }
+
+        var early: [NightlyResearchRow] = []
+        var optimal: [NightlyResearchRow] = []
+        var late: [NightlyResearchRow] = []
+
+        for row in takenRows {
+            guard let idx = row.protocolIDsTaken.firstIndex(of: protocolID),
+                  idx < row.minutesFromProtocolToSleep.count else { continue }
+            let minutes = row.minutesFromProtocolToSleep[idx]
+            guard minutes >= 0 else { continue }
+            if minutes > 180 { early.append(row) }
+            else if minutes >= 60 { optimal.append(row) }
+            else { late.append(row) }
+        }
+
+        return (early, optimal, late)
+    }
+
+    func buildInsightSummary(
+        rows: [NightlyResearchRow],
+        summaries: [ProtocolEffectSummary],
+        generatedAt: Date
+    ) -> ResearchInsightSummary {
+        let eligible = summaries
+            .filter { $0.protocolID != "any_protocol" }
+            .filter { $0.confidence != .insufficient }
+            .compactMap { summary -> ProtocolEffectSummary? in
+                guard let delta = summary.sleepDifferenceHours, delta > 0 else { return nil }
+                return summary
+            }
+            .sorted { ($0.sleepDifferenceHours ?? 0) > ($1.sleepDifferenceHours ?? 0) }
+        let best = eligible.first
+        let baselineAverage = average(rows.compactMap(\.baselineTotalSleepDeltaHours))
+        let confoundedCount = rows.filter(\.isTravelConfounded).count
+        let confounderNote = confoundedCount > 0
+            ? "\(confoundedCount) night\(confoundedCount == 1 ? "" : "s") included travel or jet-lag context."
+            : nil
+
+        let summary: String
+        if let best, let delta = best.sleepDifferenceHours {
+            summary = "\(best.protocolName) is associated with \(Self.formatHours(delta)) more sleep on observed nights. Treat this as observational, not causal."
+        } else if rows.count >= 5 {
+            summary = "No protocol has enough positive signal yet. Keep logging protocol timing and activity context."
+        } else {
+            summary = "More logged nights are needed before protocol effects can be interpreted."
+        }
+
+        return ResearchInsightSummary(
+            generatedAt: generatedAt,
+            validNightCount: rows.count,
+            bestProtocolName: best?.protocolName,
+            bestProtocolSleepDifferenceHours: best?.sleepDifferenceHours,
+            confidence: best?.confidence ?? .insufficient,
+            baselineSleepDifferenceHours: baselineAverage,
+            confounderNote: confounderNote,
+            summary: summary
+        )
+    }
+
+    func loadActivitySummaries(from startDate: Date, to endDate: Date) async throws -> [DailyActivitySummary] {
+        let startKey = SleepDateKey.calendarDateKey(for: startDate, calendar: calendar)
+        let endKey = SleepDateKey.calendarDateKey(for: endDate, calendar: calendar)
+        var summariesByKey = Dictionary(
+            uniqueKeysWithValues: try await localRepository
+                .fetchDailyActivitySummaries(from: startKey, to: endKey)
+                .map { ($0.dateKey, $0) }
+        )
+
+        for date in calendarDates(from: startDate, to: endDate) {
+            let key = SleepDateKey.calendarDateKey(for: date, calendar: calendar)
+            guard summariesByKey[key] == nil else { continue }
+            let summary = await fetchActivitySummary(for: date, dateKey: key)
+            try? await localRepository.saveDailyActivitySummary(summary)
+            summariesByKey[key] = summary
+        }
+
+        return summariesByKey.values.sorted { $0.dateKey < $1.dateKey }
+    }
+
+    func fetchActivitySummary(for date: Date, dateKey: String) async -> DailyActivitySummary {
+        let start = calendar.startOfDay(for: date)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+
+        async let steps = trySum(.stepCount, from: start, to: end)
+        async let energy = trySum(.activeEnergyBurned, from: start, to: end)
+        async let exercise = trySum(.appleExerciseTime, from: start, to: end)
+        async let stand = trySum(.appleStandTime, from: start, to: end)
+        async let flights = trySum(.flightsClimbed, from: start, to: end)
+        async let distance = trySum(.distanceWalkingRunning, from: start, to: end)
+
+        return await DailyActivitySummary(
+            dateKey: dateKey,
+            steps: steps,
+            activeEnergy: energy,
+            exerciseMinutes: exercise,
+            standHours: stand.map { $0 / 60 },
+            flights: flights,
+            distanceMeters: distance
+        )
+    }
+
+    func trySum(_ type: BiometricType, from start: Date, to end: Date) async -> Double? {
+        try? await sum(type, from: start, to: end)
+    }
+
+    func sum(_ type: BiometricType, from start: Date, to end: Date) async throws -> Double? {
+        let samples = try await healthRepository.fetchBiometrics(for: type, from: start, to: end)
+        guard !samples.isEmpty else { return nil }
+        return samples.map(\.value).reduce(0, +)
+    }
+
+    func calendarDates(from startDate: Date, to endDate: Date) -> [Date] {
+        var dates: [Date] = []
+        var current = calendar.startOfDay(for: startDate)
+        let end = calendar.startOfDay(for: endDate)
+        while current <= end {
+            dates.append(current)
+            current = calendar.date(byAdding: .day, value: 1, to: current) ?? current.addingTimeInterval(86_400)
+        }
+        return dates
+    }
+
+    func caveats(
+        takenRows: [NightlyResearchRow],
+        missedRows: [NightlyResearchRow],
+        allRows: [NightlyResearchRow]
+    ) -> [String] {
+        var caveats: [String] = []
+        if takenRows.count < 5 || missedRows.count < 5 {
+            caveats.append("Low sample size")
+        }
+        if allRows.contains(where: \.isTravelConfounded) {
+            caveats.append("Travel or jet-lag nights present")
+        }
+        if allRows.contains(where: { $0.activityStatus == .sick || $0.activityStatus == .injured }) {
+            caveats.append("Sick or injured nights present")
+        }
+        if takenRows.contains(where: { $0.protocolTakenAt.isEmpty }) {
+            caveats.append("Some protocol timing is missing")
+        }
+        if allRows.contains(where: { $0.hrvAverage == nil || $0.respiratoryRateAverage == nil }) {
+            caveats.append("Some biometrics are missing")
+        }
+        if allRows.contains(where: { $0.dataQuality != .detailedStages }) {
+            caveats.append("Some nights do not have detailed sleep stages")
+        }
+        if allRows.contains(where: { $0.dataQuality == .mixedSources || $0.dataQuality == .inBedOnly }) {
+            caveats.append("Some nights include mixed-source or in-bed-only data")
+        }
+        return caveats
+    }
+
+    func confidence(
+        takenRows: [NightlyResearchRow],
+        missedRows: [NightlyResearchRow],
+        caveats: [String]
+    ) -> AnalysisConfidence {
+        guard takenRows.count >= 5, missedRows.count >= 5 else { return .insufficient }
+        let confounderCount = takenRows.filter(\.isConfounded).count + missedRows.filter(\.isConfounded).count
+        let total = takenRows.count + missedRows.count
+        let confounderFraction = total > 0 ? Double(confounderCount) / Double(total) : 1
+        if takenRows.count >= 20, missedRows.count >= 20, confounderFraction < 0.15, caveats.count <= 1 {
+            return .strong
+        }
+        if takenRows.count >= 10, missedRows.count >= 10, confounderFraction < 0.30 {
+            return .moderate
+        }
+        return .low
+    }
+
+    func difference(_ takenValues: [Double], _ missedValues: [Double]) -> Double? {
+        guard let takenAverage = average(takenValues), let missedAverage = average(missedValues) else { return nil }
+        return takenAverage - missedAverage
+    }
+
+    func average(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    static func formatHours(_ hours: Double) -> String {
+        let minutes = abs(hours * 60)
+        return String(format: "%.0f min", minutes)
+    }
+}
+
+nonisolated private extension NightlyResearchRow {
+    var isTravelConfounded: Bool {
+        activityStatus == .jetLagged || activityStatus == .traveling
+    }
+
+    var isConfounded: Bool {
+        isTravelConfounded || activityStatus == .sick || activityStatus == .injured
+    }
+}

@@ -109,14 +109,7 @@ private extension ProtocolViewModel {
     }
 
     static func loadSeedProtocols() -> [ProtocolItem] {
-        guard let url = Bundle.main.url(forResource: "protocols", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([ProtocolItem].self, from: data)
-        else {
-            return seedProtocols
-        }
-
-        return decoded.sorted { $0.sortOrder < $1.sortOrder }
+        ProtocolCatalog.load()
     }
 
     func updateImpactSummary() async {

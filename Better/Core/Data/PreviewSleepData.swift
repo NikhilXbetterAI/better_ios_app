@@ -194,8 +194,26 @@ enum PreviewSleepData {
             baselines: [baseline],
             alerts: sampleAlerts,
             adherence: sampleAdherence,
+            activityStatusLogs: sampleActivityStatusLogs,
             profile: UserProfile(sleepGoalHours: 8, baselineWindowDays: 30, isResearchMode: true, hasCompletedOnboarding: true)
         )
+    }
+
+    static var sampleActivityStatusLogs: [ActivityStatusLog] {
+        let calendar = Calendar.current
+        let statuses: [(Int, UserActivityStatus, String?)] = [
+            (-5, .traveling, "London trip"),
+            (-2, .jetLagged, "Adjusting after travel"),
+            (0, .active, "Normal training day")
+        ]
+        return statuses.compactMap { offset, status, note in
+            let date = calendar.date(byAdding: .day, value: offset, to: Date()) ?? Date()
+            return ActivityStatusLog(
+                dateKey: SleepDateKey.calendarDateKey(for: date, calendar: calendar),
+                status: status,
+                note: note
+            )
+        }
     }
 
     // MARK: - Helpers

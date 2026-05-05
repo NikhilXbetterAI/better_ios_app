@@ -26,6 +26,8 @@ struct SmartAlertSettings: Sendable {
 @MainActor
 @Observable
 final class AlertsViewModel {
+    private static let alertDisplayLimit = 100
+
     private let localRepository: LocalDataRepositoryProtocol
 
     var alerts: [SleepAlert] = []
@@ -68,8 +70,19 @@ final class AlertsViewModel {
         isLoading = true
         errorMessage = nil
         do {
-            alerts = try await localRepository.fetchAlerts(unreadOnly: false)
-            unreadCount = alerts.filter { !$0.isRead }.count
+            let profile = try await localRepository.fetchProfile()
+            let appStartKey = SleepDateKey.calendarDateKey(for: profile.createdAt)
+            alerts = try await localRepository.fetchAlerts(
+                unreadOnly: false,
+                fromSleepDateKey: appStartKey,
+                limit: Self.alertDisplayLimit
+            )
+            let unreadAlerts = try await localRepository.fetchAlerts(
+                unreadOnly: true,
+                fromSleepDateKey: appStartKey,
+                limit: nil
+            )
+            unreadCount = unreadAlerts.count
             groupedAlerts = Dictionary(grouping: alerts, by: \.kind)
         } catch {
             errorMessage = error.localizedDescription

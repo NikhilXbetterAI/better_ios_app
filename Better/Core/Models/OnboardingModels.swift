@@ -1,6 +1,6 @@
 import Foundation
 
-struct SleepAssessmentAnswer: Codable, Hashable, Sendable, Identifiable {
+nonisolated struct SleepAssessmentAnswer: Codable, Hashable, Sendable, Identifiable {
     var questionID: String
     var question: String
     var section: String
@@ -23,4 +23,3 @@ struct SleepAssessmentAnswer: Codable, Hashable, Sendable, Identifiable {
         self.selectedOptionIndex = selectedOptionIndex
     }
 }
-

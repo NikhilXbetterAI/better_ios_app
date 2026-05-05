@@ -12,23 +12,24 @@ final class BetterUITests: XCTestCase {
         app.launch()
 
         // All five tabs are present
-        XCTAssertTrue(app.tabBars.buttons["Sleep"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.tabBars.buttons["Insights"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Protocol"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Alerts"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Settings"].exists)
+        for tab in ["Sleep", "Insights", "Protocol", "Biology", "Activity"] {
+            XCTAssertTrue(
+                app.tabBars.buttons[tab].waitForExistence(timeout: 5),
+                "Expected root tab '\(tab)' to exist"
+            )
+        }
 
         // Sleep tab shows the real dashboard (BETTER SLEEP header label)
         XCTAssertTrue(app.staticTexts["BETTER SLEEP"].waitForExistence(timeout: 5))
 
-        // Phase 6 tabs render their real headers.
+        // Root tabs render their real headers.
         app.tabBars.buttons["Insights"].tap()
         XCTAssertTrue(app.staticTexts["Insights"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Protocol"].tap()
         XCTAssertTrue(app.staticTexts["Protocol"].waitForExistence(timeout: 3))
-        app.tabBars.buttons["Alerts"].tap()
-        XCTAssertTrue(app.staticTexts["Alerts"].waitForExistence(timeout: 3))
-        app.tabBars.buttons["Settings"].tap()
-        XCTAssertTrue(app.staticTexts["Settings"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Biology"].tap()
+        XCTAssertTrue(app.staticTexts["Biology"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Activity"].tap()
+        XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 3))
     }
 }

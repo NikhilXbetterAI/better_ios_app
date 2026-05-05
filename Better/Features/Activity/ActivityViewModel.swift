@@ -37,9 +37,11 @@ final class ActivityViewModel {
     }
 
     func selectDate(_ date: Date) async {
+        let newKey = SleepDateKey.calendarDateKey(for: date, calendar: calendar)
+        guard newKey != selectedDateKey else { return }
         selectedDate = date
-        selectedDateKey = SleepDateKey.calendarDateKey(for: date, calendar: calendar)
-        await loadSelectedStatus()
+        selectedDateKey = newKey
+        await loadSelectedDay()
     }
 
     func load() async {
@@ -89,6 +91,7 @@ private extension ActivityViewModel {
     func fetchActivitySummary(for date: Date) async throws -> ActivityMetricSummary {
         let start = calendar.startOfDay(for: date)
         let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        let dateKey = SleepDateKey.calendarDateKey(for: date, calendar: calendar)
 
         async let steps = sum(.stepCount, from: start, to: end)
         async let energy = sum(.activeEnergyBurned, from: start, to: end)
@@ -97,7 +100,8 @@ private extension ActivityViewModel {
         async let flights = sum(.flightsClimbed, from: start, to: end)
         async let distance = sum(.distanceWalkingRunning, from: start, to: end)
 
-        return try await ActivityMetricSummary(
+        let summary = try await DailyActivitySummary(
+            dateKey: dateKey,
             steps: steps,
             activeEnergy: energy,
             exerciseMinutes: exercise,
@@ -105,12 +109,31 @@ private extension ActivityViewModel {
             flights: flights,
             distanceMeters: distance
         )
+        try await localRepository.saveDailyActivitySummary(summary)
+
+        return ActivityMetricSummary(
+            steps: summary.steps,
+            activeEnergy: summary.activeEnergy,
+            exerciseMinutes: summary.exerciseMinutes,
+            standHours: summary.standHours,
+            flights: summary.flights,
+            distanceMeters: summary.distanceMeters
+        )
     }
 
     func sum(_ type: BiometricType, from start: Date, to end: Date) async throws -> Double? {
         let samples = try await healthRepository.fetchBiometrics(for: type, from: start, to: end)
         guard !samples.isEmpty else { return nil }
         return samples.map(\.value).reduce(0, +)
+    }
+
+    func loadSelectedDay() async {
+        do {
+            selectedStatusLog = try await localRepository.fetchActivityStatusLog(forDateKey: selectedDateKey)
+            activitySummary = try await fetchActivitySummary(for: selectedDate)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

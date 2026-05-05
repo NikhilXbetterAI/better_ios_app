@@ -1,16 +1,18 @@
 import Foundation
 import SwiftData
 
-enum BetterPersistenceContainerFactory {
+nonisolated enum BetterPersistenceContainerFactory {
     private static let schema = Schema([
         StoredSleepSession.self,
         StoredNightlyBiometricSummary.self,
+        StoredDailyActivitySummary.self,
         StoredBaseline.self,
         StoredProtocolAdherence.self,
         StoredActivityStatusLog.self,
         StoredAlert.self,
         StoredUserProfile.self,
-        StoredSyncAnchor.self
+        StoredSyncAnchor.self,
+        StoredManualBiologyEntry.self
     ])
 
     static func makeLiveContainer() throws -> ModelContainer {
@@ -266,6 +268,42 @@ final class StoredNightlyBiometricSummary {
 }
 
 @Model
+final class StoredDailyActivitySummary {
+    @Attribute(.unique) var dateKey: String
+    var steps: Double?
+    var activeEnergy: Double?
+    var exerciseMinutes: Double?
+    var standHours: Double?
+    var flights: Double?
+    var distanceMeters: Double?
+    var generatedAt: Date
+
+    init(domain: DailyActivitySummary) {
+        self.dateKey = domain.dateKey
+        self.steps = domain.steps
+        self.activeEnergy = domain.activeEnergy
+        self.exerciseMinutes = domain.exerciseMinutes
+        self.standHours = domain.standHours
+        self.flights = domain.flights
+        self.distanceMeters = domain.distanceMeters
+        self.generatedAt = domain.generatedAt
+    }
+
+    func toDomain() -> DailyActivitySummary {
+        DailyActivitySummary(
+            dateKey: dateKey,
+            steps: steps,
+            activeEnergy: activeEnergy,
+            exerciseMinutes: exerciseMinutes,
+            standHours: standHours,
+            flights: flights,
+            distanceMeters: distanceMeters,
+            generatedAt: generatedAt
+        )
+    }
+}
+
+@Model
 final class StoredBaseline {
     @Attribute(.unique) var id: UUID
     var windowDays: Int
@@ -510,5 +548,26 @@ final class StoredSyncAnchor {
         self.typeIdentifier = typeIdentifier
         self.anchorData = anchorData
         self.updatedAt = updatedAt
+    }
+}
+
+@Model
+final class StoredManualBiologyEntry {
+    @Attribute(.unique) var id: UUID
+    /// One entry per metric kind — stores only the most-recent manual value.
+    @Attribute(.unique) var kindRawValue: String
+    var value: Double
+    var enteredAt: Date
+
+    init(domain: ManualBiologyEntry) {
+        self.id = domain.id
+        self.kindRawValue = domain.kind.rawValue
+        self.value = domain.value
+        self.enteredAt = domain.enteredAt
+    }
+
+    func toDomain() -> ManualBiologyEntry? {
+        guard let kind = BiologyMetricKind(rawValue: kindRawValue) else { return nil }
+        return ManualBiologyEntry(id: id, kind: kind, value: value, enteredAt: enteredAt)
     }
 }

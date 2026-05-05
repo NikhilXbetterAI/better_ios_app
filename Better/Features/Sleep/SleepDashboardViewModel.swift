@@ -8,17 +8,20 @@ final class SleepDashboardViewModel {
     private let localRepository: LocalDataRepositoryProtocol
     private let processor: SleepDataProcessor
     private let calendar: Calendar
+    private var requestedHistoricalKeys = Set<String>()
 
     var selectedSleepDateKey: String
     var selectedMonth: Date
     var selectedSession: SleepSession?
     var selectedBaseline: SleepBaseline?
+    var recentSessions: [SleepSession] = []
     var selectedMonthSummaries: [SleepDaySummary] = []
     var dataQuality: SleepDataQuality = .noData
     var authorizationState: HealthAuthorizationPresentationState = .notRequested
     var isLoading = false
     var errorMessage: String?
     var lastSyncedAt: Date?
+    var sleepGoalHours: Double = 8.0
 
     var isViewingToday: Bool {
         selectedSleepDateKey == SleepDateKey.today(calendar: calendar)
@@ -53,7 +56,7 @@ final class SleepDashboardViewModel {
         selectedSleepDateKey = SleepDateKey.today(calendar: calendar)
         selectedMonth = SleepDateKey.date(from: selectedSleepDateKey, calendar: calendar) ?? Date()
         await loadSelectedDate()
-        await refresh()
+        await refreshIfNeededForToday()
     }
 
     func refresh() async {
@@ -83,6 +86,7 @@ final class SleepDashboardViewModel {
             selectedMonth = date
         }
         await loadSelectedDate()
+        await loadHistoricalDateOnDemandIfNeeded(sleepDateKey)
     }
 
     func jumpToToday() async {
@@ -100,7 +104,9 @@ final class SleepDashboardViewModel {
         do {
             selectedSession = try await localRepository.fetchSession(forSleepDateKey: selectedSleepDateKey)
             let profile = try await localRepository.fetchProfile()
+            sleepGoalHours = profile.sleepGoalHours
             selectedBaseline = try await baseline(asOfSleepDateKey: selectedSleepDateKey, windowDays: profile.baselineWindowDays)
+            recentSessions = try await loadRecentSessions(endingAt: selectedSleepDateKey, selectedSession: selectedSession)
             dataQuality = selectedSession?.dataQuality ?? .noData
             authorizationState = syncCoordinator.authorizationState
             lastSyncedAt = syncCoordinator.lastSyncedAt
@@ -113,20 +119,47 @@ final class SleepDashboardViewModel {
 
 private extension SleepDashboardViewModel {
     func baseline(asOfSleepDateKey key: String, windowDays: Int) async throws -> SleepBaseline {
-        let previousSessions = try await localRepository.fetchSessions(
-            beforeSleepDateKey: key,
-            limit: max(windowDays * 4, 90)
+        let effectiveWindowDays = SyncCoordinator.clampedBaselineWindowDays(windowDays)
+        let selectedDate = SleepDateKey.date(from: key, calendar: calendar) ?? Date()
+        let baselineStart = calendar.date(
+            byAdding: .day,
+            value: -effectiveWindowDays,
+            to: selectedDate
+        ) ?? selectedDate.addingTimeInterval(Double(-effectiveWindowDays) * 86_400)
+        let previousSessions = try await localRepository.fetchCachedSessions(
+            from: baselineStart,
+            to: selectedDate
         )
         let validSessions = previousSessions
+            .filter { $0.sleepDateKey < key }
             .filter { $0.totalSleepTime >= SleepDataProcessor.minimumSleepDuration }
             .filter { $0.dataQuality != .inBedOnly && $0.dataQuality != .noData }
-            .prefix(windowDays)
+            .sorted { $0.sleepDateKey > $1.sleepDateKey }
+            .prefix(effectiveWindowDays)
 
         return processor.computeBaseline(
             from: Array(validSessions),
-            windowDays: windowDays,
+            windowDays: effectiveWindowDays,
             generatedAt: SleepDateKey.date(from: key, calendar: calendar) ?? Date()
         )
+    }
+
+    func refreshIfNeededForToday() async {
+        guard isViewingToday else { return }
+        let shouldRefresh = await syncCoordinator.shouldPerformForegroundRefresh(
+            hasCachedSessionForToday: selectedSession != nil
+        )
+        guard shouldRefresh else { return }
+        await refresh()
+    }
+
+    func loadHistoricalDateOnDemandIfNeeded(_ sleepDateKey: String) async {
+        guard selectedSession == nil, !isViewingToday else { return }
+        guard requestedHistoricalKeys.insert(sleepDateKey).inserted else { return }
+        guard let date = SleepDateKey.date(from: sleepDateKey, calendar: calendar), date <= Date() else { return }
+
+        await syncCoordinator.performHistoricalRefresh(forSleepDateKey: sleepDateKey)
+        await loadSelectedDate()
     }
 
     func loadMonthSummaries() async {
@@ -143,5 +176,24 @@ private extension SleepDashboardViewModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func loadRecentSessions(endingAt key: String, selectedSession: SleepSession?) async throws -> [SleepSession] {
+        var sessions = try await localRepository.fetchSessions(beforeSleepDateKey: key, limit: 29)
+            .filter { $0.totalSleepTime >= SleepDataProcessor.minimumSleepDuration }
+            .filter { $0.dataQuality != .inBedOnly && $0.dataQuality != .noData }
+
+        if let selectedSession,
+           selectedSession.totalSleepTime >= SleepDataProcessor.minimumSleepDuration,
+           selectedSession.dataQuality != .inBedOnly,
+           selectedSession.dataQuality != .noData {
+            sessions.append(selectedSession)
+        }
+
+        return Array(
+            sessions
+                .sorted { $0.sleepDateKey < $1.sleepDateKey }
+                .suffix(30)
+        )
     }
 }
