@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Better reads your sleep, heart, HRV, oxygen saturation, and respiratory data from Apple Health to show sleep trends and protocol insights.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Better asks before saving any sleep or wellness entries you choose to add to Apple Health.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
