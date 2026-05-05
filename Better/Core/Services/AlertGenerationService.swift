@@ -44,7 +44,7 @@ nonisolated protocol LocalNotificationScheduling: Sendable {
     func scheduleNotification(identifier: String, title: String, body: String) async throws
 }
 
-nonisolated actor UserNotificationScheduler: LocalNotificationScheduling {
+actor UserNotificationScheduler: LocalNotificationScheduling {
     private let center: UNUserNotificationCenter
 
     init(center: UNUserNotificationCenter = .current()) {
