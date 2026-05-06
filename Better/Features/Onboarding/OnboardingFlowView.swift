@@ -10,15 +10,20 @@ struct OnboardingFlowView: View {
             BetterColors.background.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                progressHeader
+                if step != .assessment {
+                    progressHeader
+                }
 
                 currentStep
                     .padding(.horizontal, BetterSpacing.screen)
+                    .padding(.top, step == .assessment ? BetterSpacing.large : 0)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                footer
-                    .padding(.horizontal, BetterSpacing.screen)
-                    .padding(.bottom, BetterSpacing.large)
+                if step != .assessment {
+                    footer
+                        .padding(.horizontal, BetterSpacing.screen)
+                        .padding(.bottom, BetterSpacing.large)
+                }
             }
         }
         .task { await viewModel.load() }
@@ -40,7 +45,10 @@ struct OnboardingFlowView: View {
         case .sleepGoal:
             SleepGoalStepView(sleepGoalHours: $viewModel.profile.sleepGoalHours)
         case .assessment:
-            SleepQuestionnaireStepView(answersByQuestionID: $viewModel.answersByQuestionID)
+            SleepQuestionnaireStepView(
+                answersByQuestionID: $viewModel.answersByQuestionID,
+                onCompleted: { goForward() }
+            )
         case .notifications:
             NotificationPermissionStepView(
                 isRequested: viewModel.notificationPermissionRequested,

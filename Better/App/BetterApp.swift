@@ -26,6 +26,9 @@ struct BetterApp: App {
             RootTabView(environment: environment)
                 .modelContainer(environment.modelContainer)
                 .task {
+                    // Run storage migration before starting observers so that
+                    // all write paths use the new encrypted format from the start.
+                    await environment.migrationService.migrateIfNeeded()
                     await environment.backgroundTaskService.startHealthKitObservers()
                 }
                 .onChange(of: scenePhase) { _, newPhase in

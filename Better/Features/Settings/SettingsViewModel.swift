@@ -19,15 +19,20 @@ final class SettingsViewModel {
     var isExporting = false
     var isLoading = false
     var errorMessage: String?
+    var healthAuthorizationState: HealthAuthorizationPresentationState = .notRequested
+
+    let privacyService: PrivacyDataService
 
     init(
         localRepository: LocalDataRepositoryProtocol,
         healthRepository: HealthKitRepositoryProtocol,
-        syncCoordinator: SyncCoordinator
+        syncCoordinator: SyncCoordinator,
+        privacyService: PrivacyDataService
     ) {
         self.localRepository = localRepository
         self.healthRepository = healthRepository
         self.syncCoordinator = syncCoordinator
+        self.privacyService = privacyService
         self.analysisService = ResearchAnalysisService(localRepository: localRepository, healthRepository: healthRepository)
         self.csvExporter = ResearchCSVExporter()
     }
@@ -76,8 +81,8 @@ final class SettingsViewModel {
         exportURL = nil
         do {
             let now = Date()
-            let start = Calendar.current.date(byAdding: .day, value: -90, to: now)
-                ?? now.addingTimeInterval(-90 * 86_400)
+            let start = Calendar.current.date(byAdding: .day, value: -60, to: now)
+                ?? now.addingTimeInterval(-60 * 86_400)
             let package = try await analysisService.buildExportPackage(
                 from: start,
                 to: now,
@@ -97,6 +102,7 @@ final class SettingsViewModel {
         do {
             profile = try await localRepository.fetchProfile()
             healthAvailability = healthRepository.isHealthDataAvailable()
+            healthAuthorizationState = syncCoordinator.authorizationState
             lastSuccessfulSync = syncCoordinator.lastSyncedAt
             let now = Date()
             let startDate = Calendar.current.date(byAdding: .day, value: -30, to: now)

@@ -82,6 +82,8 @@ final class ResearchAnalysisServiceTests: XCTestCase {
             )
             if taken {
                 adherence.append(ProtocolAdherence(protocolID: protocolItem.id.uuidString, dateKey: key, taken: true, takenAt: Self.date(String(format: "2026-05-%02dT21:00:00Z", day))))
+            } else {
+                adherence.append(ProtocolAdherence(protocolID: protocolItem.id.uuidString, dateKey: key, taken: false))
             }
         }
         statuses.append(ActivityStatusLog(dateKey: "2026-05-01", status: .jetLagged))
@@ -149,6 +151,73 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         XCTAssertTrue(summary.caveats.contains("Some nights do not have detailed sleep stages"))
     }
 
+    func testMissingProtocolDataExportsUnknownAndDoesNotCountAsMissed() async throws {
+        let protocolItem = Self.protocolItem()
+        let sessions = [
+            Self.session(key: "2026-05-01", start: Self.date("2026-05-01T22:00:00Z"), end: Self.date("2026-05-02T06:00:00Z"), totalSleepHours: 8),
+            Self.session(key: "2026-05-02", start: Self.date("2026-05-02T22:00:00Z"), end: Self.date("2026-05-03T06:00:00Z"), totalSleepHours: 6)
+        ]
+        let repository = MockLocalDataRepository(
+            sessions: sessions,
+            adherence: [
+                ProtocolAdherence(protocolID: protocolItem.id.uuidString, dateKey: "2026-05-01", taken: true)
+            ],
+            profile: UserProfile(baselineWindowDays: 30, isResearchMode: true)
+        )
+        let service = ResearchAnalysisService(
+            localRepository: repository,
+            healthRepository: ResearchFakeHealthKitRepository(),
+            calendar: Self.utcCalendar
+        )
+
+        let package = try await service.buildExportPackage(
+            from: Self.date("2026-05-01T00:00:00Z"),
+            to: Self.date("2026-05-04T00:00:00Z"),
+            protocolItems: [protocolItem]
+        )
+
+        let unknownRow = try XCTUnwrap(package.nightlyRows.first { $0.sleepDateKey == "2026-05-02" })
+        XCTAssertEqual(unknownRow.protocolUsageStatus, .unknown)
+        XCTAssertNil(unknownRow.protocolTaken)
+
+        let summary = try XCTUnwrap(package.protocolSummaries.first { $0.protocolID == "any_protocol" })
+        XCTAssertEqual(summary.takenNightCount, 1)
+        XCTAssertEqual(summary.missedNightCount, 0)
+        XCTAssertNil(summary.sleepDifferenceHours)
+    }
+
+    func testExplicitFalseProtocolDataExportsNotTaken() async throws {
+        let protocolItem = Self.protocolItem()
+        let session = Self.session(
+            key: "2026-05-01",
+            start: Self.date("2026-05-01T22:00:00Z"),
+            end: Self.date("2026-05-02T06:00:00Z")
+        )
+        let repository = MockLocalDataRepository(
+            sessions: [session],
+            adherence: [
+                ProtocolAdherence(protocolID: protocolItem.id.uuidString, dateKey: "2026-05-01", taken: false)
+            ],
+            profile: UserProfile(baselineWindowDays: 30, isResearchMode: true)
+        )
+        let service = ResearchAnalysisService(
+            localRepository: repository,
+            healthRepository: ResearchFakeHealthKitRepository(),
+            calendar: Self.utcCalendar
+        )
+
+        let package = try await service.buildExportPackage(
+            from: Self.date("2026-05-01T00:00:00Z"),
+            to: Self.date("2026-05-02T12:00:00Z"),
+            protocolItems: [protocolItem]
+        )
+
+        let row = try XCTUnwrap(package.nightlyRows.first)
+        XCTAssertEqual(row.protocolUsageStatus, .notTaken)
+        XCTAssertEqual(row.protocolTaken, false)
+        XCTAssertEqual(row.protocolName, "Magnesium")
+    }
+
     func testSickNightsAreExcludedFromAdjustedSleepDifference() async throws {
         let protocolItem = Self.protocolItem()
         var sessions: [SleepSession] = []
@@ -172,6 +241,12 @@ final class ResearchAnalysisServiceTests: XCTestCase {
                     dateKey: key,
                     taken: true,
                     takenAt: Self.date(String(format: "2026-05-%02dT21:00:00Z", day))
+                ))
+            } else {
+                adherence.append(ProtocolAdherence(
+                    protocolID: protocolItem.id.uuidString,
+                    dateKey: key,
+                    taken: false
                 ))
             }
             if isSick {
@@ -282,6 +357,9 @@ final class ResearchAnalysisServiceTests: XCTestCase {
 
         let csv = exporter.nightlyRowsCSV([row])
         XCTAssertTrue(csv.contains("\"Comma, quote \"\" test\""))
+        XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("protocol_usage_status"))
+        XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("comparison_confidence"))
+        XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("source_names,baseline_window_used"))
 
         let zipURL = try exporter.writeZIP(package: package)
         let data = try Data(contentsOf: zipURL)

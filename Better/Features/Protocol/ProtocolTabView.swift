@@ -2,27 +2,37 @@ import SwiftUI
 
 struct ProtocolTabView: View {
     @Bindable var viewModel: ProtocolViewModel
+    @Bindable var comparisonViewModel: ProtocolComparisonDashboardViewModel
+    @Bindable var contextViewModel: ContextFactorDashboardViewModel
 
     var body: some View {
-        ZStack {
-            BetterColors.background.ignoresSafeArea()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: BetterSpacing.section) {
-                    header
-                    primaryProtocolCard
-                    AdherenceStreakBannerView(streak: viewModel.adherenceStreak)
-                    AdherenceHeatmapView(adherence: viewModel.adherenceHistory)
-                    ProtocolImpactChartView(summary: viewModel.impactSummary)
-                    itemList
-                }
-                .padding(BetterSpacing.screen)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: BetterSpacing.section) {
+                header
+                primaryProtocolCard
+                AdherenceStreakBannerView(streak: viewModel.adherenceStreak)
+                AdherenceHeatmapView(adherence: viewModel.adherenceHistory)
+                ProtocolComparisonDashboardView(viewModel: comparisonViewModel)
+                ContextFactorDashboardView(viewModel: contextViewModel)
+                itemList
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(BetterSpacing.screen)
         }
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+        .background(BetterColors.background.ignoresSafeArea())
         .navigationTitle("Protocol")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await viewModel.onAppear() }
-        .refreshable { await viewModel.loadTodayAdherence() }
+        .task {
+            await viewModel.onAppear()
+            await comparisonViewModel.onAppear()
+            await contextViewModel.onAppear()
+        }
+        .refreshable {
+            await viewModel.loadTodayAdherence()
+            await comparisonViewModel.loadData(preferDefaultWindow: false)
+            await contextViewModel.loadData(preferDefaultWindow: false)
+        }
     }
 
     private var header: some View {
@@ -100,5 +110,10 @@ struct ProtocolTabView: View {
 }
 
 #Preview("Protocol") {
-    ProtocolTabView(viewModel: ProtocolViewModel(localRepository: AppEnvironment.preview().localRepository))
+    let env = AppEnvironment.preview()
+    ProtocolTabView(
+        viewModel: ProtocolViewModel(localRepository: env.localRepository),
+        comparisonViewModel: ProtocolComparisonDashboardViewModel(localRepository: env.localRepository),
+        contextViewModel: ContextFactorDashboardViewModel(localRepository: env.localRepository)
+    )
 }

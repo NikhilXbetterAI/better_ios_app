@@ -119,9 +119,13 @@ private extension ProtocolViewModel {
                 ?? now.addingTimeInterval(-30 * 86_400)
             let sessions = try await localRepository.fetchCachedSessions(from: start, to: now)
             let adherence = try await localRepository.fetchAdherence(from: start, to: now)
-            let followedKeys = Set(adherence.filter(\.taken).map(\.dateKey))
-            let adherentSessions = sessions.filter { followedKeys.contains($0.sleepDateKey) }
-            let missedSessions = sessions.filter { !followedKeys.contains($0.sleepDateKey) }
+            let adherenceByDate = Dictionary(grouping: adherence, by: \.dateKey)
+            let adherentSessions = sessions.filter {
+                ProtocolComparisonService.status(for: adherenceByDate[$0.sleepDateKey]) == .taken
+            }
+            let missedSessions = sessions.filter {
+                ProtocolComparisonService.status(for: adherenceByDate[$0.sleepDateKey]) == .notTaken
+            }
 
             impactSummary = ProtocolImpactSummary(
                 adherentNightCount: adherentSessions.count,

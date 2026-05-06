@@ -26,6 +26,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Better reads your sleep, heart, HRV, oxygen saturation, and respiratory data from Apple Health to show sleep trends and protocol insights.</string>
 	<key>NSHealthUpdateUsageDescription</key>

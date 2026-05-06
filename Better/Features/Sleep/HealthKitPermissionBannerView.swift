@@ -1,5 +1,100 @@
 import SwiftUI
 
+// MARK: - HealthKit data-quality fallback banner
+
+struct HealthKitFallbackBannerView: View {
+    let state: HealthKitFallbackState
+
+    var body: some View {
+        switch state {
+        case .permissionDenied:
+            infoBanner(
+                icon: "lock.shield",
+                iconColor: BetterColors.warning,
+                title: "Apple Health Access Denied",
+                body: "Better needs permission to read sleep data locally. Open Settings → Better → Health to grant access."
+            )
+        case .baselineBuilding(let logged, let needed):
+            infoBanner(
+                icon: "chart.bar.fill",
+                iconColor: BetterColors.brand,
+                title: "Building Your Baseline",
+                body: "Baseline needs \(needed) nights of data. \(logged) of \(needed) nights logged so far.",
+                hint: "Insights improve as more sleep data is collected."
+            )
+        case .noSleepStages:
+            infoBanner(
+                icon: "moon.haze.fill",
+                iconColor: BetterColors.subtext,
+                title: "No Sleep Stage Data",
+                body: "Only in-bed time was recorded. For full stage analysis wear your Apple Watch to sleep.",
+                hint: "Enable Sleep Tracking in the Apple Watch app."
+            )
+        case .missingNights(let count):
+            infoBanner(
+                icon: "calendar.badge.minus",
+                iconColor: BetterColors.subtext,
+                title: "\(count) Night\(count == 1 ? "" : "s") Missing",
+                body: "Some nights have no recorded data, which may affect baseline accuracy."
+            )
+        case .watchNotWorn:
+            infoBanner(
+                icon: "applewatch.slash",
+                iconColor: BetterColors.subtext,
+                title: "Apple Watch Not Detected",
+                body: "No Apple Watch sleep data was found for this period. Make sure your watch is charged and worn to sleep."
+            )
+        case .insufficientHistory:
+            infoBanner(
+                icon: "clock.badge.xmark",
+                iconColor: BetterColors.subtext,
+                title: "Not Enough History",
+                body: "More sleep data is needed to generate meaningful insights."
+            )
+        }
+    }
+
+    private func infoBanner(
+        icon: String,
+        iconColor: Color,
+        title: String,
+        body: String,
+        hint: String? = nil
+    ) -> some View {
+        HStack(alignment: .top, spacing: BetterSpacing.medium) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 36, height: 36)
+                .background(iconColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(BetterTypography.subheadline)
+                    .foregroundStyle(BetterColors.text)
+                Text(body)
+                    .font(BetterTypography.footnote)
+                    .foregroundStyle(BetterColors.subtext)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let hint {
+                    Text(hint)
+                        .font(.system(size: 11, design: .rounded))
+                        .foregroundStyle(BetterColors.subtext.opacity(0.7))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+            }
+        }
+        .padding(BetterSpacing.large)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(BetterColors.border, lineWidth: 1)
+        )
+    }
+}
+
 // MARK: - HealthKit permission states banner
 
 struct HealthKitPermissionBannerView: View {
@@ -34,8 +129,8 @@ struct HealthKitPermissionBannerView: View {
                 icon: "moon.zzz",
                 iconColor: BetterColors.brand,
                 title: "No Sleep Data Found",
-                body: "No sleep data was found in Apple Health. Make sure your Apple Watch is tracking sleep or add sleep data in the Health app.",
-                hint: "Try wearing your watch to sleep and check again after syncing."
+                body: "We couldn't find recent sleep data. Make sure you wore your Apple Watch to bed and Sleep Focus was on.",
+                hint: "Data will appear after your next synced night."
             )
 
         case .failed(let message):

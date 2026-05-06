@@ -19,16 +19,16 @@ struct WelcomeStepView: View {
                     .font(BetterTypography.display)
                     .foregroundStyle(BetterColors.text)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Connect Apple Health, set your sleep goal, and answer a short assessment so Better can frame your sleep trends around your real routine.")
+                Text("Connect Apple Health and log your nights. It takes a few days to build your personal baseline. Once ready, you'll see associations between your habits and your sleep.")
                     .font(BetterTypography.body)
                     .foregroundStyle(BetterColors.subtext)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(spacing: BetterSpacing.medium) {
-                OnboardingValueRow(icon: "heart.text.square.fill", title: "Health data stays local", description: "Better reads sleep and biometrics from Apple Health.")
-                OnboardingValueRow(icon: "target", title: "Personal targets", description: "Your goal and chronotype guide scoring and reminders.")
-                OnboardingValueRow(icon: "chart.xyaxis.line", title: "Useful trends", description: "Baselines make changes easier to interpret.")
+                OnboardingValueRow(icon: "heart.text.square.fill", title: "Data stays local", description: "Better reads sleep data securely from Apple Health.")
+                OnboardingValueRow(icon: "magnifyingglass", title: "Find associations", description: "Compare your routines to your sleep metrics.")
+                OnboardingValueRow(icon: "shield.fill", title: "Not a medical device", description: "Insights highlight trends, not medical causes.")
             }
 
             Spacer(minLength: BetterSpacing.large)

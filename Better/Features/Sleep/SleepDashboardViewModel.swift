@@ -7,6 +7,8 @@ final class SleepDashboardViewModel {
     private let syncCoordinator: SyncCoordinator
     private let localRepository: LocalDataRepositoryProtocol
     private let processor: SleepDataProcessor
+    private let insightService: SleepInsightService
+    private let protocolComparisonService: ProtocolComparisonService
     private let calendar: Calendar
     private var requestedHistoricalKeys = Set<String>()
 
@@ -22,6 +24,7 @@ final class SleepDashboardViewModel {
     var errorMessage: String?
     var lastSyncedAt: Date?
     var sleepGoalHours: Double = 8.0
+    var sleepInsights: [SleepInsight] = []
 
     var isViewingToday: Bool {
         selectedSleepDateKey == SleepDateKey.today(calendar: calendar)
@@ -37,15 +40,43 @@ final class SleepDashboardViewModel {
         }
     }
 
+    /// Derived from current session + baseline data.  Non-nil when the data state
+    /// requires user attention beyond the standard authorization banner.
+    var healthKitFallbackState: HealthKitFallbackState? {
+        // Permission denied takes priority.
+        if authorizationState == .healthDataUnavailable {
+            return .permissionDenied
+        }
+
+        guard authorizationState == .canQueryHealthData else { return nil }
+
+        // No sleep stage data available for selected session.
+        if let session = selectedSession, session.dataQuality == .inBedOnly {
+            return .noSleepStages
+        }
+
+        // Baseline still building.
+        let nightsLogged = selectedBaseline?.validNights ?? 0
+        if nightsLogged < 7 {
+            return .baselineBuilding(nightsLogged: nightsLogged, nightsNeeded: 7)
+        }
+
+        return nil
+    }
+
     init(
         syncCoordinator: SyncCoordinator,
         localRepository: LocalDataRepositoryProtocol,
         processor: SleepDataProcessor = SleepDataProcessor(),
+        insightService: SleepInsightService = SleepInsightService(),
+        protocolComparisonService: ProtocolComparisonService? = nil,
         calendar: Calendar = .current
     ) {
         self.syncCoordinator = syncCoordinator
         self.localRepository = localRepository
         self.processor = processor
+        self.insightService = insightService
+        self.protocolComparisonService = protocolComparisonService ?? ProtocolComparisonService(calendar: calendar)
         self.calendar = calendar
         let todayKey = SleepDateKey.today(calendar: calendar)
         self.selectedSleepDateKey = todayKey
@@ -107,6 +138,7 @@ final class SleepDashboardViewModel {
             sleepGoalHours = profile.sleepGoalHours
             selectedBaseline = try await baseline(asOfSleepDateKey: selectedSleepDateKey, windowDays: profile.baselineWindowDays)
             recentSessions = try await loadRecentSessions(endingAt: selectedSleepDateKey, selectedSession: selectedSession)
+            sleepInsights = try await buildSleepInsights()
             dataQuality = selectedSession?.dataQuality ?? .noData
             authorizationState = syncCoordinator.authorizationState
             lastSyncedAt = syncCoordinator.lastSyncedAt
@@ -130,15 +162,13 @@ private extension SleepDashboardViewModel {
             from: baselineStart,
             to: selectedDate
         )
-        let validSessions = previousSessions
-            .filter { $0.sleepDateKey < key }
-            .filter { $0.totalSleepTime >= SleepDataProcessor.minimumSleepDuration }
-            .filter { $0.dataQuality != .inBedOnly && $0.dataQuality != .noData }
-            .sorted { $0.sleepDateKey > $1.sleepDateKey }
-            .prefix(effectiveWindowDays)
+        let selection = BaselineEngine(processor: processor, calendar: calendar).selectBaseline(
+            from: previousSessions.filter { $0.sleepDateKey < key },
+            generatedAt: SleepDateKey.date(from: key, calendar: calendar) ?? Date()
+        )
 
-        return processor.computeBaseline(
-            from: Array(validSessions),
+        return selection.activeBaseline ?? selection.stableBaseline ?? processor.computeBaseline(
+            from: [],
             windowDays: effectiveWindowDays,
             generatedAt: SleepDateKey.date(from: key, calendar: calendar) ?? Date()
         )
@@ -180,13 +210,10 @@ private extension SleepDashboardViewModel {
 
     func loadRecentSessions(endingAt key: String, selectedSession: SleepSession?) async throws -> [SleepSession] {
         var sessions = try await localRepository.fetchSessions(beforeSleepDateKey: key, limit: 29)
-            .filter { $0.totalSleepTime >= SleepDataProcessor.minimumSleepDuration }
-            .filter { $0.dataQuality != .inBedOnly && $0.dataQuality != .noData }
+            .filter { BaselineEngine.isValidNight($0, calendar: calendar) }
 
         if let selectedSession,
-           selectedSession.totalSleepTime >= SleepDataProcessor.minimumSleepDuration,
-           selectedSession.dataQuality != .inBedOnly,
-           selectedSession.dataQuality != .noData {
+           BaselineEngine.isValidNight(selectedSession, calendar: calendar) {
             sessions.append(selectedSession)
         }
 
@@ -195,5 +222,41 @@ private extension SleepDashboardViewModel {
                 .sorted { $0.sleepDateKey < $1.sleepDateKey }
                 .suffix(30)
         )
+    }
+
+    func buildSleepInsights() async throws -> [SleepInsight] {
+        guard let selectedDate = SleepDateKey.date(from: selectedSleepDateKey, calendar: calendar) else {
+            return insightService.insights(
+                session: selectedSession,
+                baseline: selectedBaseline,
+                recentSessions: recentSessions
+            )
+        }
+        let start = calendar.date(byAdding: .day, value: -29, to: selectedDate)
+            ?? selectedDate.addingTimeInterval(-29 * 86_400)
+        let end = calendar.date(byAdding: .day, value: 1, to: selectedDate)
+            ?? selectedDate.addingTimeInterval(86_400)
+        let comparisonSessions = try await localRepository.fetchCachedSessions(from: start, to: end)
+        let adherence = try await localRepository.fetchAdherence(from: start, to: end)
+        let protocolComparisonService = self.protocolComparisonService
+        let insightService = self.insightService
+        let selectedSession = self.selectedSession
+        let selectedBaseline = self.selectedBaseline
+        let recentSessions = self.recentSessions
+
+        return await Task.detached {
+            let protocolComparison = protocolComparisonService.compare(
+                sessions: comparisonSessions,
+                adherence: adherence,
+                window: .last30Days,
+                endingAt: selectedDate
+            )
+            return insightService.insights(
+                session: selectedSession,
+                baseline: selectedBaseline,
+                recentSessions: recentSessions,
+                protocolComparison: protocolComparison
+            )
+        }.value
     }
 }

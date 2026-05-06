@@ -11,6 +11,7 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     private var profile: UserProfile?
     private var anchorsByTypeIdentifier: [String: Data?]
     private var manualBiologyEntriesByKind: [BiologyMetricKind: ManualBiologyEntry]
+    private var contextEntriesByDateKey: [String: SleepContextEntry]
 
     init(
         sessions: [SleepSession] = [],
@@ -22,7 +23,8 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
         activityStatusLogs: [ActivityStatusLog] = [],
         profile: UserProfile? = nil,
         anchors: [String: Data?] = [:],
-        manualBiologyEntries: [ManualBiologyEntry] = []
+        manualBiologyEntries: [ManualBiologyEntry] = [],
+        contextEntries: [SleepContextEntry] = []
     ) {
         self.sessionsBySleepDateKey = Dictionary(sessions.map { ($0.sleepDateKey, $0) }, uniquingKeysWith: { _, new in new })
         self.summariesBySessionID = Dictionary(summaries.map { ($0.sleepSessionID, $0) }, uniquingKeysWith: { _, new in new })
@@ -34,6 +36,7 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
         self.profile = profile
         self.anchorsByTypeIdentifier = anchors
         self.manualBiologyEntriesByKind = Dictionary(uniqueKeysWithValues: manualBiologyEntries.map { ($0.kind, $0) })
+        self.contextEntriesByDateKey = Dictionary(uniqueKeysWithValues: contextEntries.map { ($0.sleepDateKey, $0) })
     }
 
     func saveSessions(_ sessions: [SleepSession]) async throws {
@@ -204,6 +207,75 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
 
     func deleteManualBiologyEntry(id: UUID) async throws {
         manualBiologyEntriesByKind = manualBiologyEntriesByKind.filter { $0.value.id != id }
+    }
+
+    // MARK: - Context entries
+
+    func saveContextEntry(_ entry: SleepContextEntry) async throws {
+        contextEntriesByDateKey[entry.sleepDateKey] = entry
+    }
+
+    func fetchContextEntry(forSleepDateKey key: String) async throws -> SleepContextEntry? {
+        contextEntriesByDateKey[key]
+    }
+
+    func fetchContextEntries(from startKey: String, to endKey: String) async throws -> [SleepContextEntry] {
+        contextEntriesByDateKey.values
+            .filter { $0.sleepDateKey >= startKey && $0.sleepDateKey <= endKey }
+            .sorted { $0.sleepDateKey < $1.sleepDateKey }
+    }
+
+    func deleteContextEntry(id: UUID) async throws {
+        contextEntriesByDateKey = contextEntriesByDateKey.filter { $0.value.id != id }
+    }
+
+    func deleteAllContextEntries() async throws {
+        contextEntriesByDateKey.removeAll()
+    }
+
+    func pruneDataOlderThan(days: Int) async throws {
+        // No-op for mock: in-memory data pruning not required for basic testing.
+    }
+
+    // MARK: - Privacy & migration
+
+    func deleteAllHealthData() async throws {
+        sessionsBySleepDateKey.removeAll()
+        summariesBySessionID.removeAll()
+        dailyActivitySummariesByDateKey.removeAll()
+        baselines.removeAll()
+        alertsByID.removeAll()
+        adherenceByKey.removeAll()
+        activityStatusLogsByDateKey.removeAll()
+        manualBiologyEntriesByKind.removeAll()
+        contextEntriesByDateKey.removeAll()
+        anchorsByTypeIdentifier.removeAll()
+        if var current = profile {
+            current.hasCompletedOnboarding = false
+            current.sleepAssessmentAnswers = []
+            profile = current
+        }
+    }
+
+    func migrateToEncryptedStorage() async throws {
+        // No-op for mock: in-memory data needs no migration.
+    }
+
+    func fetchDataInventory() async throws -> LocalDataInventory {
+        let sortedSessions = sessionsBySleepDateKey.values.sorted { $0.startDate < $1.startDate }
+        let lastContextDate = contextEntriesByDateKey.values.max { $0.updatedAt < $1.updatedAt }?.updatedAt
+        return LocalDataInventory(
+            sleepSessionCount: sessionsBySleepDateKey.count,
+            baselineCount: baselines.count,
+            alertCount: alertsByID.count,
+            protocolAdherenceCount: adherenceByKey.count,
+            activityLogCount: activityStatusLogsByDateKey.count,
+            manualBiologyEntryCount: manualBiologyEntriesByKind.count,
+            contextEntryCount: contextEntriesByDateKey.count,
+            lastContextEntryDate: lastContextDate,
+            oldestSessionDate: sortedSessions.first?.startDate,
+            newestSessionDate: sortedSessions.last?.startDate
+        )
     }
 }
 

@@ -1,10 +1,14 @@
 import Foundation
+import OSLog
 
 nonisolated struct ResearchCSVExporter: Sendable {
+    private let logger = Logger(subsystem: "Better", category: "ResearchCSVExporter")
+
     func writeZIP(package: ResearchExportPackage, fileManager: FileManager = .default) throws -> URL {
-        let stamp = Self.dateStamp(package.generatedAt)
+        let startStamp = Self.dateStamp(package.rangeStart)
+        let endStamp = Self.dateStamp(package.rangeEnd)
         let directory = fileManager.temporaryDirectory
-            .appendingPathComponent("better_research_export_\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("BetterSleep_Export_\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: directory) }
 
@@ -15,10 +19,11 @@ nonisolated struct ResearchCSVExporter: Sendable {
         ]
 
         let zipURL = fileManager.temporaryDirectory
-            .appendingPathComponent("better_research_export_\(stamp).zip")
+            .appendingPathComponent("BetterSleep_Export_\(startStamp)_to_\(endStamp).zip")
         if fileManager.fileExists(atPath: zipURL.path) {
             try fileManager.removeItem(at: zipURL)
         }
+        logger.debug("CSV export row count=\(package.nightlyRows.count, privacy: .public)")
         let zipData = try StoredZIPWriter.archive(files: files)
         try zipData.write(to: zipURL, options: .atomic)
         return zipURL
@@ -70,7 +75,29 @@ nonisolated struct ResearchCSVExporter: Sendable {
             "baseline_waso_delta_min",
             "baseline_latency_delta_min",
             "baseline_hrv_delta",
-            "source_names"
+            "source_names",
+            "baseline_window_used",
+            "baseline_total_sleep_minutes",
+            "duration_vs_baseline_minutes",
+            "protocol_usage_status",
+            "protocol_taken",
+            "protocol_name",
+            "protocol_timing",
+            "data_quality_status",
+            "comparison_confidence",
+            // Context fields (Phase 3) — appended at end for backward compatibility
+            "caffeine_late",
+            "alcohol",
+            "workout",
+            "late_meal",
+            "high_stress",
+            "screen_time_late",
+            "nap",
+            "travel",
+            "perceived_sleep_quality",
+            "morning_energy",
+            "context_notes_present",
+            "context_completion_status"
         ]
 
         let body = rows.map { row in
@@ -119,7 +146,29 @@ nonisolated struct ResearchCSVExporter: Sendable {
                 Self.number(row.baselineWASODeltaMinutes),
                 Self.number(row.baselineLatencyDeltaMinutes),
                 Self.number(row.baselineHRVDelta),
-                row.sourceNames.joined(separator: "|")
+                row.sourceNames.joined(separator: "|"),
+                row.baselineWindowUsed.map(String.init) ?? "NA",
+                Self.number(row.baselineTotalSleepMinutes),
+                Self.number(row.durationVsBaselineMinutes),
+                row.protocolUsageStatus.rawValue,
+                row.protocolTaken.map { $0 ? "true" : "false" } ?? "unknown",
+                row.protocolName ?? "",
+                row.protocolTiming ?? "",
+                row.dataQualityStatus,
+                row.comparisonConfidence.rawValue,
+                // Context fields
+                Self.tristate(row.caffeineLate),
+                Self.tristate(row.alcohol),
+                Self.tristate(row.workout),
+                Self.tristate(row.lateMeal),
+                Self.tristate(row.highStress),
+                Self.tristate(row.screenTimeLate),
+                Self.tristate(row.nap),
+                Self.tristate(row.travel),
+                row.perceivedSleepQuality ?? "",
+                row.morningEnergy ?? "",
+                row.contextNotesPresent.map { $0 ? "true" : "false" } ?? "",
+                row.contextCompletionStatus ?? ""
             ])
         }
 
@@ -197,7 +246,7 @@ nonisolated private extension ResearchCSVExporter {
         values.map(Self.escape).joined(separator: ",")
     }
 
-    static func escape(_ value: String) -> String {
+    nonisolated static func escape(_ value: String) -> String {
         guard value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") else {
             return value
         }
@@ -205,26 +254,42 @@ nonisolated private extension ResearchCSVExporter {
         return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
     }
 
-    static func number(_ value: Double?, fractionDigits: Int = 2) -> String {
+    nonisolated static func number(_ value: Double?, fractionDigits: Int = 2) -> String {
         guard let value else { return "NA" }
         return String(format: "%.\(fractionDigits)f", value)
     }
 
-    static func number(_ value: Double, fractionDigits: Int = 2) -> String {
+    nonisolated static func number(_ value: Double, fractionDigits: Int = 2) -> String {
         String(format: "%.\(fractionDigits)f", value)
     }
 
-    static func iso(_ date: Date) -> String {
-        ISO8601DateFormatter().string(from: date)
+    /// Serialises a `Bool?` tristate as `"true"`, `"false"`, or `"unknown"`.
+    /// An empty string is reserved for fields that do not apply to the row at all.
+    nonisolated static func tristate(_ value: Bool?) -> String {
+        switch value {
+        case true:  "true"
+        case false: "false"
+        case nil:   "unknown"
+        }
     }
 
-    static func dateStamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+    private static let isoFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+
+    private static let dateStampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    nonisolated static func iso(_ date: Date) -> String {
+        isoFormatter.string(from: date)
+    }
+
+    nonisolated static func dateStamp(_ date: Date) -> String {
+        dateStampFormatter.string(from: date)
     }
 }
 

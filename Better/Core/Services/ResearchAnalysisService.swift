@@ -1,9 +1,11 @@
 import Foundation
+import OSLog
 
 nonisolated struct ResearchAnalysisService: Sendable {
     private let localRepository: LocalDataRepositoryProtocol
     private let healthRepository: HealthKitRepositoryProtocol
     private let calendar: Calendar
+    private let logger = Logger(subsystem: "Better", category: "ResearchAnalysis")
 
     init(
         localRepository: LocalDataRepositoryProtocol,
@@ -21,23 +23,41 @@ nonisolated struct ResearchAnalysisService: Sendable {
         protocolItems: [ProtocolItem] = ProtocolCatalog.load(),
         generatedAt: Date = Date()
     ) async throws -> ResearchExportPackage {
-        let sessions = try await localRepository.fetchCachedSessions(from: startDate, to: endDate)
+        let cappedStart = max(startDate, endDate.addingTimeInterval(-60 * 86_400))
+        let sessions = try await localRepository.fetchCachedSessions(from: cappedStart, to: endDate)
         let profile = try await localRepository.fetchProfile()
-        let baseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
+        let storedBaseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
+        let baselineSelection = BaselineEngine(
+            processor: SleepDataProcessor(calendar: calendar, sleepGoalHours: profile.sleepGoalHours),
+            calendar: calendar
+        ).selectBaseline(from: sessions, generatedAt: generatedAt)
+        let baseline = baselineSelection.activeBaseline ?? storedBaseline
         let adherence = try await localRepository.fetchAdherence(from: startDate, to: endDate)
+        let protocolComparison = ProtocolComparisonService(calendar: calendar).compare(
+            sessions: sessions,
+            adherence: adherence,
+            window: .last30Days,
+            endingAt: endDate
+        )
 
         let startKey = SleepDateKey.calendarDateKey(for: startDate, calendar: calendar)
         let endKey = SleepDateKey.calendarDateKey(for: endDate, calendar: calendar)
         let statusLogs = try await localRepository.fetchActivityStatusLogs(from: startKey, to: endKey)
         let activitySummaries = try await loadActivitySummaries(from: startDate, to: endDate)
+        let contextEntries = try await localRepository.fetchContextEntries(from: startKey, to: endKey)
 
         let rows = buildNightlyRows(
             sessions: sessions,
             adherence: adherence,
             statusLogs: statusLogs,
             activitySummaries: activitySummaries,
+            contextEntries: contextEntries,
             baseline: baseline,
-            protocolItems: protocolItems
+            protocolItems: protocolItems,
+            comparisonConfidence: protocolComparison.confidence
+        )
+        logger.debug(
+            "Research export rows=\(rows.count, privacy: .public) baselineWindow=\(baseline?.windowDays ?? 0, privacy: .public) protocolTaken=\(protocolComparison.takenNightCount, privacy: .public) protocolNotTaken=\(protocolComparison.notTakenNightCount, privacy: .public) protocolUnknown=\(protocolComparison.unknownNightCount, privacy: .public)"
         )
         let summaries = buildProtocolSummaries(rows: rows, protocolItems: protocolItems)
         let insight = buildInsightSummary(rows: rows, summaries: summaries, generatedAt: generatedAt)
@@ -62,22 +82,35 @@ nonisolated private extension ResearchAnalysisService {
         adherence: [ProtocolAdherence],
         statusLogs: [ActivityStatusLog],
         activitySummaries: [DailyActivitySummary],
+        contextEntries: [SleepContextEntry],
         baseline: SleepBaseline?,
-        protocolItems: [ProtocolItem]
+        protocolItems: [ProtocolItem],
+        comparisonConfidence: ComparisonConfidence
     ) -> [NightlyResearchRow] {
-        let adherenceByDate = Dictionary(grouping: adherence.filter(\.taken), by: \.dateKey)
+        let adherenceByDate = Dictionary(grouping: adherence, by: \.dateKey)
         let statusByDate = Dictionary(uniqueKeysWithValues: statusLogs.map { ($0.dateKey, $0) })
         let activityByDate = Dictionary(uniqueKeysWithValues: activitySummaries.map { ($0.dateKey, $0) })
         let protocolNameByID = Dictionary(uniqueKeysWithValues: protocolItems.map { ($0.id.uuidString, $0.name) })
+        let contextByDate = Dictionary(uniqueKeysWithValues: contextEntries.map { ($0.sleepDateKey, $0) })
 
         return sessions.sorted { $0.sleepDateKey < $1.sleepDateKey }.map { session in
-            let taken = adherenceByDate[session.sleepDateKey, default: []].sorted { lhs, rhs in
+            let nightlyAdherence = adherenceByDate[session.sleepDateKey, default: []].sorted { lhs, rhs in
                 (lhs.takenAt ?? lhs.updatedAt) < (rhs.takenAt ?? rhs.updatedAt)
             }
+            let taken = nightlyAdherence.filter(\.taken)
+            let notTaken = nightlyAdherence.filter { !$0.taken }
+            let protocolUsageStatus = ProtocolComparisonService.status(for: nightlyAdherence)
             let status = statusByDate[session.sleepDateKey]
             let activity = activityByDate[session.sleepDateKey]
+            let context = contextByDate[session.sleepDateKey]
             let biometrics = session.biometrics
             let hasDetailedStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
+            let timings = taken.compactMap { adherence in
+                adherence.takenAt.map { session.startDate.timeIntervalSince($0) / 60 }
+            }
+            let protocolNames = nightlyAdherence.map { protocolNameByID[$0.protocolID] ?? $0.protocolID }
+            let baselineTotalSleepMinutes = baseline.map { $0.totalSleepAverage / 60 }
+            let durationVsBaselineMinutes = baseline.map { (session.totalSleepTime - $0.totalSleepAverage) / 60 }
 
             return NightlyResearchRow(
                 sleepDateKey: session.sleepDateKey,
@@ -114,13 +147,12 @@ nonisolated private extension ResearchAnalysisService {
                 activityStatus: status?.status,
                 isJetLagged: status?.status == .jetLagged,
                 activityNote: status?.note,
-                protocolTakenAny: !taken.isEmpty,
+                protocolTakenAny: protocolUsageStatus == .taken,
                 protocolIDsTaken: taken.map(\.protocolID),
+                protocolIDsNotTaken: notTaken.map(\.protocolID),
                 protocolNamesTaken: taken.map { protocolNameByID[$0.protocolID] ?? $0.protocolID },
                 protocolTakenAt: taken.compactMap(\.takenAt),
-                minutesFromProtocolToSleep: taken.compactMap { adherence in
-                    adherence.takenAt.map { session.startDate.timeIntervalSince($0) / 60 }
-                },
+                minutesFromProtocolToSleep: timings,
                 baselineTotalSleepDeltaHours: baseline.map { (session.totalSleepTime - $0.totalSleepAverage) / 3_600 },
                 baselineEfficiencyDeltaPercent: baseline.map { (session.efficiency - $0.efficiencyAverage) * 100 },
                 baselineWASODeltaMinutes: baseline.map { (session.waso - $0.wasoAverage) / 60 },
@@ -128,7 +160,28 @@ nonisolated private extension ResearchAnalysisService {
                 baselineHRVDelta: baseline.flatMap { baseline in
                     biometrics?.hrvAverage.map { $0 - baseline.hrvAverage }
                 },
-                sourceNames: session.sources.map(\.name)
+                sourceNames: session.sources.map(\.name),
+                baselineWindowUsed: baseline?.windowDays,
+                baselineTotalSleepMinutes: baselineTotalSleepMinutes,
+                durationVsBaselineMinutes: durationVsBaselineMinutes,
+                protocolUsageStatus: protocolUsageStatus,
+                protocolTaken: protocolUsageStatus.protocolTaken,
+                protocolName: protocolNames.joinedOrNil(separator: "|"),
+                protocolTiming: timings.map { Self.formatMinutes($0) }.joinedOrNil(separator: "|"),
+                dataQualityStatus: session.dataQuality.rawValue,
+                comparisonConfidence: comparisonConfidence,
+                caffeineLate:   context?.caffeineLate,
+                alcohol:        context?.alcohol,
+                workout:        context?.workout,
+                lateMeal:       context?.lateMeal,
+                highStress:     context?.highStress,
+                screenTimeLate: context?.screenTimeLate,
+                nap:            context?.nap,
+                travel:         context?.travel,
+                perceivedSleepQuality:   context?.perceivedSleepQuality?.displayName,
+                morningEnergy:           context?.morningEnergy?.displayName,
+                contextNotesPresent:     context.map { $0.hasNotes },
+                contextCompletionStatus: context?.completionStatus.rawValue
             )
         }
     }
@@ -138,7 +191,8 @@ nonisolated private extension ResearchAnalysisService {
             protocolID: "any_protocol",
             protocolName: "Any Protocol",
             rows: rows,
-            isTaken: { $0.protocolTakenAny }
+            isTaken: { $0.protocolUsageStatus == .taken },
+            isNotTaken: { $0.protocolUsageStatus == .notTaken }
         )
 
         let perProtocol = protocolItems.map { item in
@@ -146,7 +200,8 @@ nonisolated private extension ResearchAnalysisService {
                 protocolID: item.id.uuidString,
                 protocolName: item.name,
                 rows: rows,
-                isTaken: { $0.protocolIDsTaken.contains(item.id.uuidString) }
+                isTaken: { $0.protocolIDsTaken.contains(item.id.uuidString) },
+                isNotTaken: { $0.protocolIDsNotTaken.contains(item.id.uuidString) }
             )
         }
 
@@ -161,10 +216,11 @@ nonisolated private extension ResearchAnalysisService {
         protocolID: String,
         protocolName: String,
         rows: [NightlyResearchRow],
-        isTaken: (NightlyResearchRow) -> Bool
+        isTaken: (NightlyResearchRow) -> Bool,
+        isNotTaken: (NightlyResearchRow) -> Bool
     ) -> ProtocolEffectSummary {
         let takenRows = rows.filter(isTaken)
-        let missedRows = rows.filter { !isTaken($0) }
+        let missedRows = rows.filter(isNotTaken)
         let adjustedTakenRows = takenRows.filter { !$0.isConfounded }
         let adjustedMissedRows = missedRows.filter { !$0.isConfounded }
 
@@ -388,6 +444,16 @@ nonisolated private extension ResearchAnalysisService {
     static func formatHours(_ hours: Double) -> String {
         let minutes = abs(hours * 60)
         return String(format: "%.0f min", minutes)
+    }
+
+    static func formatMinutes(_ minutes: Double) -> String {
+        String(format: "%.0f", minutes)
+    }
+}
+
+nonisolated private extension Array where Element == String {
+    func joinedOrNil(separator: String) -> String? {
+        isEmpty ? nil : joined(separator: separator)
     }
 }
 

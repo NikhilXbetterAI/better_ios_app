@@ -3,6 +3,7 @@ import UIKit
 
 struct SettingsTabView: View {
     @Bindable var viewModel: SettingsViewModel
+    @Environment(\.dismiss) private var dismiss
     @State private var exportDocument: ResearchExportDocument?
     @State private var showExportError = false
 
@@ -23,6 +24,11 @@ struct SettingsTabView: View {
                     ProfileSettingsView(profile: $viewModel.profile) {
                         Task { await viewModel.saveProfile() }
                     }
+                    PrivacyControlsView(
+                        service: viewModel.privacyService,
+                        healthAuthState: viewModel.healthAuthorizationState,
+                        onResync: { Task { await viewModel.privacyService.resyncFromAppleHealth() } }
+                    )
                     ResearchExportView(
                         isResearchMode: viewModel.profile.isResearchMode,
                         isExporting: viewModel.isExporting,
@@ -55,6 +61,16 @@ struct SettingsTabView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(viewModel.errorMessage ?? "An unknown error occurred.")
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+                .font(BetterTypography.subheadline.bold())
+                .foregroundStyle(BetterColors.brand)
+                .accessibilityLabel("Close Settings")
+            }
         }
     }
 
@@ -153,6 +169,7 @@ private struct ResearchExportDocumentPicker: UIViewControllerRepresentable {
     SettingsTabView(viewModel: SettingsViewModel(
         localRepository: env.localRepository,
         healthRepository: env.healthRepository,
-        syncCoordinator: env.syncCoordinator
+        syncCoordinator: env.syncCoordinator,
+        privacyService: env.privacyDataService
     ))
 }

@@ -396,6 +396,180 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         }
         try modelContext.save()
     }
+
+    // MARK: - Context entries
+
+    func saveContextEntry(_ entry: SleepContextEntry) async throws {
+        // Replace any existing entry for this sleep date (one entry per night).
+        let sleepDateKey = entry.sleepDateKey
+        let id = entry.id
+        let descriptor = FetchDescriptor<StoredSleepContextEntry>(
+            predicate: #Predicate { stored in
+                stored.id == id || stored.sleepDateKey == sleepDateKey
+            }
+        )
+        for existing in try modelContext.fetch(descriptor) {
+            modelContext.delete(existing)
+        }
+        modelContext.insert(try StoredSleepContextEntry(domain: entry))
+        try modelContext.save()
+    }
+
+    func fetchContextEntry(forSleepDateKey key: String) async throws -> SleepContextEntry? {
+        var descriptor = FetchDescriptor<StoredSleepContextEntry>(
+            predicate: #Predicate { stored in
+                stored.sleepDateKey == key
+            }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
+    }
+
+    func fetchContextEntries(from startKey: String, to endKey: String) async throws -> [SleepContextEntry] {
+        let descriptor = FetchDescriptor<StoredSleepContextEntry>(
+            predicate: #Predicate { stored in
+                stored.sleepDateKey >= startKey && stored.sleepDateKey <= endKey
+            },
+            sortBy: [SortDescriptor(\.sleepDateKey)]
+        )
+        return try modelContext.fetch(descriptor).compactMap { try? $0.toDomain() }
+    }
+
+    func deleteContextEntry(id: UUID) async throws {
+        let descriptor = FetchDescriptor<StoredSleepContextEntry>(
+            predicate: #Predicate { stored in
+                stored.id == id
+            }
+        )
+        for stored in try modelContext.fetch(descriptor) {
+            modelContext.delete(stored)
+        }
+        try modelContext.save()
+    }
+
+    func deleteAllContextEntries() async throws {
+        try modelContext.delete(model: StoredSleepContextEntry.self)
+        try modelContext.save()
+    }
+
+    func pruneDataOlderThan(days: Int) async throws {
+        let cutoff = Date.now.addingTimeInterval(Double(-days) * 86_400)
+        let cutoffKey = Self.dateKey(for: cutoff)
+
+        // 1. Sessions & Biometrics
+        try modelContext.delete(model: StoredSleepSession.self, where: #Predicate { session in
+            session.endDate < cutoff
+        })
+        try modelContext.delete(model: StoredNightlyBiometricSummary.self, where: #Predicate { summary in
+            summary.sleepDateKey < cutoffKey
+        })
+
+        // 2. Activity & Status
+        try modelContext.delete(model: StoredDailyActivitySummary.self, where: #Predicate { summary in
+            summary.dateKey < cutoffKey
+        })
+        try modelContext.delete(model: StoredActivityStatusLog.self, where: #Predicate { log in
+            log.dateKey < cutoffKey
+        })
+
+        // 3. Protocols & Context
+        try modelContext.delete(model: StoredProtocolAdherence.self, where: #Predicate { adherence in
+            adherence.dateKey < cutoffKey
+        })
+        try modelContext.delete(model: StoredSleepContextEntry.self, where: #Predicate { entry in
+            entry.sleepDateKey < cutoffKey
+        })
+
+        // 4. Baselines
+        try modelContext.delete(model: StoredBaseline.self, where: #Predicate { baseline in
+            baseline.generatedAt < cutoff
+        })
+
+        try modelContext.save()
+    }
+
+    // MARK: - Privacy & migration
+
+    func deleteAllHealthData() async throws {
+        try modelContext.delete(model: StoredSleepSession.self)
+        try modelContext.delete(model: StoredNightlyBiometricSummary.self)
+        try modelContext.delete(model: StoredDailyActivitySummary.self)
+        try modelContext.delete(model: StoredBaseline.self)
+        try modelContext.delete(model: StoredProtocolAdherence.self)
+        try modelContext.delete(model: StoredActivityStatusLog.self)
+        try modelContext.delete(model: StoredAlert.self)
+        try modelContext.delete(model: StoredManualBiologyEntry.self)
+        try modelContext.delete(model: StoredSyncAnchor.self)
+        try modelContext.delete(model: StoredSleepContextEntry.self)
+
+        // Clear health-sensitive profile fields; keep non-sensitive preferences.
+        for profile in try modelContext.fetch(FetchDescriptor<StoredUserProfile>()) {
+            profile.sleepAssessmentAnswersData = nil
+            profile.hasCompletedOnboarding = false
+            profile.updatedAt = Date()
+        }
+
+        try modelContext.save()
+    }
+
+    func migrateToEncryptedStorage() async throws {
+        // Sleep sessions — re-encode all JSON blob fields via PersistenceJSON (which now encrypts).
+        for session in try modelContext.fetch(FetchDescriptor<StoredSleepSession>()) {
+            await Task.yield()
+            guard let domain = try? session.toDomain() else { continue }
+            session.qualityScoreData = (try? PersistenceJSON.encode(domain.qualityScore)) ?? session.qualityScoreData
+            session.stagesData = (try? PersistenceJSON.encode(domain.stages)) ?? session.stagesData
+            session.sourcesData = (try? PersistenceJSON.encode(domain.sources)) ?? session.sourcesData
+            if let biometrics = domain.biometrics {
+                session.biometricsData = try? PersistenceJSON.encode(biometrics)
+            }
+        }
+
+        // Nightly biometric summaries.
+        for summary in try modelContext.fetch(FetchDescriptor<StoredNightlyBiometricSummary>()) {
+            await Task.yield()
+            guard let domain = try? summary.toDomain() else { continue }
+            summary.samplesData = (try? PersistenceJSON.encode(domain.samples)) ?? summary.samplesData
+        }
+
+        // User profile — onboarding assessment answers.
+        for profile in try modelContext.fetch(FetchDescriptor<StoredUserProfile>()) {
+            guard
+                let raw = profile.sleepAssessmentAnswersData,
+                let answers = try? PersistenceJSON.decode([SleepAssessmentAnswer].self, from: raw)
+            else { continue }
+            profile.sleepAssessmentAnswersData = try? PersistenceJSON.encode(answers)
+        }
+
+        try modelContext.save()
+    }
+
+    func fetchDataInventory() async throws -> LocalDataInventory {
+        let sessionDescriptor = FetchDescriptor<StoredSleepSession>(
+            sortBy: [SortDescriptor(\.startDate)]
+        )
+        let sessions = try modelContext.fetch(sessionDescriptor)
+
+        var contextDescriptor = FetchDescriptor<StoredSleepContextEntry>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        contextDescriptor.fetchLimit = 1
+        let latestContextEntry = try modelContext.fetch(contextDescriptor).first
+        let contextCount = try modelContext.fetchCount(FetchDescriptor<StoredSleepContextEntry>())
+
+        return LocalDataInventory(
+            sleepSessionCount: sessions.count,
+            baselineCount: try modelContext.fetchCount(FetchDescriptor<StoredBaseline>()),
+            alertCount: try modelContext.fetchCount(FetchDescriptor<StoredAlert>()),
+            protocolAdherenceCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolAdherence>()),
+            activityLogCount: try modelContext.fetchCount(FetchDescriptor<StoredActivityStatusLog>()),
+            manualBiologyEntryCount: try modelContext.fetchCount(FetchDescriptor<StoredManualBiologyEntry>()),
+            contextEntryCount: contextCount,
+            lastContextEntryDate: latestContextEntry?.updatedAt,
+            oldestSessionDate: sessions.first?.startDate,
+            newestSessionDate: sessions.last?.startDate
+        )
+    }
 }
 
 private extension LocalDataRepository {

@@ -2,34 +2,39 @@ import SwiftUI
 
 struct TrendsTabView: View {
     @Bindable var viewModel: TrendsViewModel
-    let protocolImpactSummary: ProtocolImpactSummary?
+    @Bindable var protocolComparisonViewModel: ProtocolComparisonDashboardViewModel
 
     var body: some View {
-        ZStack {
-            BetterColors.background.ignoresSafeArea()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: BetterSpacing.section) {
-                    header
-                    TrendWindowPickerView(selection: $viewModel.selectedWindow) { window in
-                        Task { await viewModel.selectWindow(window) }
-                    }
-                    TrendMetricSelectorView(selection: $viewModel.selectedMetric) { metric in
-                        viewModel.selectMetric(metric)
-                    }
-                    TrendLineChartView(points: viewModel.chartPoints, metric: viewModel.selectedMetric)
-                    summaryStrip
-                    StageStackedBarView(points: viewModel.stageCompositionPoints)
-                    BaselineComparisonChartView(baseline: viewModel.baseline, latestSession: viewModel.sessions.last)
-                    ProtocolImpactView(summary: protocolImpactSummary)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: BetterSpacing.section) {
+                header
+                TrendWindowPickerView(selection: $viewModel.selectedWindow) { window in
+                    Task { await viewModel.selectWindow(window) }
                 }
-                .padding(BetterSpacing.screen)
+                TrendMetricSelectorView(selection: $viewModel.selectedMetric) { metric in
+                    viewModel.selectMetric(metric)
+                }
+                TrendLineChartView(points: viewModel.chartPoints, metric: viewModel.selectedMetric)
+                summaryStrip
+                StageStackedBarView(points: viewModel.stageCompositionPoints)
+                BaselineComparisonChartView(baseline: viewModel.baseline, latestSession: viewModel.sessions.last)
+                ProtocolComparisonDashboardView(viewModel: protocolComparisonViewModel)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(BetterSpacing.screen)
         }
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+        .background(BetterColors.background.ignoresSafeArea())
         .navigationTitle("Insights")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await viewModel.onAppear() }
-        .refreshable { await viewModel.loadData() }
+        .task {
+            await viewModel.onAppear()
+            await protocolComparisonViewModel.onAppear()
+        }
+        .refreshable {
+            await viewModel.loadData()
+            await protocolComparisonViewModel.loadData(preferDefaultWindow: false)
+        }
     }
 
     private var header: some View {
@@ -87,9 +92,8 @@ struct TrendsTabView: View {
 
 #Preview("Trends") {
     let env = AppEnvironment.preview()
-    let protocolVM = ProtocolViewModel(localRepository: env.localRepository)
     TrendsTabView(
         viewModel: TrendsViewModel(localRepository: env.localRepository),
-        protocolImpactSummary: protocolVM.impactSummary
+        protocolComparisonViewModel: ProtocolComparisonDashboardViewModel(localRepository: env.localRepository)
     )
 }

@@ -14,9 +14,11 @@ enum SyncCoordinatorPhase: Sendable, Hashable {
 @Observable
 final class SyncCoordinator {
     static let minimumBaselineWindowDays = 15
-    static let maximumBaselineWindowDays = 90
+    static let maximumBaselineWindowDays = 60
+    static let dataRetentionDays = 60
     private static let lastForegroundRefreshMetadataKey = "better.metadata.lastForegroundRefresh"
     private static let lastDailyProcessingMetadataKey = "better.metadata.lastDailyProcessing"
+    private static let windowMetadataKey = "better.metadata.window"
 
     private let healthRepository: HealthKitRepositoryProtocol
     private let localRepository: LocalDataRepositoryProtocol
@@ -119,7 +121,7 @@ final class SyncCoordinator {
             if result.deletedObjects.isEmpty, let range = Self.expandedRange(for: result.samples, fallbackEndDate: now) {
                 try await performSyncHealthRange(from: range.start, to: range.end, forceDailyProcessing: true)
             } else {
-                let startDate = calendar.date(byAdding: .day, value: -45, to: now) ?? now.addingTimeInterval(-45 * 86_400)
+                let startDate = calendar.date(byAdding: .day, value: -30, to: now) ?? now.addingTimeInterval(-30 * 86_400)
                 try await performSyncHealthRange(from: startDate, to: now, forceDailyProcessing: true)
             }
 
@@ -194,53 +196,118 @@ private extension SyncCoordinator {
     ) async throws {
         let samples = try await healthRepository.fetchSleepSamples(from: startDate, to: endDate)
         let sessions = processor.process(samples: samples)
-        let hydratedSessions = try await sessions.asyncMap { session in
-            try await attachBiometrics(to: session)
+        
+        let hydratedSessions = try await withThrowingTaskGroup(of: SleepSession.self) { group in
+            for session in sessions {
+                group.addTask {
+                    try await self.attachBiometrics(to: session)
+                }
+            }
+            
+            var results: [SleepSession] = []
+            for try await session in group {
+                results.append(session)
+            }
+            return results.sorted { $0.startDate < $1.startDate }
         }
 
         try await localRepository.replaceSessions(hydratedSessions, from: startDate, to: endDate)
 
         let profile = try await localRepository.fetchProfile()
-        let baselineWindowDays = Self.clampedBaselineWindowDays(profile.baselineWindowDays)
         guard try await shouldRunDailyProcessing(
-            windowDays: baselineWindowDays,
             at: endDate,
             force: forceDailyProcessing
         ) else {
             return
         }
 
-        let baselineStart = calendar.date(
-            byAdding: .day,
-            value: -baselineWindowDays,
-            to: endDate
-        ) ?? endDate.addingTimeInterval(Double(-baselineWindowDays) * 86_400)
-        let cachedSessions = try await localRepository.fetchCachedSessions(from: baselineStart, to: endDate)
-        let baseline = processor.computeBaseline(
-            from: cachedSessions,
-            windowDays: baselineWindowDays,
-            generatedAt: endDate
-        )
-        try await localRepository.saveBaseline(baseline)
+        // Daily maintenance: Prune data older than 60 days
+        try await localRepository.pruneDataOlderThan(days: Self.dataRetentionDays)
 
+        // Per-window baseline computation
+        let windowDays = [7, 15, 30]
+        var latestSelection: BaselineSelection?
+
+        for days in windowDays {
+            let shouldRun = try await shouldRunWindowedBaseline(windowDays: days, at: endDate, force: forceDailyProcessing)
+            if shouldRun {
+                let windowStart = calendar.date(byAdding: .day, value: -days, to: endDate)!
+                let sessions = try await localRepository.fetchCachedSessions(from: windowStart, to: endDate)
+                
+                // We use BaselineEngine to compute the baseline for this specific window.
+                // Note: selectBaseline produces three baselines, but we only care about the one matching 'days'.
+                let selection = BaselineEngine(processor: processor, calendar: calendar).selectBaseline(
+                    from: sessions,
+                    generatedAt: endDate
+                )
+                
+                // Save the relevant baseline for this window
+                if let baseline = selection.allBaselines.first(where: { $0.windowDays == days }) {
+                    try await localRepository.saveBaseline(baseline)
+                }
+                
+                try await saveMetadataDate(endDate, for: "\(Self.windowMetadataKey).\(days)")
+                latestSelection = selection
+            }
+        }
+
+        // For alerts, we need the active baseline. If we didn't recompute any today, fetch the latest stored one.
+        let activeBaseline: SleepBaseline?
+        if let selection = latestSelection {
+            activeBaseline = selection.activeBaseline
+        } else {
+            let baselineWindowDays = Self.clampedBaselineWindowDays(profile.baselineWindowDays)
+            activeBaseline = try await localRepository.fetchLatestBaseline(windowDays: baselineWindowDays)
+        }
+
+        let baselineWindowDays = Self.clampedBaselineWindowDays(profile.baselineWindowDays)
+        let baselineStart = calendar.date(byAdding: .day, value: -baselineWindowDays, to: endDate)
+            ?? endDate.addingTimeInterval(Double(-baselineWindowDays) * 86_400)
+        let cachedSessions = try await localRepository.fetchCachedSessions(from: baselineStart, to: endDate)
         let adherence = try await localRepository.fetchAdherence(from: baselineStart, to: endDate)
         let appStartKey = SleepDateKey.calendarDateKey(for: profile.createdAt, calendar: calendar)
         let alertEligibleSessions = hydratedSessions.filter { $0.sleepDateKey >= appStartKey }
-        let alerts = try await alertService.generateAlerts(
-            sessions: alertEligibleSessions,
-            recentSessions: cachedSessions,
-            baseline: baseline,
-            profile: profile,
-            adherence: adherence,
-            createdAt: endDate
-        )
-        try await localRepository.saveAlerts(alerts)
+
+        if let activeBaseline {
+            let previousAlerts = try await localRepository.fetchAlerts(
+                unreadOnly: false,
+                fromSleepDateKey: appStartKey,
+                limit: nil
+            )
+            let protocolComparison = ProtocolComparisonService(calendar: calendar).compare(
+                sessions: cachedSessions,
+                adherence: adherence,
+                window: .last30Days,
+                endingAt: endDate
+            )
+            let alerts = try await alertService.generateAlerts(
+                sessions: alertEligibleSessions,
+                recentSessions: cachedSessions,
+                baseline: activeBaseline,
+                profile: profile,
+                adherence: adherence,
+                protocolComparison: protocolComparison,
+                previousAlerts: previousAlerts,
+                createdAt: endDate
+            )
+            try await localRepository.saveAlerts(alerts)
+        }
         try await saveMetadataDate(endDate, for: Self.lastDailyProcessingMetadataKey)
     }
 
     func attachBiometrics(to session: SleepSession) async throws -> SleepSession {
-        let sampleGroups = try await BiometricType.dashboardTypes.asyncMap { type in
-            try await healthRepository.fetchBiometrics(for: type, from: session.startDate, to: session.endDate)
+        let sampleGroups = try await withThrowingTaskGroup(of: [BiometricSample].self) { group in
+            for type in BiometricType.dashboardTypes {
+                group.addTask {
+                    try await self.healthRepository.fetchBiometrics(for: type, from: session.startDate, to: session.endDate)
+                }
+            }
+            
+            var all: [[BiometricSample]] = []
+            for try await samples in group {
+                all.append(samples)
+            }
+            return all
         }
         let samples = sampleGroups.flatMap { $0 }
         guard !samples.isEmpty else { return session }
@@ -298,13 +365,24 @@ private extension SyncCoordinator {
 }
 
 private extension SyncCoordinator {
-    func shouldRunDailyProcessing(windowDays: Int, at date: Date, force: Bool) async throws -> Bool {
+    func shouldRunDailyProcessing(at date: Date, force: Bool) async throws -> Bool {
         if force { return true }
-        if try await localRepository.fetchLatestBaseline(windowDays: windowDays) == nil { return true }
         guard let lastProcessing = try await fetchMetadataDate(for: Self.lastDailyProcessingMetadataKey) else {
             return true
         }
         return !calendar.isDate(lastProcessing, inSameDayAs: date)
+    }
+
+    func shouldRunWindowedBaseline(windowDays: Int, at date: Date, force: Bool) async throws -> Bool {
+        if force { return true }
+        let key = "\(Self.windowMetadataKey).\(windowDays)"
+        guard let lastRun = try await fetchMetadataDate(for: key) else {
+            return true
+        }
+        
+        let elapsedSeconds = date.timeIntervalSince(lastRun)
+        let windowSeconds = Double(windowDays) * 86_400
+        return elapsedSeconds >= windowSeconds
     }
 
     func saveMetadataDate(_ date: Date, for key: String) async throws {

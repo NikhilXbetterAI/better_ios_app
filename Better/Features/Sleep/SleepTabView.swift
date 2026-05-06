@@ -56,7 +56,7 @@ struct SleepTabView: View {
     // MARK: - Session content
 
     private func sessionContent(session: SleepSession) -> some View {
-        ScrollView {
+        ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: BetterSpacing.medium) {
                 headerSection(session: session)
                     .padding(.horizontal, BetterSpacing.screen)
@@ -105,6 +105,19 @@ struct SleepTabView: View {
                 } else {
                     baselineNotReadyCard
                         .padding(.horizontal, BetterSpacing.screen)
+                }
+
+                // ── Data-quality fallback banner ─────────────────────────
+                if let fallback = viewModel.healthKitFallbackState {
+                    HealthKitFallbackBannerView(state: fallback)
+                        .padding(.horizontal, BetterSpacing.screen)
+                }
+
+                if !viewModel.sleepInsights.isEmpty {
+                    SleepPlainCard(title: "Sleep Insights") {
+                        SleepInsightListView(insights: viewModel.sleepInsights)
+                    }
+                    .padding(.horizontal, BetterSpacing.screen)
                 }
 
                 // ── Sleep Stages ────────────────────────────────────────
@@ -202,29 +215,35 @@ struct SleepTabView: View {
 
                 Spacer(minLength: BetterSpacing.xxLarge)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, BetterSpacing.screen)
         }
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
     }
 
     // MARK: - Empty / permission state
 
     private var emptyContent: some View {
-        ScrollView {
-            VStack(spacing: BetterSpacing.xxLarge) {
-                headerNoSession
+        Group {
+            if viewModel.isLoading {
+                SleepDashboardSkeletonView()
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: BetterSpacing.xxLarge) {
+                        headerNoSession
 
-                if viewModel.isLoading {
-                    loadingIndicator
-                } else {
-                    SleepNoDataView(
-                        authorizationState: viewModel.authorizationState,
-                        onConnect: { Task { await viewModel.requestHealthKitAccess() } }
-                    )
+                        SleepNoDataView(
+                            authorizationState: viewModel.authorizationState,
+                            onConnect: { Task { await viewModel.requestHealthKitAccess() } }
+                        )
+
+                        Spacer(minLength: 40)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, BetterSpacing.screen)
                 }
-
-                Spacer(minLength: 40)
+                .scrollBounceBehavior(.basedOnSize, axes: .vertical)
             }
-            .padding(.top, BetterSpacing.screen)
         }
     }
 
@@ -1048,6 +1067,70 @@ private func formatDuration(_ interval: TimeInterval) -> String {
     let h = Int(interval) / 3600
     let m = (Int(interval) % 3600) / 60
     return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+}
+
+private struct SleepInsightListView: View {
+    let insights: [SleepInsight]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+            ForEach(insights.prefix(4)) { insight in
+                HStack(alignment: .top, spacing: BetterSpacing.small) {
+                    Image(systemName: iconName(for: insight.category))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(color(for: insight.displayStyle), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(insight.title)
+                            .font(BetterTypography.footnote)
+                            .foregroundStyle(BetterColors.text)
+                        Text(insight.body)
+                            .font(BetterTypography.caption)
+                            .foregroundStyle(BetterColors.subtext)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func iconName(for category: SleepInsightCategory) -> String {
+        switch category {
+        case .duration:
+            "clock.fill"
+        case .efficiency:
+            "gauge.with.dots.needle.67percent"
+        case .consistency:
+            "calendar"
+        case .recovery:
+            "arrow.up.heart.fill"
+        case .sleepStages:
+            "moon.stars.fill"
+        case .missingData:
+            "exclamationmark.triangle.fill"
+        case .baselineBuilding:
+            "calendar.badge.clock"
+        case .protocolComparison:
+            "pills.fill"
+        case .contextComparison:
+            "chart.bar.fill"
+        }
+    }
+
+    private func color(for style: SleepInsightDisplayStyle?) -> Color {
+        switch style {
+        case .positive:
+            BetterColors.success
+        case .caution:
+            BetterColors.warning
+        case .informational:
+            BetterColors.brand
+        case .neutral, nil:
+            BetterColors.subtext
+        }
+    }
 }
 
 // MARK: - Preview

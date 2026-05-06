@@ -41,6 +41,66 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
     func saveManualBiologyEntry(_ entry: ManualBiologyEntry) async throws
     func fetchManualBiologyEntries() async throws -> [ManualBiologyEntry]
     func deleteManualBiologyEntry(id: UUID) async throws
+    /// Prunes all health-derived data older than the specified number of days.
+    func pruneDataOlderThan(days: Int) async throws
+
+
+    // MARK: - Context entries
+
+    /// Saves (or replaces) the context entry for the given sleep date.
+    func saveContextEntry(_ entry: SleepContextEntry) async throws
+    /// Fetches the context entry for the given sleep date key, or nil if not found.
+    func fetchContextEntry(forSleepDateKey key: String) async throws -> SleepContextEntry?
+    /// Fetches all context entries whose sleep date key falls in [startKey, endKey].
+    func fetchContextEntries(from startKey: String, to endKey: String) async throws -> [SleepContextEntry]
+    /// Deletes the context entry with the given id.
+    func deleteContextEntry(id: UUID) async throws
+    /// Deletes all context entries. Called as part of the full local-data delete flow.
+    func deleteAllContextEntries() async throws
+
+    // MARK: - Privacy & migration
+
+    /// Deletes all health-derived records.  User preferences (sleep goal, baseline
+    /// window, onboarding completion flag) are retained; only health data is removed.
+    /// Sets hasCompletedOnboarding = false so the app returns to onboarding state.
+    func deleteAllHealthData() async throws
+
+    /// Re-saves every stored record so that transparent encryption in
+    /// PersistenceJSON.encode is applied to any legacy plain-JSON blobs.
+    /// Safe to call multiple times (idempotent).
+    func migrateToEncryptedStorage() async throws
+
+    /// Returns a snapshot of how many records are stored locally.
+    func fetchDataInventory() async throws -> LocalDataInventory
+}
+
+// MARK: - Supporting types
+
+/// A snapshot of locally-stored health data record counts.
+struct LocalDataInventory: Sendable {
+    var sleepSessionCount: Int
+    var baselineCount: Int
+    var alertCount: Int
+    var protocolAdherenceCount: Int
+    var activityLogCount: Int
+    var manualBiologyEntryCount: Int
+    var contextEntryCount: Int
+    var lastContextEntryDate: Date?
+    var oldestSessionDate: Date?
+    var newestSessionDate: Date?
+}
+
+// MARK: - HealthKit fallback states
+
+/// Richer data-quality states shown in the Sleep tab, distinct from
+/// HealthAuthorizationPresentationState (which covers permissions only).
+enum HealthKitFallbackState: Sendable, Equatable {
+    case permissionDenied
+    case baselineBuilding(nightsLogged: Int, nightsNeeded: Int)
+    case noSleepStages
+    case missingNights(count: Int)
+    case watchNotWorn
+    case insufficientHistory
 }
 
 extension LocalDataRepositoryProtocol {
@@ -48,6 +108,7 @@ extension LocalDataRepositoryProtocol {
         try await fetchAlerts(unreadOnly: unreadOnly, fromSleepDateKey: nil, limit: nil)
     }
 }
+
 
 nonisolated struct HealthAuthorizationResult: Sendable, Hashable {
     var requestCompleted: Bool

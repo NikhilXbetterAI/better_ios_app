@@ -3,7 +3,7 @@ import Observation
 
 enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
     case week = 7
-    case twoWeeks = 14
+    case biWeekly = 15
     case month = 30
 
     var id: Int { rawValue }
@@ -12,7 +12,7 @@ enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
     var displayName: String {
         switch self {
         case .week: "7 Days"
-        case .twoWeeks: "14 Days"
+        case .biWeekly: "15 Days"
         case .month: "30 Days"
         }
     }
@@ -261,7 +261,7 @@ private extension TrendsViewModel {
         switch selectedWindow {
         case .week:
             return weekComparisonWindows(endingAt: endDate)
-        case .twoWeeks:
+        case .biWeekly:
             return rollingComparisonWindows(days: selectedWindow.days, endingAt: endDate)
         case .month:
             return monthComparisonWindows(endingAt: endDate)

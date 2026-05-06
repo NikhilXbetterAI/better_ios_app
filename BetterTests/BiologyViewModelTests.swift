@@ -205,6 +205,25 @@ final class OnRetryThrowingLocalRepository: LocalDataRepositoryProtocol, @unchec
     func saveManualBiologyEntry(_ entry: ManualBiologyEntry) async throws {}
     func fetchManualBiologyEntries() async throws -> [ManualBiologyEntry] { [] }
     func deleteManualBiologyEntry(id: UUID) async throws {}
+    func saveContextEntry(_ entry: SleepContextEntry) async throws {}
+    func fetchContextEntry(forSleepDateKey key: String) async throws -> SleepContextEntry? { nil }
+    func fetchContextEntries(from startKey: String, to endKey: String) async throws -> [SleepContextEntry] { [] }
+    func deleteContextEntry(id: UUID) async throws {}
+    func deleteAllContextEntries() async throws {}
+    func pruneDataOlderThan(days: Int) async throws {}
+    func deleteAllHealthData() async throws {}
+    func migrateToEncryptedStorage() async throws {}
+    func fetchDataInventory() async throws -> LocalDataInventory {
+        LocalDataInventory(
+            sleepSessionCount: 0,
+            baselineCount: 0,
+            alertCount: 0,
+            protocolAdherenceCount: 0,
+            activityLogCount: 0,
+            manualBiologyEntryCount: 0,
+            contextEntryCount: 0
+        )
+    }
 }
 
 actor BiologyFakeHealthKitRepository: HealthKitRepositoryProtocol {

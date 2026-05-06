@@ -8,19 +8,25 @@ final class AppEnvironment {
     let backgroundTaskService: BackgroundTaskService
     let localRepository: LocalDataRepositoryProtocol
     let healthRepository: HealthKitRepositoryProtocol
+    let migrationService: DataMigrationService
+    let privacyDataService: PrivacyDataService
 
     init(
         modelContainer: ModelContainer,
         syncCoordinator: SyncCoordinator,
         backgroundTaskService: BackgroundTaskService,
         localRepository: LocalDataRepositoryProtocol,
-        healthRepository: HealthKitRepositoryProtocol
+        healthRepository: HealthKitRepositoryProtocol,
+        migrationService: DataMigrationService,
+        privacyDataService: PrivacyDataService
     ) {
         self.modelContainer = modelContainer
         self.syncCoordinator = syncCoordinator
         self.backgroundTaskService = backgroundTaskService
         self.localRepository = localRepository
         self.healthRepository = healthRepository
+        self.migrationService = migrationService
+        self.privacyDataService = privacyDataService
     }
 
     static func live() throws -> AppEnvironment {
@@ -29,12 +35,16 @@ final class AppEnvironment {
         let healthRepo = HealthKitRepository()
         let coordinator = SyncCoordinator(healthRepository: healthRepo, localRepository: localRepo)
         let backgroundTaskService = BackgroundTaskService(syncCoordinator: coordinator)
+        let migrationService = DataMigrationService(repository: localRepo)
+        let privacyService = PrivacyDataService(localRepository: localRepo, syncCoordinator: coordinator)
         return AppEnvironment(
             modelContainer: container,
             syncCoordinator: coordinator,
             backgroundTaskService: backgroundTaskService,
             localRepository: localRepo,
-            healthRepository: healthRepo
+            healthRepository: healthRepo,
+            migrationService: migrationService,
+            privacyDataService: privacyService
         )
     }
 
@@ -56,12 +66,16 @@ private extension AppEnvironment {
         let healthRepo = PreviewHealthKitRepository()
         let coordinator = SyncCoordinator(healthRepository: healthRepo, localRepository: localRepo)
         let backgroundTaskService = BackgroundTaskService(syncCoordinator: coordinator, isEnabled: false)
+        let migrationService = DataMigrationService(repository: localRepo)
+        let privacyService = PrivacyDataService(localRepository: localRepo, syncCoordinator: coordinator)
         return AppEnvironment(
             modelContainer: container,
             syncCoordinator: coordinator,
             backgroundTaskService: backgroundTaskService,
             localRepository: localRepo,
-            healthRepository: healthRepo
+            healthRepository: healthRepo,
+            migrationService: migrationService,
+            privacyDataService: privacyService
         )
     }
 }

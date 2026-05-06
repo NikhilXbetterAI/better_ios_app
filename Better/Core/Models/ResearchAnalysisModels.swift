@@ -22,6 +22,34 @@ nonisolated enum AnalysisConfidence: String, Codable, CaseIterable, Hashable, Se
     }
 }
 
+nonisolated enum ComparisonConfidence: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case unavailable
+    case low
+    case medium
+    case high
+
+    var id: String { rawValue }
+}
+
+nonisolated enum ProtocolUsageStatus: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case taken
+    case notTaken
+    case unknown
+
+    var id: String { rawValue }
+
+    var protocolTaken: Bool? {
+        switch self {
+        case .taken:
+            true
+        case .notTaken:
+            false
+        case .unknown:
+            nil
+        }
+    }
+}
+
 nonisolated struct DailyActivitySummary: Codable, Hashable, Sendable, Identifiable {
     var id: String { dateKey }
     var dateKey: String
@@ -92,6 +120,7 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
     var activityNote: String?
     var protocolTakenAny: Bool
     var protocolIDsTaken: [String]
+    var protocolIDsNotTaken: [String]
     var protocolNamesTaken: [String]
     var protocolTakenAt: [Date]
     var minutesFromProtocolToSleep: [Double]
@@ -101,6 +130,168 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
     var baselineLatencyDeltaMinutes: Double?
     var baselineHRVDelta: Double?
     var sourceNames: [String]
+    var baselineWindowUsed: Int?
+    var baselineTotalSleepMinutes: Double?
+    var durationVsBaselineMinutes: Double?
+    var protocolUsageStatus: ProtocolUsageStatus
+    var protocolTaken: Bool?
+    var protocolName: String?
+    var protocolTiming: String?
+    var dataQualityStatus: String
+    var comparisonConfidence: ComparisonConfidence
+
+    // MARK: - Context fields (Phase 3 — appended at end for backward compatibility)
+    var caffeineLate:            Bool?   // tristate: nil = unknown
+    var alcohol:                 Bool?
+    var workout:                 Bool?
+    var lateMeal:                Bool?
+    var highStress:              Bool?
+    var screenTimeLate:          Bool?
+    var nap:                     Bool?
+    var travel:                  Bool?
+    var perceivedSleepQuality:   String? // nil when no context entry
+    var morningEnergy:           String?
+    var contextNotesPresent:     Bool?   // true/false; nil = no entry
+    var contextCompletionStatus: String? // notFilled / partial / complete / nil
+
+    init(
+        sleepDateKey: String,
+        sleepStart: Date,
+        sleepEnd: Date,
+        dataQuality: SleepDataQuality,
+        totalSleepHours: Double,
+        inBedHours: Double,
+        efficiencyPercent: Double,
+        deepHours: Double?,
+        remHours: Double?,
+        coreHours: Double?,
+        awakeHours: Double,
+        wasoMinutes: Double,
+        latencyMinutes: Double,
+        sleepScore: Double,
+        durationScore: Double,
+        efficiencyScore: Double,
+        remScore: Double,
+        deepScore: Double,
+        hrvAverage: Double?,
+        hrvMedian: Double?,
+        heartRateAverage: Double?,
+        heartRateMinimum: Double?,
+        heartRateMaximum: Double?,
+        respiratoryRateAverage: Double?,
+        oxygenSaturationAveragePercent: Double?,
+        oxygenSaturationMinimumPercent: Double?,
+        steps: Double?,
+        activeEnergyKcal: Double?,
+        exerciseMinutes: Double?,
+        standHours: Double?,
+        distanceMeters: Double?,
+        activityStatus: UserActivityStatus?,
+        isJetLagged: Bool,
+        activityNote: String?,
+        protocolTakenAny: Bool,
+        protocolIDsTaken: [String],
+        protocolIDsNotTaken: [String] = [],
+        protocolNamesTaken: [String],
+        protocolTakenAt: [Date],
+        minutesFromProtocolToSleep: [Double],
+        baselineTotalSleepDeltaHours: Double?,
+        baselineEfficiencyDeltaPercent: Double?,
+        baselineWASODeltaMinutes: Double?,
+        baselineLatencyDeltaMinutes: Double?,
+        baselineHRVDelta: Double?,
+        sourceNames: [String],
+        baselineWindowUsed: Int? = nil,
+        baselineTotalSleepMinutes: Double? = nil,
+        durationVsBaselineMinutes: Double? = nil,
+        protocolUsageStatus: ProtocolUsageStatus? = nil,
+        protocolTaken: Bool? = nil,
+        protocolName: String? = nil,
+        protocolTiming: String? = nil,
+        dataQualityStatus: String? = nil,
+        comparisonConfidence: ComparisonConfidence = .unavailable,
+        caffeineLate:            Bool? = nil,
+        alcohol:                 Bool? = nil,
+        workout:                 Bool? = nil,
+        lateMeal:                Bool? = nil,
+        highStress:              Bool? = nil,
+        screenTimeLate:          Bool? = nil,
+        nap:                     Bool? = nil,
+        travel:                  Bool? = nil,
+        perceivedSleepQuality:   String? = nil,
+        morningEnergy:           String? = nil,
+        contextNotesPresent:     Bool? = nil,
+        contextCompletionStatus: String? = nil
+    ) {
+        self.sleepDateKey = sleepDateKey
+        self.sleepStart = sleepStart
+        self.sleepEnd = sleepEnd
+        self.dataQuality = dataQuality
+        self.totalSleepHours = totalSleepHours
+        self.inBedHours = inBedHours
+        self.efficiencyPercent = efficiencyPercent
+        self.deepHours = deepHours
+        self.remHours = remHours
+        self.coreHours = coreHours
+        self.awakeHours = awakeHours
+        self.wasoMinutes = wasoMinutes
+        self.latencyMinutes = latencyMinutes
+        self.sleepScore = sleepScore
+        self.durationScore = durationScore
+        self.efficiencyScore = efficiencyScore
+        self.remScore = remScore
+        self.deepScore = deepScore
+        self.hrvAverage = hrvAverage
+        self.hrvMedian = hrvMedian
+        self.heartRateAverage = heartRateAverage
+        self.heartRateMinimum = heartRateMinimum
+        self.heartRateMaximum = heartRateMaximum
+        self.respiratoryRateAverage = respiratoryRateAverage
+        self.oxygenSaturationAveragePercent = oxygenSaturationAveragePercent
+        self.oxygenSaturationMinimumPercent = oxygenSaturationMinimumPercent
+        self.steps = steps
+        self.activeEnergyKcal = activeEnergyKcal
+        self.exerciseMinutes = exerciseMinutes
+        self.standHours = standHours
+        self.distanceMeters = distanceMeters
+        self.activityStatus = activityStatus
+        self.isJetLagged = isJetLagged
+        self.activityNote = activityNote
+        self.protocolTakenAny = protocolTakenAny
+        self.protocolIDsTaken = protocolIDsTaken
+        self.protocolIDsNotTaken = protocolIDsNotTaken
+        self.protocolNamesTaken = protocolNamesTaken
+        self.protocolTakenAt = protocolTakenAt
+        self.minutesFromProtocolToSleep = minutesFromProtocolToSleep
+        self.baselineTotalSleepDeltaHours = baselineTotalSleepDeltaHours
+        self.baselineEfficiencyDeltaPercent = baselineEfficiencyDeltaPercent
+        self.baselineWASODeltaMinutes = baselineWASODeltaMinutes
+        self.baselineLatencyDeltaMinutes = baselineLatencyDeltaMinutes
+        self.baselineHRVDelta = baselineHRVDelta
+        self.sourceNames = sourceNames
+        self.baselineWindowUsed = baselineWindowUsed
+        self.baselineTotalSleepMinutes = baselineTotalSleepMinutes
+        self.durationVsBaselineMinutes = durationVsBaselineMinutes
+        let status = protocolUsageStatus ?? (protocolTakenAny ? .taken : .unknown)
+        self.protocolUsageStatus = status
+        self.protocolTaken = protocolTaken ?? status.protocolTaken
+        self.protocolName = protocolName
+        self.protocolTiming = protocolTiming
+        self.dataQualityStatus = dataQualityStatus ?? dataQuality.rawValue
+        self.comparisonConfidence = comparisonConfidence
+        self.caffeineLate            = caffeineLate
+        self.alcohol                 = alcohol
+        self.workout                 = workout
+        self.lateMeal                = lateMeal
+        self.highStress              = highStress
+        self.screenTimeLate          = screenTimeLate
+        self.nap                     = nap
+        self.travel                  = travel
+        self.perceivedSleepQuality   = perceivedSleepQuality
+        self.morningEnergy           = morningEnergy
+        self.contextNotesPresent     = contextNotesPresent
+        self.contextCompletionStatus = contextCompletionStatus
+    }
 }
 
 nonisolated struct ProtocolEffectSummary: Codable, Hashable, Sendable, Identifiable {

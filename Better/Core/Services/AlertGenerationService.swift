@@ -29,7 +29,15 @@ nonisolated struct AlertGenerationSettings: Sendable, Hashable {
         protocolMissMonitoringEnabled: false,
         protocolMissCutoffHour: 22,
         localNotificationsEnabled: false,
-        notificationEnabledKinds: [.lowScore, .sleepDebt, .lowOxygenSaturation, .missedProtocol]
+        notificationEnabledKinds: [
+            .sleepDurationBelowBaseline,
+            .sleepDurationAboveBaseline,
+            .sleepEfficiencyDrop,
+            .poorSleepStreak,
+            .recoveryTrend,
+            .baselineAvailable,
+            .protocolPattern
+        ]
     )
 }
 
@@ -79,13 +87,16 @@ actor UserNotificationScheduler: LocalNotificationScheduling {
 actor AlertGenerationService {
     private let calendar: Calendar
     private let notificationScheduler: LocalNotificationScheduling?
+    private let notificationDecisionService: SleepNotificationDecisionService
 
     init(
         calendar: Calendar = .current,
-        notificationScheduler: LocalNotificationScheduling? = UserNotificationScheduler()
+        notificationScheduler: LocalNotificationScheduling? = UserNotificationScheduler(),
+        notificationDecisionService: SleepNotificationDecisionService? = nil
     ) {
         self.calendar = calendar
         self.notificationScheduler = notificationScheduler
+        self.notificationDecisionService = notificationDecisionService ?? SleepNotificationDecisionService(calendar: calendar)
     }
 
     @discardableResult
@@ -96,21 +107,39 @@ actor AlertGenerationService {
         profile: UserProfile,
         adherence: [ProtocolAdherence],
         settings: AlertGenerationSettings = .default,
+        protocolComparison: ProtocolComparisonResult? = nil,
+        previousAlerts: [SleepAlert] = [],
         createdAt: Date = Date()
     ) async throws -> [SleepAlert] {
+        let notificationDecisions = notificationDecisionService.decisions(input: SleepNotificationDecisionInput(
+            latestSession: latestSession,
+            recentSessions: recentSessions,
+            baseline: baseline,
+            protocolComparison: protocolComparison,
+            previousAlerts: previousAlerts,
+            createdAt: createdAt
+        ))
+        let generatedAlerts = buildAlerts(
+            latestSession: latestSession,
+            recentSessions: recentSessions,
+            baseline: baseline,
+            profile: profile,
+            adherence: adherence,
+            settings: settings,
+            createdAt: createdAt
+        )
+        let notificationHistoryAlerts = settings.localNotificationsEnabled
+            ? notificationAlerts(from: notificationDecisions, session: latestSession)
+            : []
         let alerts = deduplicated(
-            alerts: buildAlerts(
-                latestSession: latestSession,
-                recentSessions: recentSessions,
-                baseline: baseline,
-                profile: profile,
-                adherence: adherence,
-                settings: settings,
-                createdAt: createdAt
-            )
+            alerts: generatedAlerts + notificationHistoryAlerts
         )
 
-        try await scheduleNotificationIfAllowed(for: alerts, settings: settings)
+        try await scheduleNotificationIfAllowed(
+            for: alerts,
+            decisions: notificationDecisions,
+            settings: settings
+        )
         return alerts
     }
 
@@ -122,6 +151,8 @@ actor AlertGenerationService {
         profile: UserProfile,
         adherence: [ProtocolAdherence],
         settings: AlertGenerationSettings = .default,
+        protocolComparison: ProtocolComparisonResult? = nil,
+        previousAlerts: [SleepAlert] = [],
         createdAt: Date = Date()
     ) async throws -> [SleepAlert] {
         var allAlerts: [SleepAlert] = []
@@ -134,6 +165,8 @@ actor AlertGenerationService {
                 profile: profile,
                 adherence: adherence,
                 settings: settings,
+                protocolComparison: protocolComparison,
+                previousAlerts: previousAlerts + allAlerts,
                 createdAt: createdAt
             )
             allAlerts.append(contentsOf: alerts)
@@ -410,11 +443,39 @@ private extension AlertGenerationService {
         }
     }
 
+    func notificationAlerts(from decisions: [NotificationDecision], session: SleepSession) -> [SleepAlert] {
+        decisions
+            .filter(\.shouldNotify)
+            .map { decision in
+                alert(
+                    decision.notificationType.alertKind,
+                    session: session,
+                    title: decision.title,
+                    body: decision.body,
+                    severity: severity(for: decision.notificationType),
+                    createdAt: decision.createdAt
+                )
+            }
+    }
+
     func scheduleNotificationIfAllowed(
         for alerts: [SleepAlert],
+        decisions: [NotificationDecision]? = nil,
         settings: AlertGenerationSettings
     ) async throws {
         guard settings.localNotificationsEnabled, let notificationScheduler else { return }
+
+        if let decision = decisions?
+            .filter(\.shouldNotify)
+            .first(where: { settings.notificationEnabledKinds.contains($0.notificationType.alertKind) }) {
+            guard await notificationScheduler.authorizationState() == .authorized else { return }
+            try await notificationScheduler.scheduleNotification(
+                identifier: "notification|\(decision.notificationType.rawValue)|\(Int(decision.createdAt.timeIntervalSince1970))",
+                title: decision.title,
+                body: decision.body
+            )
+            return
+        }
 
         let notifiableAlerts = alerts.filter { settings.notificationEnabledKinds.contains($0.kind) }
         guard !notifiableAlerts.isEmpty else { return }
@@ -450,6 +511,15 @@ private extension AlertGenerationService {
             return "\(Int(hours))h"
         }
         return String(format: "%.1fh", hours)
+    }
+
+    func severity(for type: SleepNotificationType) -> Int {
+        switch type {
+        case .poorSleepStreak, .durationBelowBaseline, .efficiencyDrop:
+            1
+        case .durationAboveBaseline, .recovery, .baselineAvailable, .protocolDurationPattern, .protocolEfficiencyPattern:
+            0
+        }
     }
 
     static func deterministicUUID(_ key: String) -> UUID {

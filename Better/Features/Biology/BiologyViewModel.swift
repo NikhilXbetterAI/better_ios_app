@@ -50,7 +50,7 @@ final class BiologyViewModel {
             let profile = try await localRepository.fetchProfile()
             let baseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
 
-            var built = try await makeMetrics(
+            let built = try await makeMetrics(
                 vo2: vo2,
                 weight: weight,
                 leanMass: leanMass,

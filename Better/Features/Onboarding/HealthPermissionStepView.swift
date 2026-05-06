@@ -10,7 +10,7 @@ struct HealthPermissionStepView: View {
             OnboardingStepHeader(
                 icon: "heart.fill",
                 title: "Connect Apple Health",
-                body: "Sleep stages, heart rate, HRV, oxygen saturation, and respiratory rate power the dashboard. You can skip this now and connect later in Settings."
+                body: "Sleep stages, heart rate, HRV, oxygen saturation, and respiratory rate power the dashboard. We process everything locally. Your data never leaves this device."
             )
 
             VStack(alignment: .leading, spacing: BetterSpacing.medium) {

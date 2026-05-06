@@ -12,6 +12,13 @@ nonisolated enum SleepAlertKind: String, Codable, CaseIterable, Hashable, Sendab
     case irregularSchedule
     case improvementTrend
     case missedProtocol
+    case sleepDurationBelowBaseline
+    case sleepDurationAboveBaseline
+    case sleepEfficiencyDrop
+    case poorSleepStreak
+    case recoveryTrend
+    case baselineAvailable
+    case protocolPattern
 
     var id: String { rawValue }
 
@@ -39,6 +46,20 @@ nonisolated enum SleepAlertKind: String, Codable, CaseIterable, Hashable, Sendab
             "Improvement Trend"
         case .missedProtocol:
             "Missed Protocol"
+        case .sleepDurationBelowBaseline:
+            "Below Baseline"
+        case .sleepDurationAboveBaseline:
+            "Above Baseline"
+        case .sleepEfficiencyDrop:
+            "Efficiency Drop"
+        case .poorSleepStreak:
+            "Poor Sleep Streak"
+        case .recoveryTrend:
+            "Recovery Trend"
+        case .baselineAvailable:
+            "Baseline Available"
+        case .protocolPattern:
+            "Protocol Pattern"
         }
     }
 }

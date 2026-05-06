@@ -114,6 +114,79 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertEqual(fetchedAnchor, anchor)
     }
 
+    func testLocalRepositoryPersistsAndFetchesContextEntries() async throws {
+        let repository = try await makeRepository()
+        let entry = SleepContextEntry(
+            sleepDateKey: "2026-06-01",
+            caffeineLate: true,
+            alcohol: false,
+            workout: nil,
+            perceivedSleepQuality: .good,
+            notes: "Encrypted note"
+        )
+
+        try await repository.saveContextEntry(entry)
+
+        let fetched = try await repository.fetchContextEntry(forSleepDateKey: "2026-06-01")
+        let inventory = try await repository.fetchDataInventory()
+
+        XCTAssertNotNil(fetched)
+        XCTAssertEqual(fetched?.caffeineLate, true)
+        XCTAssertEqual(fetched?.alcohol, false)
+        XCTAssertNil(fetched?.workout)
+        XCTAssertEqual(fetched?.perceivedSleepQuality, .good)
+        XCTAssertEqual(fetched?.notes, "Encrypted note")
+        XCTAssertEqual(inventory.contextEntryCount, 1)
+
+        // Test replacement
+        var updated = entry
+        updated.caffeineLate = false
+        try await repository.saveContextEntry(updated)
+
+        let refetched = try await repository.fetchContextEntry(forSleepDateKey: "2026-06-01")
+        XCTAssertEqual(refetched?.caffeineLate, false)
+
+        // Test deletion
+        try await repository.deleteAllContextEntries()
+        let emptyInventory = try await repository.fetchDataInventory()
+        XCTAssertEqual(emptyInventory.contextEntryCount, 0)
+    }
+
+    func testLocalRepositoryPrunesOldData() async throws {
+        let repository = try await makeRepository()
+        let now = Date()
+        let sixtyOneDaysAgo = now.addingTimeInterval(-61 * 86_400)
+        let thirtyDaysAgo = now.addingTimeInterval(-30 * 86_400)
+        
+        let oldSession = Self.session(
+            key: SleepDateKey.calendarDateKey(for: sixtyOneDaysAgo, calendar: Self.utcCalendar),
+            start: sixtyOneDaysAgo.addingTimeInterval(-8 * 3_600),
+            end: sixtyOneDaysAgo
+        )
+        let recentSession = Self.session(
+            key: SleepDateKey.calendarDateKey(for: thirtyDaysAgo, calendar: Self.utcCalendar),
+            start: thirtyDaysAgo.addingTimeInterval(-8 * 3_600),
+            end: thirtyDaysAgo
+        )
+        
+        try await repository.saveSessions([oldSession, recentSession])
+        
+        var inventory = try await repository.fetchDataInventory()
+        XCTAssertEqual(inventory.sleepSessionCount, 2)
+        
+        try await repository.pruneDataOlderThan(days: 60)
+        
+        inventory = try await repository.fetchDataInventory()
+        XCTAssertEqual(inventory.sleepSessionCount, 1)
+        
+        let sessions = try await repository.fetchCachedSessions(
+            from: sixtyOneDaysAgo.addingTimeInterval(-100 * 86_400),
+            to: now
+        )
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions.first?.sleepDateKey, recentSession.sleepDateKey)
+    }
+
     @MainActor
     func testSyncCoordinatorInitialSyncCachesSessionsBaselineBiometricsAndSuppressesOlderAlerts() async throws {
         let localRepository = try await makeRepository()

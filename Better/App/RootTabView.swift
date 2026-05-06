@@ -6,6 +6,8 @@ struct RootTabView: View {
     @State private var sleepViewModel: SleepDashboardViewModel
     @State private var trendsViewModel: TrendsViewModel
     @State private var protocolViewModel: ProtocolViewModel
+    @State private var protocolComparisonViewModel: ProtocolComparisonDashboardViewModel
+    @State private var contextViewModel: ContextFactorDashboardViewModel
     @State private var alertsViewModel: AlertsViewModel
     @State private var settingsViewModel: SettingsViewModel
     @State private var biologyViewModel: BiologyViewModel
@@ -27,13 +29,20 @@ struct RootTabView: View {
         _protocolViewModel = State(initialValue: ProtocolViewModel(
             localRepository: environment.localRepository
         ))
+        _protocolComparisonViewModel = State(initialValue: ProtocolComparisonDashboardViewModel(
+            localRepository: environment.localRepository
+        ))
+        _contextViewModel = State(initialValue: ContextFactorDashboardViewModel(
+            localRepository: environment.localRepository
+        ))
         _alertsViewModel = State(initialValue: AlertsViewModel(
             localRepository: environment.localRepository
         ))
         _settingsViewModel = State(initialValue: SettingsViewModel(
             localRepository: environment.localRepository,
             healthRepository: environment.healthRepository,
-            syncCoordinator: environment.syncCoordinator
+            syncCoordinator: environment.syncCoordinator,
+            privacyService: environment.privacyDataService
         ))
         _biologyViewModel = State(initialValue: BiologyViewModel(
             localRepository: environment.localRepository,
@@ -51,11 +60,7 @@ struct RootTabView: View {
 
     var body: some View {
         Group {
-            if !hasLoadedProfile {
-                loadingView
-            } else if hasCompletedOnboarding {
-                tabs
-            } else {
+            if hasLoadedProfile && !hasCompletedOnboarding {
                 OnboardingFlowView(viewModel: onboardingViewModel) {
                     hasCompletedOnboarding = true
                     Task {
@@ -63,18 +68,18 @@ struct RootTabView: View {
                         await protocolViewModel.onAppear()
                     }
                 }
+            } else {
+                tabs
             }
         }
         .task {
             await loadOnboardingState()
         }
-    }
-
-    private var loadingView: some View {
-        ZStack {
-            BetterColors.background.ignoresSafeArea()
-            ProgressView()
-                .tint(BetterColors.brand)
+        .onChange(of: settingsViewModel.privacyService.deleteCompleted) { _, completed in
+            guard completed else { return }
+            hasLoadedProfile = false
+            hasCompletedOnboarding = false
+            Task { await loadOnboardingState() }
         }
     }
 
@@ -94,7 +99,7 @@ struct RootTabView: View {
             NavigationStack {
                 TrendsTabView(
                     viewModel: trendsViewModel,
-                    protocolImpactSummary: protocolViewModel.impactSummary
+                    protocolComparisonViewModel: protocolComparisonViewModel
                 )
             }
             .tabItem { Label(AppTab.insights.title, systemImage: AppTab.insights.systemImageName) }
@@ -102,7 +107,11 @@ struct RootTabView: View {
 
             // ── Protocol ─────────────────────────────────────────────────
             NavigationStack {
-                ProtocolTabView(viewModel: protocolViewModel)
+                ProtocolTabView(
+                    viewModel: protocolViewModel,
+                    comparisonViewModel: protocolComparisonViewModel,
+                    contextViewModel: contextViewModel
+                )
             }
             .tabItem { Label(AppTab.protocol.title, systemImage: AppTab.protocol.systemImageName) }
             .tag(AppTab.protocol)
@@ -140,9 +149,6 @@ struct RootTabView: View {
                 }
             }
         }
-        .task {
-            await protocolViewModel.onAppear()
-        }
     }
 
     private func loadOnboardingState() async {
@@ -151,10 +157,21 @@ struct RootTabView: View {
         do {
             let profile = try await environment.localRepository.fetchProfile()
             hasCompletedOnboarding = profile.hasCompletedOnboarding
+            
+            if hasCompletedOnboarding {
+                // Fire off health auth and sync in background without blocking the splash screen dismissal
+                Task {
+                    await environment.syncCoordinator.requestHealthAuthorization()
+                    await environment.syncCoordinator.performInitialSync()
+                }
+            }
         } catch {
             hasCompletedOnboarding = false
         }
-        hasLoadedProfile = true
+
+        withAnimation(.easeInOut) {
+            hasLoadedProfile = true
+        }
     }
 }
 

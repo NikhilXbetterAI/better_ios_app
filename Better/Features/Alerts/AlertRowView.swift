@@ -54,6 +54,12 @@ struct AlertRowView: View {
         case .irregularSchedule: "shuffle"
         case .improvementTrend: "chart.line.uptrend.xyaxis"
         case .missedProtocol: "pills.fill"
+        case .sleepDurationBelowBaseline, .sleepDurationAboveBaseline: "clock.fill"
+        case .sleepEfficiencyDrop: "gauge.with.dots.needle.67percent"
+        case .poorSleepStreak: "exclamationmark.triangle.fill"
+        case .recoveryTrend: "arrow.up.heart.fill"
+        case .baselineAvailable: "calendar.badge.checkmark"
+        case .protocolPattern: "pills.fill"
         }
     }
 

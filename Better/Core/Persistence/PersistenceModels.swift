@@ -12,14 +12,15 @@ nonisolated enum BetterPersistenceContainerFactory {
         StoredAlert.self,
         StoredUserProfile.self,
         StoredSyncAnchor.self,
-        StoredManualBiologyEntry.self
+        StoredManualBiologyEntry.self,
+        StoredSleepContextEntry.self
     ])
 
     static func makeLiveContainer() throws -> ModelContainer {
-        try ModelContainer(
-            for: schema,
-            configurations: ModelConfiguration(isStoredInMemoryOnly: false)
-        )
+        let config = ModelConfiguration(isStoredInMemoryOnly: false)
+        let container = try ModelContainer(for: schema, configurations: config)
+        applyFileProtection(to: container.configurations.first?.url)
+        return container
     }
 
     static func makePreviewContainer() throws -> ModelContainer {
@@ -28,27 +29,51 @@ nonisolated enum BetterPersistenceContainerFactory {
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
     }
+
+    /// Upgrades SQLite store files to FileProtectionType.complete so they are
+    /// inaccessible while the device is locked, independently of app-level encryption.
+    private static func applyFileProtection(to storeURL: URL?) {
+        guard let storeURL else { return }
+        let fileManager = FileManager.default
+        // SQLite stores consist of up to three files.
+        let candidatePaths = [
+            storeURL.path,
+            storeURL.path + "-shm",
+            storeURL.path + "-wal"
+        ]
+        for path in candidatePaths {
+            guard fileManager.fileExists(atPath: path) else { continue }
+            try? fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.complete],
+                ofItemAtPath: path
+            )
+        }
+    }
 }
 
 enum PersistenceJSON {
-    static let encoder: JSONEncoder = {
+    /// Encodes value to JSON then encrypts the bytes with AES-256-GCM.
+    /// If encryption is unavailable (e.g. Keychain locked), the plain JSON is
+    /// returned so writes never fail silently — the store's own file protection
+    /// still applies.
+    nonisolated static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-
-    static func encode<T: Encodable>(_ value: T) throws -> Data {
-        try encoder.encode(value)
+        let jsonData = try encoder.encode(value)
+        return (try? EncryptionService.shared.encrypt(jsonData)) ?? jsonData
     }
 
-    static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        try decoder.decode(type, from: data)
+    /// Decrypts the data and decodes it.  If decryption fails the data is
+    /// treated as plain JSON — this provides transparent migration from the
+    /// pre-encryption storage format without a schema change.
+    nonisolated static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let decrypted = try? EncryptionService.shared.decrypt(data),
+           let value = try? decoder.decode(type, from: decrypted) {
+            return value
+        }
+        return try decoder.decode(type, from: data)
     }
 }
 
@@ -569,5 +594,46 @@ final class StoredManualBiologyEntry {
     func toDomain() -> ManualBiologyEntry? {
         guard let kind = BiologyMetricKind(rawValue: kindRawValue) else { return nil }
         return ManualBiologyEntry(id: id, kind: kind, value: value, enteredAt: enteredAt)
+    }
+}
+
+/// Stores one nightly sleep context entry.
+/// The entire `SleepContextEntry` value (including all Bool? fields) is
+/// encoded as an encrypted JSON blob so the tristate semantics are preserved.
+@Model
+final class StoredSleepContextEntry {
+    @Attribute(.unique) var id: UUID
+    /// Formatted as `"YYYY-MM-DD"` — one entry per sleep date.
+    @Attribute(.unique) var sleepDateKey: String
+    var entryData: Data
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID,
+        sleepDateKey: String,
+        entryData: Data,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id          = id
+        self.sleepDateKey = sleepDateKey
+        self.entryData   = entryData
+        self.createdAt   = createdAt
+        self.updatedAt   = updatedAt
+    }
+
+    convenience init(domain: SleepContextEntry) throws {
+        self.init(
+            id: domain.id,
+            sleepDateKey: domain.sleepDateKey,
+            entryData: try PersistenceJSON.encode(domain),
+            createdAt: domain.createdAt,
+            updatedAt: domain.updatedAt
+        )
+    }
+
+    func toDomain() throws -> SleepContextEntry {
+        try PersistenceJSON.decode(SleepContextEntry.self, from: entryData)
     }
 }
