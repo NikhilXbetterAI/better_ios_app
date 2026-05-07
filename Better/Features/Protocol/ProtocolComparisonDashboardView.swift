@@ -212,9 +212,11 @@ struct ProtocolComparisonDashboardView: View {
     }
 }
 
+#if DEBUG
 #Preview("Protocol Comparison") {
     ProtocolComparisonDashboardView(
         viewModel: ProtocolComparisonDashboardViewModel(localRepository: AppEnvironment.preview().localRepository)
     )
 }
+#endif
 

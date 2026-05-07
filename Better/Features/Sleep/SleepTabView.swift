@@ -1191,6 +1191,7 @@ private func formatDuration(_ interval: TimeInterval) -> String {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("Sleep Tab – With Data") {
     let env = AppEnvironment.preview()
     let vm = SleepDashboardViewModel(
@@ -1202,7 +1203,7 @@ private func formatDuration(_ interval: TimeInterval) -> String {
     vm.dataQuality = .detailedStages
     vm.authorizationState = .canQueryHealthData
 
-    return NavigationStack {
+    NavigationStack {
         SleepTabView(viewModel: vm)
     }
     .preferredColorScheme(.dark)
@@ -1216,8 +1217,9 @@ private func formatDuration(_ interval: TimeInterval) -> String {
     )
     vm.authorizationState = .notRequested
 
-    return NavigationStack {
+    NavigationStack {
         SleepTabView(viewModel: vm)
     }
     .preferredColorScheme(.dark)
 }
+#endif

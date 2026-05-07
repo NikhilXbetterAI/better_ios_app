@@ -338,6 +338,7 @@ struct OnboardingNoticeView: View {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("Onboarding") {
     OnboardingFlowView(
         viewModel: OnboardingViewModel(
@@ -347,3 +348,4 @@ struct OnboardingNoticeView: View {
         onCompleted: {}
     )
 }
+#endif

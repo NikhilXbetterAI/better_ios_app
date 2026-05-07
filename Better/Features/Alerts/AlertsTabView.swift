@@ -113,6 +113,8 @@ struct AlertsTabView: View {
     }
 }
 
+#if DEBUG
 #Preview("Alerts") {
     AlertsTabView(viewModel: AlertsViewModel(localRepository: AppEnvironment.preview().localRepository))
 }
+#endif

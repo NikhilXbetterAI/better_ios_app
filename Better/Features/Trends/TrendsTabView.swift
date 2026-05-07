@@ -224,6 +224,7 @@ struct TrendsTabView: View {
     }
 }
 
+#if DEBUG
 #Preview("Trends") {
     let env = AppEnvironment.preview()
     NavigationStack {
@@ -231,3 +232,4 @@ struct TrendsTabView: View {
     }
     .preferredColorScheme(.dark)
 }
+#endif

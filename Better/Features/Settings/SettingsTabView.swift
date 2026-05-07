@@ -173,6 +173,7 @@ private struct ResearchExportDocumentPicker: UIViewControllerRepresentable {
     }
 }
 
+#if DEBUG
 #Preview("Settings") {
     let env = AppEnvironment.preview()
     SettingsTabView(viewModel: SettingsViewModel(
@@ -182,3 +183,4 @@ private struct ResearchExportDocumentPicker: UIViewControllerRepresentable {
         privacyService: env.privacyDataService
     ))
 }
+#endif

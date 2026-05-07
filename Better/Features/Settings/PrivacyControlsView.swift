@@ -200,6 +200,7 @@ struct PrivacyControlsView: View {
     }
 }
 
+#if DEBUG
 #Preview("Privacy Controls") {
     let env = AppEnvironment.preview()
     ScrollView {
@@ -212,3 +213,4 @@ struct PrivacyControlsView: View {
     }
     .background(BetterColors.background)
 }
+#endif

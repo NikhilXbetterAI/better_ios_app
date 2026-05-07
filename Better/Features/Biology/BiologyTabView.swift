@@ -429,6 +429,7 @@ private func ratingColor(_ rating: String) -> Color {
     }
 }
 
+#if DEBUG
 #Preview("Biology") {
     BiologyTabView(
         viewModel: BiologyViewModel(
@@ -437,3 +438,4 @@ private func ratingColor(_ rating: String) -> Color {
         )
     )
 }
+#endif

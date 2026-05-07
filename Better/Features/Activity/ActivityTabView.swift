@@ -482,6 +482,7 @@ private struct ActivityStatusEditorSheet: View {
     }
 }
 
+#if DEBUG
 #Preview("Activity") {
     ActivityTabView(
         viewModel: ActivityViewModel(
@@ -490,3 +491,4 @@ private struct ActivityStatusEditorSheet: View {
         )
     )
 }
+#endif

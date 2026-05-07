@@ -1264,6 +1264,7 @@ private struct ProtocolToggleStyle: ToggleStyle {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("Protocol — Active") {
     let env = AppEnvironment.preview()
     NavigationStack {
@@ -1274,3 +1275,4 @@ private struct ProtocolToggleStyle: ToggleStyle {
         )
     }
 }
+#endif

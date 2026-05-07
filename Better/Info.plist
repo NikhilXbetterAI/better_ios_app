@@ -23,13 +23,15 @@
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<true/>
+	<false/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Better reads sleep, heart rate, HRV, blood oxygen, respiratory rate, body composition (weight, body fat, temperature), fitness (VO2 Max), and daily activity (steps, calories, exercise, stand hours) from Apple Health to power sleep insights and research tracking.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Better writes sleep analysis data back to Apple Health so your sleep records are available to other health apps and remain in sync across your devices.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -42,7 +44,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
-		<string>healthkit</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

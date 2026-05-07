@@ -331,6 +331,7 @@ struct ContextFactorDashboardView: View {
     }
 }
 
+#if DEBUG
 #Preview("Context Factor Dashboard") {
     let env = AppEnvironment.preview()
     ScrollView {
@@ -341,3 +342,4 @@ struct ContextFactorDashboardView: View {
     }
     .background(BetterColors.background)
 }
+#endif

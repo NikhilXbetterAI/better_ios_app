@@ -190,6 +190,8 @@ private enum SecondarySheet: String, Identifiable {
     var id: String { rawValue }
 }
 
+#if DEBUG
 #Preview("Root Tabs") {
     RootTabView(environment: .preview())
 }
+#endif

@@ -8,6 +8,7 @@ struct BetterApp: App {
     private let environment: AppEnvironment
 
     init() {
+        #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--uitesting") {
             environment = .uiTesting()
         } else {
@@ -17,6 +18,13 @@ struct BetterApp: App {
                 fatalError("Unable to create Better app environment: \(error)")
             }
         }
+        #else
+        do {
+            environment = try .live()
+        } catch {
+            fatalError("Unable to create Better app environment: \(error)")
+        }
+        #endif
 
         environment.backgroundTaskService.registerLaunchHandlers()
     }
