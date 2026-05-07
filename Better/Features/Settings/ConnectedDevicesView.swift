@@ -30,7 +30,6 @@ struct ConnectedDevicesView: View {
                                 .foregroundStyle(BetterColors.subtext)
                         }
                         Spacer()
-                        Circle().fill(BetterColors.success).frame(width: 8, height: 8)
                     }
                 }
             }

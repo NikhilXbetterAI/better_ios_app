@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import HealthKit
 import Observation
+import OSLog
 
 enum SyncCoordinatorPhase: Sendable, Hashable {
     case idle
@@ -25,6 +26,7 @@ final class SyncCoordinator {
     private let processor: SleepDataProcessor
     private let alertService: AlertGenerationService
     private let calendar: Calendar
+    private let logger = Logger(subsystem: "Better", category: "SyncCoordinator")
     private var observationTask: Task<Void, Never>?
 
     private(set) var phase: SyncCoordinatorPhase = .idle
@@ -77,7 +79,11 @@ final class SyncCoordinator {
         if case .failed = phase {
             return
         }
-        try? await saveMetadataDate(now, for: Self.lastForegroundRefreshMetadataKey)
+        do {
+            try await saveMetadataDate(now, for: Self.lastForegroundRefreshMetadataKey)
+        } catch {
+            logger.error("Failed to save foreground refresh timestamp: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     func performHistoricalRefresh(forSleepDateKey sleepDateKey: String) async {
@@ -296,15 +302,15 @@ private extension SyncCoordinator {
     }
 
     func attachBiometrics(to session: SleepSession) async throws -> SleepSession {
-        let sampleGroups = try await withThrowingTaskGroup(of: [BiometricSample].self) { group in
+        let sampleGroups = await withTaskGroup(of: [BiometricSample].self) { group in
             for type in BiometricType.dashboardTypes {
                 group.addTask {
-                    try await self.healthRepository.fetchBiometrics(for: type, from: session.startDate, to: session.endDate)
+                    (try? await self.healthRepository.fetchBiometrics(for: type, from: session.startDate, to: session.endDate)) ?? []
                 }
             }
-            
+
             var all: [[BiometricSample]] = []
-            for try await samples in group {
+            for await samples in group {
                 all.append(samples)
             }
             return all

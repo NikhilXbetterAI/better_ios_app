@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import HealthKit
 
+#if DEBUG
 // Null HealthKit repository used only for previews and UI testing.
 // Returns empty data so the sync layer doesn't overwrite MockLocalDataRepository state.
 nonisolated struct PreviewHealthKitRepository: HealthKitRepositoryProtocol {
@@ -80,3 +81,4 @@ nonisolated struct PreviewHealthKitRepository: HealthKitRepositoryProtocol {
         HealthKitAnchoredResult(samples: [], deletedObjects: [], newAnchor: nil)
     }
 }
+#endif

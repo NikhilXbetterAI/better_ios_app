@@ -5,44 +5,102 @@ struct HealthPermissionStepView: View {
     let isWorking: Bool
     let onConnect: () -> Void
 
+    @State private var rowOpacities: [Double] = [0, 0]
+    @State private var rowOffsets: [CGFloat] = [20, 20]
+
     var body: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.xxLarge) {
-            OnboardingStepHeader(
-                icon: "heart.fill",
-                title: "Connect Apple Health",
-                body: "Sleep stages, heart rate, HRV, oxygen saturation, and respiratory rate power the dashboard. We process everything locally. Your data never leaves this device."
-            )
+        GeometryReader { geometry in
+            let screenHeight = geometry.size.height
 
-            VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                permissionRow("Sleep Analysis", "Sleep duration, stages, efficiency, latency, and awakenings", "moon.zzz.fill")
-                permissionRow("Heart and Recovery", "Overnight heart rate, HRV, oxygen, and respiratory rate", "waveform.path.ecg")
-            }
-            .padding(BetterSpacing.large)
-            .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-
-            statusView
-
-            Button(action: onConnect) {
-                HStack {
-                    if isWorking {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: "heart.text.square.fill")
-                    }
-                    Text(isWorking ? "Connecting" : "Connect Apple Health")
+            VStack(spacing: 0) {
+                // ── Hero: Activity rings ───────────────────────────────────────
+                ZStack {
+                    ActivityRingsHero(rings: ActivityRingsHero.healthRings)
                 }
-                .font(BetterTypography.subheadline)
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(BetterColors.brand, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .disabled(isWorking)
+                .frame(height: screenHeight * 0.38)
 
-            Spacer()
+                // ── Text ──────────────────────────────────────────────────────
+                VStack(spacing: BetterSpacing.small) {
+                    Text("Connect Apple Health")
+                        .font(BetterTypography.display)
+                        .foregroundStyle(BetterColors.text)
+                        .multilineTextAlignment(.center)
+
+                    Text("Sleep stages, heart rate, HRV, oxygen saturation, and respiratory rate power the dashboard. Everything processed locally — your data never leaves this device.")
+                        .font(BetterTypography.body)
+                        .foregroundStyle(BetterColors.subtext)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, BetterSpacing.screen)
+                .padding(.top, BetterSpacing.large)
+
+                // ── Permission rows card ───────────────────────────────────────
+                VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+                    permissionRow(
+                        "Sleep Analysis",
+                        "Duration, stages, efficiency, latency, and awakenings",
+                        "moon.zzz.fill",
+                        BetterColors.stageDeep
+                    )
+                    .opacity(rowOpacities[0])
+                    .offset(y: rowOffsets[0])
+
+                    Divider().overlay(BetterColors.border)
+
+                    permissionRow(
+                        "Heart and Recovery",
+                        "Overnight heart rate, HRV, oxygen, and respiratory rate",
+                        "waveform.path.ecg",
+                        BetterColors.heartRate
+                    )
+                    .opacity(rowOpacities[1])
+                    .offset(y: rowOffsets[1])
+                }
+                .padding(BetterSpacing.large)
+                .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(BetterColors.glassStroke, lineWidth: 1)
+                )
+                .padding(.horizontal, BetterSpacing.screen)
+                .padding(.top, BetterSpacing.xLarge)
+
+                // ── Status ────────────────────────────────────────────────────
+                statusView
+                    .padding(.horizontal, BetterSpacing.screen)
+                    .padding(.top, BetterSpacing.medium)
+
+                Spacer(minLength: 0)
+                Color.clear.frame(height: 120)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+        }
+        .onAppear { animateRows() }
+    }
+
+    // MARK: - Permission row
+
+    private func permissionRow(_ title: String, _ body: String, _ icon: String, _ color: Color) -> some View {
+        HStack(alignment: .top, spacing: BetterSpacing.medium) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 36, height: 36)
+                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(BetterTypography.subheadline)
+                    .foregroundStyle(BetterColors.text)
+                Text(body)
+                    .font(BetterTypography.footnote)
+                    .foregroundStyle(BetterColors.subtext)
+            }
         }
     }
+
+    // MARK: - Status view (unchanged logic)
 
     @ViewBuilder
     private var statusView: some View {
@@ -52,24 +110,21 @@ struct HealthPermissionStepView: View {
         case .healthDataUnavailable:
             OnboardingNoticeView(icon: "exclamationmark.triangle.fill", title: "Apple Health is unavailable on this device.", color: BetterColors.warning)
         case .requestCompleted, .canQueryHealthData:
-            OnboardingNoticeView(icon: "checkmark.circle.fill", title: "Apple Health request completed.", color: BetterColors.success)
+            OnboardingNoticeView(icon: "checkmark.circle.fill", title: "Apple Health connected successfully.", color: BetterColors.success)
         case .noReadableSleepData:
-            OnboardingNoticeView(icon: "moon.zzz", title: "Connected, but no readable sleep data was found yet.", color: BetterColors.brand)
+            OnboardingNoticeView(icon: "moon.zzz", title: "Connected, but no sleep data found yet.", color: BetterColors.brand)
         case .failed(let message):
             OnboardingNoticeView(icon: "exclamationmark.circle.fill", title: message, color: BetterColors.warning)
         }
     }
 
-    private func permissionRow(_ title: String, _ body: String, _ icon: String) -> some View {
-        HStack(alignment: .top, spacing: BetterSpacing.medium) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(BetterColors.brand)
-                .frame(width: 34, height: 34)
-                .background(BetterColors.brand.opacity(0.13), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(BetterTypography.subheadline).foregroundStyle(BetterColors.text)
-                Text(body).font(BetterTypography.footnote).foregroundStyle(BetterColors.subtext)
+    // MARK: - Row stagger animation
+
+    private func animateRows() {
+        for i in 0..<2 {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.8).delay(Double(i) * 0.12 + 0.3)) {
+                rowOpacities[i] = 1
+                rowOffsets[i] = 0
             }
         }
     }

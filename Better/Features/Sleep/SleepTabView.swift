@@ -1,26 +1,25 @@
 import SwiftUI
 
-// MARK: - Sleep tab root view
+// MARK: - Sleep Dashboard
 
 struct SleepTabView: View {
     @Bindable var viewModel: SleepDashboardViewModel
     var onOpenProfile: () -> Void = {}
+
     @State private var isHistoryPresented = false
-    @State private var isSleepScoreCalculationVisible = false
+    @State private var heroAppeared = false
+    @State private var swipeDelta: CGFloat = 0
+    @State private var isSwipeNavigating = false
 
     var body: some View {
-        ZStack {
-            background
-
-            if let session = viewModel.selectedSession {
-                sessionContent(session: session)
-            } else {
-                emptyContent
+        GeometryReader { geometry in
+            ZStack {
+                backgroundLayer(screenHeight: geometry.size.height)
+                mainContent
             }
         }
         .task { await viewModel.onAppear() }
         .refreshable { await viewModel.refresh() }
-        .navigationTitle("")
         .navigationBarHidden(true)
         .sheet(isPresented: $isHistoryPresented) {
             SleepHistoryCalendarSheet(
@@ -42,420 +41,602 @@ struct SleepTabView: View {
         }
     }
 
-    // MARK: - Backgrounds
+    // MARK: - Background
 
-    private var background: some View {
-        LinearGradient(
-            colors: [BetterColors.background, BetterColors.backgroundElevated],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+    @ViewBuilder
+    private func backgroundLayer(screenHeight: CGFloat) -> some View {
+        ZStack {
+            BetterColors.background
+            if let session = viewModel.selectedSession {
+                let color = scoreColor(healthSleepScore(for: session).overall)
+                RadialGradient(
+                    colors: [color.opacity(0.16), color.opacity(0.05), .clear],
+                    center: .init(x: 0.5, y: 0.0),
+                    startRadius: 0,
+                    endRadius: screenHeight * 0.52
+                )
+                .animation(.easeInOut(duration: 0.6), value: color)
+            }
+        }
         .ignoresSafeArea()
     }
 
-    // MARK: - Session content
+    // MARK: - Main Content
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if viewModel.isLoading && viewModel.selectedSession == nil {
+            SleepDashboardSkeletonView()
+        } else if let session = viewModel.selectedSession {
+            sessionContent(session: session)
+        } else {
+            emptyContent
+        }
+    }
+
+    // MARK: - Session Content
 
     private func sessionContent(session: SleepSession) -> some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: BetterSpacing.medium) {
-                headerSection(session: session)
-                    .padding(.horizontal, BetterSpacing.screen)
+        let score = healthSleepScore(for: session)
+        return ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                heroSection(session: session, score: score)
+                    .offset(x: swipeDelta * 0.06)
 
-                // ── Sleep Score ──────────────────────────────────────────
-                SleepMetricCard(
-                    title: "Sleep Score",
-                    iconName: "moon.fill",
-                    iconColor: BetterColors.brand,
-                    defaultExpanded: true,
-                    summary: {
-                        SleepScoreBadge(score: healthSleepScore(for: session).overall)
-                    },
-                    content: {
-                        scoreCardContent(session: session)
+                VStack(spacing: BetterSpacing.medium) {
+                    stagesCard(session: session)
+
+                    if session.sleepLatency > 0 {
+                        latencyCard(session: session)
                     }
-                )
+
+                    if let baseline = viewModel.selectedBaseline, baseline.validNights >= 5 {
+                        baselineCard(session: session, baseline: baseline)
+                        whatChangedCard(session: session, baseline: baseline)
+                    } else {
+                        baselineNotReadyCard
+                    }
+
+                    if let fallback = viewModel.healthKitFallbackState {
+                        HealthKitFallbackBannerView(state: fallback)
+                    }
+
+                    if let biometrics = session.biometrics {
+                        biometricsCard(biometrics: biometrics)
+                    }
+
+                    if let baseline = viewModel.selectedBaseline, baseline.validNights >= 5 {
+                        scheduleCard(session: session, baseline: baseline)
+                    }
+
+                    if let error = viewModel.errorMessage {
+                        errorFooter(message: error)
+                    }
+
+                    Spacer(minLength: 110)
+                }
                 .padding(.horizontal, BetterSpacing.screen)
-
-                // ── vs Baseline ─────────────────────────────────────────
-                if let baseline = viewModel.selectedBaseline, baseline.validNights >= 5 {
-                    SleepMetricCard(
-                        title: "vs Your Baseline",
-                        iconName: "chart.line.uptrend.xyaxis",
-                        iconColor: baselineIconColor(session: session, baseline: baseline),
-                        summary: {
-                            baselineSummaryBadge(session: session, baseline: baseline)
-                        },
-                        content: {
-                            SleepVsBaselineView(session: session, baseline: baseline)
-                            if let confidence = viewModel.baselineConfidenceLabel {
-                                Text("Baseline confidence: \(confidence)")
-                                    .font(BetterTypography.caption)
-                                    .foregroundStyle(BetterColors.subtext)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    )
-                    .padding(.horizontal, BetterSpacing.screen)
-
-                    // What Changed grid
-                    SleepPlainCard(title: "What Changed Tonight") {
-                        WhatChangedGridView(session: session, baseline: baseline)
-                    }
-                    .padding(.horizontal, BetterSpacing.screen)
-                } else {
-                    baselineNotReadyCard
-                        .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                // ── Data-quality fallback banner ─────────────────────────
-                if let fallback = viewModel.healthKitFallbackState {
-                    HealthKitFallbackBannerView(state: fallback)
-                        .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                if !viewModel.sleepInsights.isEmpty {
-                    SleepPlainCard(title: "Sleep Insights") {
-                        SleepInsightListView(insights: viewModel.sleepInsights)
-                    }
-                    .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                // ── Sleep Stages ────────────────────────────────────────
-                SleepMetricCard(
-                    title: "Sleep Stages",
-                    iconName: "moon.stars.fill",
-                    iconColor: BetterColors.stageDeep,
-                    summary: {
-                        stageSummaryBadge(session: session)
-                    },
-                    content: {
-                        stagesCardContent(session: session)
-                    }
-                )
-                .padding(.horizontal, BetterSpacing.screen)
-
-                // ── Sleep Latency ───────────────────────────────────────
-                if session.sleepLatency > 0 {
-                    sleepLatencyCard(session: session)
-                        .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                // ── Heart Rate & Biometrics ─────────────────────────────
-                if let biometrics = session.biometrics {
-                    SleepMetricCard(
-                        title: "Heart Rate",
-                        iconName: "heart.fill",
-                        iconColor: BetterColors.heartRate,
-                        summary: {
-                            HeartRateSummary(biometrics: biometrics)
-                        },
-                        content: {
-                            BiometricsTabContent(
-                                biometrics: biometrics,
-                                baseline: viewModel.selectedBaseline,
-                                recentSessions: viewModel.recentSessions
-                            )
-                        }
-                    )
-                    .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                // ── Respiratory Rate ────────────────────────────────────
-                if let rate = session.biometrics?.respiratoryRateAverage {
-                    SleepMetricCard(
-                        title: "Respiratory Rate",
-                        iconName: "wind",
-                        iconColor: BetterColors.hrv,
-                        summary: {
-                            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                Text(String(format: "%.1f", rate))
-                                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                                    .foregroundStyle(BetterColors.text)
-                                Text("br/min")
-                                    .font(.system(size: 12, design: .rounded))
-                                    .foregroundStyle(BetterColors.subtext)
-                            }
-                        },
-                        content: {
-                            RespiratoryRateCardContent(
-                                rate: rate,
-                                baseline: viewModel.selectedBaseline,
-                                recentSessions: viewModel.recentSessions
-                            )
-                        }
-                    )
-                    .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                // ── Schedule Consistency ────────────────────────────────
-                if let baseline = viewModel.selectedBaseline, baseline.validNights >= 5 {
-                    SleepMetricCard(
-                        title: "Schedule Consistency",
-                        iconName: "clock.fill",
-                        iconColor: BetterColors.warning,
-                        summary: {
-                            ScheduleConsistencySummary(baseline: baseline)
-                        },
-                        content: {
-                            ScheduleConsistencyView(
-                                session: session,
-                                baseline: baseline,
-                                recentSessions: viewModel.recentSessions
-                            )
-                        }
-                    )
-                    .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                // Error footer
-                if let error = viewModel.errorMessage, viewModel.selectedSession != nil {
-                    errorFooter(message: error)
-                        .padding(.horizontal, BetterSpacing.screen)
-                }
-
-                Spacer(minLength: BetterSpacing.xxLarge)
+                .padding(.top, BetterSpacing.medium)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, BetterSpacing.screen)
         }
         .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+        .gesture(daySwipeGesture)
     }
 
-    // MARK: - Empty / permission state
+    // MARK: - Swipe Navigation
 
-    private var emptyContent: some View {
-        Group {
-            if viewModel.isLoading {
-                SleepDashboardSkeletonView()
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: BetterSpacing.xxLarge) {
-                        headerNoSession
-
-                        SleepNoDataView(
-                            authorizationState: viewModel.authorizationState,
-                            onConnect: { Task { await viewModel.requestHealthKitAccess() } }
-                        )
-
-                        Spacer(minLength: 40)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, BetterSpacing.screen)
+    private var daySwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 28, coordinateSpace: .global)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                withAnimation(.interactiveSpring(response: 0.25)) {
+                    swipeDelta = value.translation.width
                 }
-                .scrollBounceBehavior(.basedOnSize, axes: .vertical)
             }
+            .onEnded { value in
+                if value.translation.width > 72 {
+                    navigateDay(by: -1)
+                } else if value.translation.width < -72 {
+                    navigateDay(by: 1)
+                }
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    swipeDelta = 0
+                }
+            }
+    }
+
+    private func navigateDay(by delta: Int) {
+        guard !isSwipeNavigating else { return }
+        isSwipeNavigating = true
+        guard
+            let current = SleepDateKey.date(from: viewModel.selectedSleepDateKey),
+            let next = Calendar.current.date(byAdding: .day, value: delta, to: current),
+            next <= Date()
+        else {
+            isSwipeNavigating = false
+            return
+        }
+        let nextKey = SleepDateKey.calendarDateKey(for: next, calendar: .current)
+        Task {
+            heroAppeared = false
+            await viewModel.selectDate(nextKey)
+            withAnimation { heroAppeared = true }
+            isSwipeNavigating = false
         }
     }
 
-    // MARK: - Header
+    // MARK: - Hero Section
 
-    private func headerSection(session: SleepSession) -> some View {
-        HStack(alignment: .top) {
+    private func heroSection(session: SleepSession, score: HealthSleepScoreEstimate) -> some View {
+        VStack(spacing: BetterSpacing.large) {
+            topBar(session: session)
+            scoreRingHero(session: session, score: score)
+            quickStatsStrip(session: session)
+        }
+        .padding(.horizontal, BetterSpacing.screen)
+        .padding(.top, 52)
+        .padding(.bottom, BetterSpacing.large)
+    }
+
+    // MARK: - Top Bar
+
+    private func topBar(session: SleepSession) -> some View {
+        HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("BETTER SLEEP")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(BetterColors.brand)
-                    .tracking(0.8)
-
-                Text(headerTitle(for: session))
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
-                    .foregroundStyle(BetterColors.text)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-
-                HStack(spacing: 8) {
-                    Button {
-                        isHistoryPresented = true
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "calendar")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(selectedDateLabel)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .bold))
-                        }
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
-                    }
-                    .buttonStyle(.plain)
-
-                    if viewModel.isLoading {
-                        ProgressView()
-                            .tint(BetterColors.brand)
-                            .scaleEffect(0.75)
-                    } else if viewModel.lastSyncedAt != nil {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(BetterColors.success)
-                    }
-                }
-            }
-
-            Spacer()
-
-            if !viewModel.isViewingToday {
-                Button {
-                    Task { await viewModel.jumpToToday() }
-                } label: {
-                    Text("Today")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(BetterColors.brand)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(BetterColors.cardSecondary, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-
-            profileButton
-        }
-    }
-
-    private var profileButton: some View {
-        Button { onOpenProfile() } label: {
-            Text("B")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(BetterColors.brand)
-                .clipShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Profile")
-    }
-
-    private var headerNoSession: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("BETTER SLEEP")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(BetterColors.brand)
-                    .tracking(0.8)
-                Text(viewModel.isViewingToday ? "Tonight's Sleep" : "Sleep History")
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
-                    .foregroundStyle(BetterColors.text)
-                Button {
-                    isHistoryPresented = true
-                } label: {
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(BetterColors.brandLight)
+                    .tracking(1.6)
+                Button { isHistoryPresented = true } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "calendar")
                             .font(.system(size: 11, weight: .semibold))
                         Text(selectedDateLabel)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .bold))
                     }
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
+                    .foregroundStyle(BetterColors.text)
                 }
                 .buttonStyle(.plain)
             }
 
             Spacer()
 
-            if !viewModel.isViewingToday {
-                Button {
-                    Task { await viewModel.jumpToToday() }
-                } label: {
-                    Text("Today")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(BetterColors.brand)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(BetterColors.cardSecondary, in: Capsule())
+            HStack(spacing: 10) {
+                if viewModel.isLoading {
+                    ProgressView()
+                        .tint(BetterColors.brandLight)
+                        .scaleEffect(0.75)
+                } else if viewModel.lastSyncedAt != nil {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(BetterColors.success)
                 }
-                .buttonStyle(.plain)
+                if !viewModel.isViewingToday {
+                    Button {
+                        Task { await viewModel.jumpToToday() }
+                    } label: {
+                        Text("Today")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(BetterColors.brand)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(BetterColors.brand.opacity(0.15), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                profileButton
             }
-            profileButton
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, BetterSpacing.screen)
     }
 
-    private func headerTitle(for session: SleepSession) -> String {
-        guard viewModel.isViewingToday else { return "Sleep History" }
-        // Evening-based: if session started before noon today → "Last Night's Sleep"
-        let noon = Calendar.current.date(
-            bySettingHour: 12, minute: 0, second: 0, of: Date()
-        ) ?? Date()
-        return session.endDate < noon ? "Last Night's Sleep" : "Tonight's Sleep"
-    }
+    // MARK: - Score Ring Hero
 
-    // MARK: - Score card content
+    private func scoreRingHero(session: SleepSession, score: HealthSleepScoreEstimate) -> some View {
+        let color = scoreColor(score.overall)
+        let fillEnd = 0.15 + 0.70 * (Double(score.overall) / 100.0)
+        let isPartial = (viewModel.selectedBaseline?.validNights ?? 0) < 5
 
-    private func scoreCardContent(session: SleepSession) -> some View {
-        let healthScore = healthSleepScore(for: session)
+        return ZStack(alignment: .center) {
+            // Soft glow bloom behind the ring
+            Circle()
+                .fill(color.opacity(0.10))
+                .frame(width: 230, height: 230)
+                .blur(radius: 36)
 
-        return HStack(alignment: .center, spacing: BetterSpacing.large) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isSleepScoreCalculationVisible.toggle()
+            // 240° AngularGradient arc
+            ZStack {
+                Circle()
+                    .trim(from: 0.15, to: 0.85)
+                    .stroke(color.opacity(0.12), style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                    .rotationEffect(.degrees(90))
+
+                Circle()
+                    .trim(from: 0.15, to: heroAppeared ? fillEnd : 0.15)
+                    .stroke(
+                        AngularGradient(
+                            colors: [color, color.opacity(0.55)],
+                            center: .center,
+                            startAngle: .degrees(-90 + 54),
+                            endAngle: .degrees(270 - 54)
+                        ),
+                        style: StrokeStyle(lineWidth: 16, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(90))
+                    .animation(.spring(response: 0.9, dampingFraction: 0.72).delay(0.12), value: heroAppeared)
+
+                VStack(spacing: 3) {
+                    Text("\(score.overall)")
+                        .font(.system(size: 56, weight: .bold, design: .rounded))
+                        .foregroundStyle(BetterColors.text)
+                        .contentTransition(.numericText())
+                    Text(scoreLabel(score.overall))
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(color)
+                    Text(formatDuration(session.totalSleepTime))
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(BetterColors.subtext)
+                    if isPartial {
+                        Text("partial data")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(BetterColors.subtext.opacity(0.6))
+                    }
                 }
-            } label: {
-                SleepQualityRingView(
-                    score: healthScore.overall,
-                    isPartial: viewModel.selectedBaseline?.validNights ?? 0 < 5
+            }
+            .frame(width: 192, height: 192)
+
+            // Score breakdown pill — floats below the arc gap
+            VStack {
+                Spacer()
+                HStack(spacing: 16) {
+                    scoreBreakdownPill(label: "Duration", value: "\(score.duration)/50")
+                    Rectangle()
+                        .fill(BetterColors.border)
+                        .frame(width: 1, height: 20)
+                    scoreBreakdownPill(label: "Bedtime", value: "\(score.bedtime)/30")
+                    Rectangle()
+                        .fill(BetterColors.border)
+                        .frame(width: 1, height: 20)
+                    scoreBreakdownPill(label: "Interr.", value: "\(score.interruptions)/20")
+                }
+                .padding(.horizontal, BetterSpacing.large)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule()
+                        .fill(BetterColors.cardGradient)
+                        .overlay(Capsule().stroke(BetterColors.glassStroke, lineWidth: 1))
+                        .shadow(color: .black.opacity(0.24), radius: 12, x: 0, y: 6)
                 )
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Sleep score")
-            .accessibilityHint(isSleepScoreCalculationVisible ? "Hide sleep score calculation" : "Show sleep score calculation")
-
-            VStack(spacing: BetterSpacing.small) {
-                metricRow(label: "Time Asleep",  value: formatDuration(session.totalSleepTime))
-                metricRow(label: "Time in Bed",  value: formatDuration(session.totalInBedTime))
-                metricRow(label: "Efficiency",   value: String(format: "%.0f%%", session.efficiency * 100))
-                metricRow(label: "Latency",      value: "\(Int(session.sleepLatency / 60)) min")
-
-                if isSleepScoreCalculationVisible {
-                    Divider().background(BetterColors.border)
-
-                    metricRow(label: "Duration Score", value: "\(healthScore.duration)/50")
-                    metricRow(label: "Bedtime Score", value: "\(healthScore.bedtime)/30")
-                    metricRow(label: "Interruptions", value: "\(healthScore.interruptions)/20")
-                }
-
-                Divider().background(BetterColors.border)
-
-                metricRow(label: "Bed",   value: session.inBedStartDate ?? session.startDate,   icon: "bed.double.fill")
-                metricRow(label: "Wake",  value: session.inBedEndDate ?? session.endDate,       icon: "bolt.fill")
+            .frame(height: 258, alignment: .bottom)
+        }
+        .onAppear {
+            withAnimation { heroAppeared = true }
+        }
+        .onChange(of: viewModel.selectedSleepDateKey) { _, _ in
+            heroAppeared = false
+            Task {
+                try? await Task.sleep(for: .milliseconds(60))
+                withAnimation { heroAppeared = true }
             }
         }
     }
 
-    private func healthSleepScore(for session: SleepSession) -> HealthSleepScoreEstimate {
-        HealthSleepScoreEstimator.estimate(session: session, baseline: viewModel.selectedBaseline, sleepGoalHours: viewModel.sleepGoalHours)
-    }
-
-    private func metricRow(label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-                .font(.system(size: 12, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-            Spacer()
+    private func scoreBreakdownPill(label: String, value: String) -> some View {
+        VStack(spacing: 2) {
             Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(BetterColors.text)
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
         }
     }
 
-    private func metricRow(label: String, value: Date, icon: String) -> some View {
-        HStack {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 10))
-                    .foregroundStyle(BetterColors.subtext)
-                Text(label)
-                    .font(.system(size: 12, design: .rounded))
+    // MARK: - Quick Stats Strip
+
+    private func quickStatsStrip(session: SleepSession) -> some View {
+        HStack(spacing: 10) {
+            statChip(
+                icon: "gauge.with.dots.needle.67percent",
+                label: "Efficiency",
+                value: "\(Int(session.efficiency * 100))%",
+                color: session.efficiency >= 0.85 ? BetterColors.success : BetterColors.warning
+            )
+            statChip(
+                icon: "timer",
+                label: "Latency",
+                value: session.sleepLatency > 0 ? "\(Int(session.sleepLatency / 60))m" : "—",
+                color: SleepLatencyRating(session.sleepLatency).color
+            )
+            statChipDate(
+                icon: "bed.double.fill",
+                label: "Bedtime",
+                date: session.inBedStartDate ?? session.startDate,
+                color: BetterColors.brand
+            )
+            statChipDate(
+                icon: "alarm",
+                label: "Wake",
+                date: session.inBedEndDate ?? session.endDate,
+                color: BetterColors.stageAwake
+            )
+        }
+    }
+
+    private func statChip(icon: String, label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+            Text(value)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(BetterColors.text)
+                .lineLimit(1)
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 13)
+        .background(BetterColors.cardGradient)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(BetterColors.glassStroke, lineWidth: 1))
+        .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 5)
+    }
+
+    private func statChipDate(icon: String, label: String, date: Date, color: Color) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+            Text(date, style: .time)
+                .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(BetterColors.text)
+                .lineLimit(1)
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 13)
+        .background(BetterColors.cardGradient)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(BetterColors.glassStroke, lineWidth: 1))
+        .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 5)
+    }
+
+    // MARK: - Stages Card
+
+    private func stagesCard(session: SleepSession) -> some View {
+        BetterHealthCard {
+            VStack(spacing: BetterSpacing.large) {
+                sectionLabel("Sleep Stages", icon: "moon.stars.fill", color: BetterColors.stageDeep)
+
+                SleepHypnogramView(
+                    stages: session.stages.filter { $0.type != .inBed },
+                    sessionStart: session.startDate,
+                    sessionEnd: session.endDate
+                )
+
+                stageRingsRow(session: session)
+
+                Divider().background(BetterColors.border.opacity(0.5))
+
+                SleepStageGridView(session: session)
+            }
+        }
+    }
+
+    private func stageRingsRow(session: SleepSession) -> some View {
+        HStack(spacing: 0) {
+            stageRing(label: "Deep", duration: session.deepDuration, total: session.totalSleepTime, color: BetterColors.stageDeep)
+            stageRing(label: "Core", duration: session.coreDuration, total: session.totalSleepTime, color: BetterColors.stageCore)
+            stageRing(label: "REM", duration: session.remDuration, total: session.totalSleepTime, color: BetterColors.stageREM)
+            stageRing(label: "Awake", duration: session.awakeDuration, total: session.totalSleepTime, color: BetterColors.stageAwake)
+        }
+    }
+
+    private func stageRing(label: String, duration: TimeInterval, total: TimeInterval, color: Color) -> some View {
+        let pct = total > 0 ? min(duration / total, 1.0) : 0.0
+        return VStack(spacing: 7) {
+            ZStack {
+                Circle()
+                    .stroke(color.opacity(0.16), lineWidth: 5)
+                Circle()
+                    .trim(from: 0, to: heroAppeared ? CGFloat(pct) : 0)
+                    .stroke(
+                        AngularGradient(
+                            colors: [color, color.opacity(0.5)],
+                            center: .center,
+                            startAngle: .degrees(-90),
+                            endAngle: .degrees(270)
+                        ),
+                        style: StrokeStyle(lineWidth: 5, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .animation(.spring(response: 0.8, dampingFraction: 0.72).delay(0.32), value: heroAppeared)
+                Text("\(Int((pct * 100).rounded()))%")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(color)
+            }
+            .frame(width: 50, height: 50)
+            Text(formatDuration(duration))
+                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(BetterColors.text)
+            Text(label)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Latency Card
+
+    private func latencyCard(session: SleepSession) -> some View {
+        let rating = SleepLatencyRating(session.sleepLatency)
+        return BetterHealthCard {
+            VStack(spacing: BetterSpacing.large) {
+                HStack {
+                    sectionLabel("Time to Fall Asleep", icon: "timer", color: rating.color)
+                    Spacer()
+                    Text(rating.label)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(rating.color)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(rating.color.opacity(0.14), in: Capsule())
+                }
+                SleepLatencyGaugeView(latency: session.sleepLatency)
+            }
+        }
+    }
+
+    // MARK: - Baseline Cards
+
+    private func baselineCard(session: SleepSession, baseline: SleepBaseline) -> some View {
+        BetterHealthCard {
+            VStack(spacing: BetterSpacing.large) {
+                HStack {
+                    sectionLabel("vs Your Baseline", icon: "chart.line.uptrend.xyaxis", color: baselineIconColor(session: session, baseline: baseline))
+                    Spacer()
+                    baselineSummaryBadge(session: session, baseline: baseline)
+                }
+                SleepVsBaselineView(session: session, baseline: baseline)
+                if let confidence = viewModel.baselineConfidenceLabel {
+                    HStack(spacing: 4) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 11))
+                            .foregroundStyle(BetterColors.subtext)
+                        Text("Baseline confidence: \(confidence)")
+                            .font(BetterTypography.caption)
+                            .foregroundStyle(BetterColors.subtext)
+                    }
+                }
+            }
+        }
+    }
+
+    private func whatChangedCard(session: SleepSession, baseline: SleepBaseline) -> some View {
+        BetterHealthCard {
+            VStack(spacing: BetterSpacing.large) {
+                sectionLabel("What Changed Tonight", icon: "chart.bar.fill", color: BetterColors.brand)
+                WhatChangedGridView(session: session, baseline: baseline)
+            }
+        }
+    }
+
+    private var baselineNotReadyCard: some View {
+        BetterHealthCard {
+            HStack(spacing: BetterSpacing.medium) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 20))
+                    .foregroundStyle(BetterColors.brand)
+                    .frame(width: 42, height: 42)
+                    .background(BetterColors.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Baseline Building")
+                        .font(BetterTypography.subheadline)
+                        .foregroundStyle(BetterColors.text)
+                    Text("Need at least 5 nights of sleep data to build your personal baseline.")
+                        .font(BetterTypography.footnote)
+                        .foregroundStyle(BetterColors.subtext)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Biometrics Card
+
+    private func biometricsCard(biometrics: NightlyBiometricSummary) -> some View {
+        BetterHealthCard {
+            VStack(spacing: BetterSpacing.large) {
+                sectionLabel("Biometrics", icon: "heart.fill", color: BetterColors.heartRate)
+                biometricsChipRow(biometrics: biometrics)
+                Divider().background(BetterColors.border.opacity(0.5))
+                BiometricsTabContent(
+                    biometrics: biometrics,
+                    baseline: viewModel.selectedBaseline,
+                    recentSessions: viewModel.recentSessions
+                )
+            }
+        }
+    }
+
+    private func biometricsChipRow(biometrics: NightlyBiometricSummary) -> some View {
+        HStack(spacing: 8) {
+            if let hr = biometrics.heartRateAverage {
+                bioChip(icon: "heart.fill", label: "HR", value: "\(Int(hr))", unit: "bpm", color: BetterColors.heartRate)
+            }
+            if let hrv = biometrics.hrvAverage {
+                bioChip(icon: "waveform.path.ecg", label: "HRV", value: String(format: "%.0f", hrv), unit: "ms", color: BetterColors.hrv)
+            }
+            if let spo2 = biometrics.oxygenSaturationAverage {
+                bioChip(icon: "drop.fill", label: "SpO2", value: "\(Int(spo2 * 100))", unit: "%", color: BetterColors.cyan)
+            }
+            if let rr = biometrics.respiratoryRateAverage {
+                bioChip(icon: "lungs.fill", label: "Breath", value: String(format: "%.1f", rr), unit: "/min", color: BetterColors.brand)
+            }
+        }
+    }
+
+    private func bioChip(icon: String, label: String, value: String, unit: String, color: Color) -> some View {
+        VStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(color)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(BetterColors.text)
+                Text(unit)
+                    .font(.system(size: 9, design: .rounded))
                     .foregroundStyle(BetterColors.subtext)
             }
-            Spacer()
-            Text(value, style: .time)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(BetterColors.text)
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 11)
+        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    // MARK: - Schedule Card
+
+    private func scheduleCard(session: SleepSession, baseline: SleepBaseline) -> some View {
+        BetterHealthCard {
+            VStack(spacing: BetterSpacing.large) {
+                HStack {
+                    sectionLabel("Schedule Consistency", icon: "clock.fill", color: BetterColors.warning)
+                    Spacer()
+                    ScheduleConsistencySummary(baseline: baseline)
+                }
+                ScheduleConsistencyView(
+                    session: session,
+                    baseline: baseline,
+                    recentSessions: viewModel.recentSessions
+                )
+            }
         }
     }
 
-    // MARK: - Baseline helpers
+    // MARK: - Shared UI Helpers
+
+    private func sectionLabel(_ title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: BetterSpacing.small) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(color, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(title)
+                .font(BetterTypography.subheadline)
+                .foregroundStyle(BetterColors.text)
+        }
+    }
 
     private func baselineIconColor(session: SleepSession, baseline: SleepBaseline) -> Color {
         session.totalSleepTime >= baseline.totalSleepAverage ? BetterColors.success : BetterColors.warning
@@ -467,76 +648,11 @@ struct SleepTabView: View {
         return HStack(spacing: 3) {
             Image(systemName: diffMin >= 0 ? "arrow.up" : "arrow.down")
                 .font(.system(size: 11, weight: .semibold))
-            Text("\(abs(diffMin)) min \(diffMin >= 0 ? "above" : "below") avg")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+            Text("\(abs(diffMin))m \(diffMin >= 0 ? "above" : "below") avg")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
         }
         .foregroundStyle(color)
     }
-
-    private var baselineNotReadyCard: some View {
-        HStack(spacing: BetterSpacing.medium) {
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 18))
-                .foregroundStyle(BetterColors.brand)
-                .frame(width: 36, height: 36)
-                .background(BetterColors.brand.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Baseline Building")
-                    .font(BetterTypography.subheadline)
-                    .foregroundStyle(BetterColors.text)
-                Text("Your personal baseline needs at least 5 nights of data. Keep wearing your Apple Watch to sleep.")
-                    .font(BetterTypography.footnote)
-                    .foregroundStyle(BetterColors.subtext)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(BetterSpacing.large)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(BetterColors.border, lineWidth: 1)
-        )
-    }
-
-    // MARK: - Stages card content
-
-    private func stagesCardContent(session: SleepSession) -> some View {
-        VStack(spacing: BetterSpacing.medium) {
-            // Hypnogram
-            SleepHypnogramView(
-                stages: session.stages.filter { $0.type != .inBed },
-                sessionStart: session.startDate,
-                sessionEnd: session.endDate
-            )
-
-            StageDistributionSummaryView(session: session)
-
-            StageLegendRow(showAll: true)
-
-            Divider().background(BetterColors.border)
-
-            SleepStageGridView(session: session)
-        }
-    }
-
-    private func stageSummaryBadge(session: SleepSession) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(BetterColors.stageCore)
-                .frame(width: 7, height: 7)
-            Text("Core")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-            Text(formatDuration(session.coreDuration))
-                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
-                .foregroundStyle(BetterColors.text)
-                .lineLimit(1)
-        }
-    }
-
-    // MARK: - Error footer
 
     private func errorFooter(message: String) -> some View {
         HStack(spacing: BetterSpacing.small) {
@@ -552,22 +668,50 @@ struct SleepTabView: View {
         .background(BetterColors.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    // MARK: - Loading indicator
-
-    private var loadingIndicator: some View {
-        VStack(spacing: BetterSpacing.large) {
-            ProgressView()
-                .tint(BetterColors.brand)
-                .scaleEffect(1.4)
-            Text("Syncing sleep data…")
-                .font(BetterTypography.footnote)
-                .foregroundStyle(BetterColors.subtext)
+    private var profileButton: some View {
+        Button { onOpenProfile() } label: {
+            Text(profileInitial)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(BetterColors.brandGradient)
+                .clipShape(Circle())
+                .shadow(color: BetterColors.brand.opacity(0.4), radius: 8, x: 0, y: 4)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Profile")
     }
 
-    // MARK: - Formatting helpers
+    private var profileInitial: String {
+        guard let name = viewModel.displayName?.trimmedNonEmpty, let first = name.first else {
+            return "B"
+        }
+        return String(first).uppercased()
+    }
+
+    // MARK: - Score Helpers
+
+    private func healthSleepScore(for session: SleepSession) -> HealthSleepScoreEstimate {
+        HealthSleepScoreEstimator.estimate(session: session, baseline: viewModel.selectedBaseline, sleepGoalHours: viewModel.sleepGoalHours)
+    }
+
+    private func scoreColor(_ score: Int) -> Color {
+        switch score {
+        case 85...: return BetterColors.success
+        case 70...: return BetterColors.brand
+        case 55...: return BetterColors.warning
+        default:    return BetterColors.danger
+        }
+    }
+
+    private func scoreLabel(_ score: Int) -> String {
+        switch score {
+        case 85...: return "Excellent"
+        case 70...: return "Good"
+        case 55...: return "Fair"
+        default:    return "Poor"
+        }
+    }
 
     private var selectedDateLabel: String {
         guard let date = SleepDateKey.date(from: viewModel.selectedSleepDateKey) else {
@@ -575,7 +719,50 @@ struct SleepTabView: View {
         }
         return date.formatted(.dateTime.month(.abbreviated).day().year())
     }
+
+    // MARK: - Empty State
+
+    private var emptyContent: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: BetterSpacing.xxLarge) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("BETTER SLEEP")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(BetterColors.brandLight)
+                            .tracking(1.6)
+                        Text(viewModel.isViewingToday ? "Tonight's Sleep" : "Sleep History")
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .foregroundStyle(BetterColors.text)
+                        Button { isHistoryPresented = true } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "calendar").font(.system(size: 11, weight: .semibold))
+                                Text(selectedDateLabel).font(.system(size: 13, weight: .semibold, design: .rounded))
+                                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(BetterColors.subtext)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                    profileButton
+                }
+                .padding(.horizontal, BetterSpacing.screen)
+                .padding(.top, 52)
+
+                SleepNoDataView(
+                    authorizationState: viewModel.authorizationState,
+                    onConnect: { Task { await viewModel.requestHealthKitAccess() } }
+                )
+
+                Spacer(minLength: 40)
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+    }
 }
+
+// MARK: - History Calendar Sheet
 
 private struct SleepHistoryCalendarSheet: View {
     let selectedMonth: Date
@@ -754,67 +941,7 @@ private struct SleepHistoryCalendarSheet: View {
     }
 }
 
-// MARK: - Sleep Latency Card
-
-extension SleepTabView {
-    private func sleepLatencyCard(session: SleepSession) -> some View {
-        let rating = SleepLatencyRating(session.sleepLatency)
-        let latencyMin = Int(session.sleepLatency / 60)
-        return SleepMetricCard(
-            title: "Time to Fall Asleep",
-            iconName: "timer",
-            iconColor: rating.color,
-            summary: {
-                HStack(spacing: 6) {
-                    Text("\(latencyMin) min")
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(BetterColors.text)
-                    Text(rating.label)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(rating.color)
-                }
-            },
-            content: {
-                SleepLatencyGaugeView(latency: session.sleepLatency)
-            }
-        )
-    }
-}
-
-// MARK: - Sleep Stage Detail Rows
-
-private struct StageDistributionSummaryView: View {
-    let session: SleepSession
-
-    private var total: TimeInterval {
-        max(session.totalSleepTime, 1)
-    }
-
-    var body: some View {
-        HStack(spacing: BetterSpacing.small) {
-            Image(systemName: "waveform.path.ecg")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(BetterColors.brand)
-            Text(summaryText)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, BetterSpacing.medium)
-        .padding(.vertical, BetterSpacing.small)
-        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private var summaryText: String {
-        let core = Int(((session.coreDuration / total) * 100).rounded())
-        let rem = Int(((session.remDuration / total) * 100).rounded())
-        let deep = Int(((session.deepDuration / total) * 100).rounded())
-        let awake = Int(((session.awakeDuration / total) * 100).rounded())
-        return "Core \(core)% • REM \(rem)% • Deep \(deep)% • Awake \(awake)%"
-    }
-}
+// MARK: - Sleep Stage Grid
 
 private struct SleepStageGridView: View {
     let session: SleepSession
@@ -827,9 +954,9 @@ private struct SleepStageGridView: View {
 
     private var items: [StageItem] {
         [
-            StageItem(name: "Deep", duration: session.deepDuration, color: BetterColors.stageDeep),
-            StageItem(name: "Core", duration: session.coreDuration, color: BetterColors.stageCore),
-            StageItem(name: "REM", duration: session.remDuration, color: BetterColors.stageREM),
+            StageItem(name: "Deep",  duration: session.deepDuration,  color: BetterColors.stageDeep),
+            StageItem(name: "Core",  duration: session.coreDuration,  color: BetterColors.stageCore),
+            StageItem(name: "REM",   duration: session.remDuration,   color: BetterColors.stageREM),
             StageItem(name: "Awake", duration: session.awakeDuration, color: BetterColors.stageAwake),
         ]
     }
@@ -876,13 +1003,12 @@ private struct SleepStageGridView: View {
             .frame(height: 6)
         }
         .padding(.horizontal, BetterSpacing.medium)
-        .padding(.vertical, 10)
-        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.vertical, 12)
+        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
-
 }
 
-// MARK: - Sleep Latency Gauge
+// MARK: - Sleep Latency
 
 private enum SleepLatencyRating {
     case fast, normal, late
@@ -927,12 +1053,6 @@ private struct SleepLatencyGaugeView: View {
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundStyle(BetterColors.subtext)
                 Spacer()
-                Text(rating.label)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(rating.color)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(rating.color.opacity(0.15), in: Capsule())
             }
 
             GeometryReader { geo in
@@ -1067,70 +1187,6 @@ private func formatDuration(_ interval: TimeInterval) -> String {
     let h = Int(interval) / 3600
     let m = (Int(interval) % 3600) / 60
     return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-}
-
-private struct SleepInsightListView: View {
-    let insights: [SleepInsight]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            ForEach(insights.prefix(4)) { insight in
-                HStack(alignment: .top, spacing: BetterSpacing.small) {
-                    Image(systemName: iconName(for: insight.category))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 26, height: 26)
-                        .background(color(for: insight.displayStyle), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(insight.title)
-                            .font(BetterTypography.footnote)
-                            .foregroundStyle(BetterColors.text)
-                        Text(insight.body)
-                            .font(BetterTypography.caption)
-                            .foregroundStyle(BetterColors.subtext)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
-    }
-
-    private func iconName(for category: SleepInsightCategory) -> String {
-        switch category {
-        case .duration:
-            "clock.fill"
-        case .efficiency:
-            "gauge.with.dots.needle.67percent"
-        case .consistency:
-            "calendar"
-        case .recovery:
-            "arrow.up.heart.fill"
-        case .sleepStages:
-            "moon.stars.fill"
-        case .missingData:
-            "exclamationmark.triangle.fill"
-        case .baselineBuilding:
-            "calendar.badge.clock"
-        case .protocolComparison:
-            "pills.fill"
-        case .contextComparison:
-            "chart.bar.fill"
-        }
-    }
-
-    private func color(for style: SleepInsightDisplayStyle?) -> Color {
-        switch style {
-        case .positive:
-            BetterColors.success
-        case .caution:
-            BetterColors.warning
-        case .informational:
-            BetterColors.brand
-        case .neutral, nil:
-            BetterColors.subtext
-        }
-    }
 }
 
 // MARK: - Preview

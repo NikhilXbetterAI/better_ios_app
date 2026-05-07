@@ -197,7 +197,7 @@ struct ContextFactorDashboardView: View {
                     if let delta = result.durationDelta {
                         Text(formatSignedMinutes(delta))
                             .font(BetterTypography.caption)
-                            .foregroundStyle(abs(delta) >= ContextComparisonService.meaningfulDurationDelta
+                            .foregroundStyle(abs(delta) >= SleepAnalysisThresholds.meaningfulDurationDelta
                                              ? BetterColors.brand : BetterColors.subtext)
                     }
                 } else {

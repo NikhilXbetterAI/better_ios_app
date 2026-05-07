@@ -4,7 +4,11 @@ import OSLog
 nonisolated struct ResearchCSVExporter: Sendable {
     private let logger = Logger(subsystem: "Better", category: "ResearchCSVExporter")
 
-    func writeZIP(package: ResearchExportPackage, fileManager: FileManager = .default) throws -> URL {
+    func writeZIP(
+        package: ResearchExportPackage,
+        displayName: String? = nil,
+        fileManager: FileManager = .default
+    ) throws -> URL {
         let startStamp = Self.dateStamp(package.rangeStart)
         let endStamp = Self.dateStamp(package.rangeEnd)
         let directory = fileManager.temporaryDirectory
@@ -19,7 +23,7 @@ nonisolated struct ResearchCSVExporter: Sendable {
         ]
 
         let zipURL = fileManager.temporaryDirectory
-            .appendingPathComponent("BetterSleep_Export_\(startStamp)_to_\(endStamp).zip")
+            .appendingPathComponent("\(Self.filenameStem(base: "BetterSleep", displayName: displayName))_\(startStamp)_to_\(endStamp).zip")
         if fileManager.fileExists(atPath: zipURL.path) {
             try fileManager.removeItem(at: zipURL)
         }
@@ -290,6 +294,33 @@ nonisolated private extension ResearchCSVExporter {
 
     nonisolated static func dateStamp(_ date: Date) -> String {
         dateStampFormatter.string(from: date)
+    }
+
+    nonisolated static func filenameStem(base: String, displayName: String?) -> String {
+        guard let displayName = displayName?.trimmedNonEmpty else {
+            return base
+        }
+
+        let folded = displayName.folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
+        let allowed = CharacterSet.alphanumerics
+        var components: [String] = []
+        var current = ""
+
+        for scalar in folded.unicodeScalars {
+            if allowed.contains(scalar) {
+                current.unicodeScalars.append(scalar)
+            } else if !current.isEmpty {
+                components.append(current)
+                current = ""
+            }
+        }
+
+        if !current.isEmpty {
+            components.append(current)
+        }
+
+        let normalized = components.joined(separator: "-")
+        return normalized.isEmpty ? base : "\(base)_\(normalized)"
     }
 }
 

@@ -3,31 +3,59 @@ import SwiftUI
 struct OnboardingFlowView: View {
     @Bindable var viewModel: OnboardingViewModel
     let onCompleted: () -> Void
+
     @State private var step: OnboardingStep = .welcome
+    @State private var movingForward = true
+    @State private var healthConnectAttempted = false
+    @State private var notificationAttempted = false
+    @State private var finishPulse = false
 
     var body: some View {
-        ZStack {
-            BetterColors.background.ignoresSafeArea()
+        GeometryReader { geometry in
+            let screenHeight = geometry.size.height
 
-            VStack(spacing: 0) {
-                if step != .assessment {
-                    progressHeader
-                }
+            ZStack(alignment: .top) {
+                // ── Layer 1: Per-step radial glow background ──────────────────
+                stepBackground(screenHeight: screenHeight)
+                    .ignoresSafeArea()
+                    .animation(.easeInOut(duration: 0.5), value: step)
 
+                // ── Layer 2: Step content with slide transition ────────────────
                 currentStep
-                    .padding(.horizontal, BetterSpacing.screen)
-                    .padding(.top, step == .assessment ? BetterSpacing.large : 0)
+                    .id(step)
+                    .transition(stepTransition)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.82), value: step)
 
+                // ── Layer 3: Chrome overlaid on top ───────────────────────────
                 if step != .assessment {
-                    footer
-                        .padding(.horizontal, BetterSpacing.screen)
-                        .padding(.bottom, BetterSpacing.large)
+                    VStack(spacing: 0) {
+                        topChrome
+                        Spacer()
+                        bottomChrome
+                    }
+                    .ignoresSafeArea(edges: .bottom)
                 }
             }
+            .task { await viewModel.load() }
         }
-        .task { await viewModel.load() }
     }
+
+    // MARK: - Background
+
+    private func stepBackground(screenHeight: CGFloat) -> some View {
+        ZStack {
+            BetterColors.background
+            RadialGradient(
+                colors: [step.accentColor.opacity(0.12), .clear],
+                center: .init(x: 0.5, y: 0.0),
+                startRadius: 0,
+                endRadius: screenHeight * 0.50
+            )
+        }
+    }
+
+    // MARK: - Step content
 
     @ViewBuilder
     private var currentStep: some View {
@@ -38,9 +66,7 @@ struct OnboardingFlowView: View {
             HealthPermissionStepView(
                 authorizationState: viewModel.syncCoordinatorAuthorizationState,
                 isWorking: viewModel.syncCoordinatorIsBusy,
-                onConnect: {
-                    Task { await viewModel.connectHealth() }
-                }
+                onConnect: { Task { await viewModel.connectHealth() } }
             )
         case .sleepGoal:
             SleepGoalStepView(sleepGoalHours: $viewModel.profile.sleepGoalHours)
@@ -53,109 +79,176 @@ struct OnboardingFlowView: View {
             NotificationPermissionStepView(
                 isRequested: viewModel.notificationPermissionRequested,
                 isGranted: viewModel.notificationPermissionGranted,
-                onRequest: {
-                    Task { await viewModel.requestNotifications() }
-                }
+                onRequest: { Task { await viewModel.requestNotifications() } }
             )
         case .research:
             ResearchModeStepView(isResearchMode: $viewModel.profile.isResearchMode)
+        case .preferredName:
+            PreferredNameStepView(
+                displayName: $viewModel.profile.displayName,
+                onSubmit: { primaryAction() }
+            )
         }
     }
 
-    private var progressHeader: some View {
-        VStack(spacing: BetterSpacing.small) {
-            HStack {
-                Button {
+    // MARK: - Top chrome (dots + back button)
+
+    private var topChrome: some View {
+        HStack {
+            Button {
+                movingForward = false
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                     step = step.previous ?? step
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(step.previous == nil ? BetterColors.subtext.opacity(0.35) : BetterColors.text)
-                        .frame(width: 36, height: 36)
-                        .background(BetterColors.card, in: Circle())
                 }
-                .disabled(step.previous == nil)
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                Text("Step \(step.index + 1) of \(OnboardingStep.allCases.count)")
-                    .font(BetterTypography.caption)
-                    .foregroundStyle(BetterColors.subtext)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(step.previous == nil
+                        ? BetterColors.subtext.opacity(0.3)
+                        : BetterColors.text)
+                    .frame(width: 36, height: 36)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().stroke(BetterColors.glassStroke, lineWidth: 1))
             }
+            .disabled(step.previous == nil)
+            .buttonStyle(.plain)
 
-            ProgressView(value: Double(step.index + 1), total: Double(OnboardingStep.allCases.count))
-                .tint(BetterColors.brand)
+            Spacer()
+
+            PageDotsIndicator(
+                count: OnboardingStep.dotSteps.count,
+                activeIndex: step.dotIndex,
+                activeColor: step.accentColor
+            )
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: step)
+
+            Spacer()
+
+            // Invisible mirror for centering
+            Color.clear.frame(width: 36, height: 36)
         }
         .padding(.horizontal, BetterSpacing.screen)
         .padding(.top, BetterSpacing.large)
-        .padding(.bottom, BetterSpacing.medium)
     }
 
-    private var footer: some View {
+    // MARK: - Bottom chrome (skip + CTA pill)
+
+    private var bottomChrome: some View {
         VStack(spacing: BetterSpacing.medium) {
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)
                     .font(BetterTypography.caption)
                     .foregroundStyle(BetterColors.warning)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, BetterSpacing.screen)
             }
 
-            HStack(spacing: BetterSpacing.medium) {
-                if step.canSkip {
-                    Button("Skip") {
-                        goForward()
-                    }
-                    .font(BetterTypography.subheadline)
+            if step.canSkip {
+                Button("Skip for now") { goForward() }
+                    .font(BetterTypography.footnote)
                     .foregroundStyle(BetterColors.subtext)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .buttonStyle(.plain)
-                }
-
-                Button(action: primaryAction) {
-                    HStack {
-                        if viewModel.isLoading {
-                            ProgressView().tint(.white)
-                        }
-                        Text(step.primaryTitle)
-                    }
-                    .font(BetterTypography.subheadline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(primaryDisabled ? BetterColors.cardTertiary : BetterColors.brand, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .disabled(primaryDisabled)
-                .buttonStyle(.plain)
             }
+
+            Button(action: primaryAction) {
+                ZStack {
+                    if viewModel.isLoading {
+                        ProgressView().tint(.white)
+                    } else {
+                        Text(resolvedPrimaryTitle)
+                            .font(BetterTypography.subheadline)
+                            .foregroundStyle(.white)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(
+                    primaryDisabled
+                        ? AnyShapeStyle(BetterColors.cardTertiary)
+                        : AnyShapeStyle(BetterColors.brandGradient),
+                    in: Capsule()
+                )
+            }
+            .disabled(primaryDisabled)
+            .buttonStyle(.plain)
+            .padding(.horizontal, BetterSpacing.screen)
+            .scaleEffect(finishPulse ? 1.04 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.5), value: finishPulse)
+        }
+        .padding(.bottom, BetterSpacing.xLarge)
+    }
+
+    // MARK: - Primary button title
+
+    private var resolvedPrimaryTitle: String {
+        switch step {
+        case .health:
+            return healthConnectAttempted ? "Continue" : "Connect Apple Health"
+        case .notifications:
+            return notificationAttempted ? "Continue" : "Enable Notifications"
+        case .preferredName:
+            return "Finish"
+        default:
+            return step.primaryTitle
         }
     }
 
-    private var primaryDisabled: Bool {
-        viewModel.isLoading || (step == .assessment && viewModel.answersByQuestionID.count < SleepAssessmentQuestion.allQuestions.count)
-    }
+    // MARK: - Primary action
 
     private func primaryAction() {
-        if step == .research {
+        switch step {
+        case .health:
+            if !healthConnectAttempted {
+                healthConnectAttempted = true
+                Task { await viewModel.connectHealth() }
+            } else {
+                goForward()
+            }
+        case .notifications:
+            if !notificationAttempted {
+                notificationAttempted = true
+                Task { await viewModel.requestNotifications() }
+            } else {
+                goForward()
+            }
+        case .research:
+            goForward()
+        case .preferredName:
+            finishPulse = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { finishPulse = false }
             Task {
                 let completed = await viewModel.completeOnboarding()
-                if completed {
-                    onCompleted()
-                }
+                if completed { onCompleted() }
             }
-        } else {
+        default:
             goForward()
         }
     }
 
+    private var primaryDisabled: Bool {
+        viewModel.isLoading ||
+        (step == .assessment && viewModel.answersByQuestionID.count < SleepAssessmentQuestion.allQuestions.count)
+    }
+
     private func goForward() {
-        if let next = step.next {
+        guard let next = step.next else { return }
+        movingForward = true
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             step = next
         }
     }
+
+    // MARK: - Slide transition
+
+    private var stepTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: movingForward ? .trailing : .leading).combined(with: .opacity),
+            removal:   .move(edge: movingForward ? .leading : .trailing).combined(with: .opacity)
+        )
+    }
 }
+
+// MARK: - OnboardingStep extensions
 
 private extension OnboardingViewModel {
     var syncCoordinatorAuthorizationState: HealthAuthorizationPresentationState {
@@ -164,10 +257,8 @@ private extension OnboardingViewModel {
 
     var syncCoordinatorIsBusy: Bool {
         switch syncCoordinator.phase {
-        case .authorizing, .syncing:
-            true
-        case .idle, .observing, .failed:
-            false
+        case .authorizing, .syncing: true
+        case .idle, .observing, .failed: false
         }
     }
 }
@@ -179,71 +270,51 @@ private enum OnboardingStep: Int, CaseIterable {
     case assessment
     case notifications
     case research
+    case preferredName
 
     var index: Int { rawValue }
 
-    var previous: OnboardingStep? {
-        OnboardingStep(rawValue: rawValue - 1)
-    }
-
-    var next: OnboardingStep? {
-        OnboardingStep(rawValue: rawValue + 1)
-    }
+    var previous: OnboardingStep? { OnboardingStep(rawValue: rawValue - 1) }
+    var next: OnboardingStep?     { OnboardingStep(rawValue: rawValue + 1) }
 
     var canSkip: Bool {
         switch self {
-        case .health, .notifications:
-            true
-        case .welcome, .sleepGoal, .assessment, .research:
-            false
+        case .health, .notifications: true
+        default: false
         }
     }
 
     var primaryTitle: String {
         switch self {
-        case .welcome:
-            "Get Started"
-        case .health, .sleepGoal, .assessment, .notifications:
-            "Continue"
-        case .research:
-            "Finish"
+        case .welcome:                          "Get Started"
+        case .health, .sleepGoal, .assessment,
+             .notifications:                   "Continue"
+        case .research:                         "Continue"
+        case .preferredName:                    "Finish"
+        }
+    }
+
+    // Dot indicator — excludes .assessment (it has its own chrome)
+    static let dotSteps: [OnboardingStep] = [.welcome, .health, .sleepGoal, .notifications, .research, .preferredName]
+
+    var dotIndex: Int {
+        Self.dotSteps.firstIndex(of: self) ?? 0
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .welcome:       BetterColors.brand
+        case .health:        BetterColors.heartRate
+        case .sleepGoal:     BetterColors.success
+        case .assessment:    BetterColors.stageDeep
+        case .notifications: BetterColors.stageAwake
+        case .research:      BetterColors.hrv
+        case .preferredName: BetterColors.brand
         }
     }
 }
 
-struct OnboardingStepHeader: View {
-    let icon: String
-    let title: String
-    let description: String
-
-    init(icon: String, title: String, body: String) {
-        self.icon = icon
-        self.title = title
-        self.description = body
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            Image(systemName: icon)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(BetterColors.brand)
-                .frame(width: 52, height: 52)
-                .background(BetterColors.brand.opacity(0.14), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            VStack(alignment: .leading, spacing: BetterSpacing.small) {
-                Text(title)
-                    .font(BetterTypography.display)
-                    .foregroundStyle(BetterColors.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(description)
-                    .font(BetterTypography.body)
-                    .foregroundStyle(BetterColors.subtext)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.top, BetterSpacing.large)
-    }
-}
+// MARK: - Reusable shared components (used by step views)
 
 struct OnboardingNoticeView: View {
     let icon: String
@@ -264,6 +335,8 @@ struct OnboardingNoticeView: View {
         .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
+
+// MARK: - Preview
 
 #Preview("Onboarding") {
     OnboardingFlowView(

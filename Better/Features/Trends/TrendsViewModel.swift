@@ -5,15 +5,17 @@ enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
     case week = 7
     case biWeekly = 15
     case month = 30
+    case twoMonths = 60
 
     var id: Int { rawValue }
     var days: Int { rawValue }
 
     var displayName: String {
         switch self {
-        case .week: "7 Days"
-        case .biWeekly: "15 Days"
-        case .month: "30 Days"
+        case .week: "7D"
+        case .biWeekly: "15D"
+        case .month: "30D"
+        case .twoMonths: "60D"
         }
     }
 }
@@ -133,19 +135,77 @@ final class TrendsViewModel {
     private let localRepository: LocalDataRepositoryProtocol
     private let calendar: Calendar
     private var comparisonSessions: [SleepSession] = []
+    private enum UserDefaultsKeys {
+        static let protocolStartDate = "better.protocol.startDate"
+    }
 
     var sessions: [SleepSession] = []
-    var selectedWindow: TrendWindow = .week
+    var selectedWindow: TrendWindow = .month
     var selectedMetric: TrendMetric = .totalSleep
     var baseline: SleepBaseline?
     var chartPoints: [TrendChartPoint] = []
     var comparisonSummary: TrendComparisonSummary?
     var stageCompositionPoints: [StageCompositionPoint] = []
+    var adherenceByDateKey: [String: Bool] = [:]
+    var protocolStartDate: Date? = nil
     var isLoading = false
     var errorMessage: String?
+    var latestSessionInsights: [SleepInsight] = []
+    var sleepGoalHours: Double = 8.0
 
     var weekOverWeekChange: Double? {
         comparisonSummary?.percentChange
+    }
+
+    // MARK: - Derived Insight Properties
+
+    /// The single source of truth for a session's score — matches the Sleep Dashboard.
+    func healthScore(for session: SleepSession) -> Double {
+        Double(HealthSleepScoreEstimator.estimate(
+            session: session,
+            baseline: baseline,
+            sleepGoalHours: sleepGoalHours,
+            calendar: calendar
+        ).overall)
+    }
+
+    var bestSleepSession: SleepSession? {
+        sessions.max { healthScore(for: $0) < healthScore(for: $1) }
+    }
+
+    var avgScoreInPeriod: Double? {
+        let values = sessions.map { healthScore(for: $0) }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    var avgDurationHours: Double? {
+        guard !sessions.isEmpty else { return nil }
+        return sessions.map { $0.totalSleepTime / 3_600 }.reduce(0, +) / Double(sessions.count)
+    }
+
+    var scoreSparklineValues: [Double] {
+        sessions.sorted { $0.startDate < $1.startDate }.map { healthScore(for: $0) }
+    }
+
+    var weekendAvgHours: Double? {
+        let s = sessions.filter { calendar.isDateInWeekend($0.startDate) }
+        guard !s.isEmpty else { return nil }
+        return s.map { $0.totalSleepTime / 3_600 }.reduce(0, +) / Double(s.count)
+    }
+
+    var weekdayAvgHours: Double? {
+        let s = sessions.filter { !calendar.isDateInWeekend($0.startDate) }
+        guard !s.isEmpty else { return nil }
+        return s.map { $0.totalSleepTime / 3_600 }.reduce(0, +) / Double(s.count)
+    }
+
+    var weekendSessionCount: Int {
+        sessions.filter { calendar.isDateInWeekend($0.startDate) }.count
+    }
+
+    var weekdaySessionCount: Int {
+        sessions.filter { !calendar.isDateInWeekend($0.startDate) }.count
     }
 
     init(localRepository: LocalDataRepositoryProtocol, calendar: Calendar = .current) {
@@ -171,6 +231,7 @@ final class TrendsViewModel {
     func loadData(now: Date = Date()) async {
         isLoading = true
         errorMessage = nil
+        protocolStartDate = UserDefaults.standard.object(forKey: UserDefaultsKeys.protocolStartDate) as? Date
         do {
             let startDate = calendar.date(byAdding: .day, value: -selectedWindow.days, to: now)
                 ?? now.addingTimeInterval(Double(-selectedWindow.days) * 86_400)
@@ -179,10 +240,18 @@ final class TrendsViewModel {
             comparisonSessions = fetchedSessions
             sessions = fetchedSessions.filter { $0.endDate > startDate && $0.startDate < now }
             let profile = try await localRepository.fetchProfile()
+            sleepGoalHours = profile.sleepGoalHours
             baseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
+            let adherence = try await localRepository.fetchAdherence(from: startDate, to: now)
+            var byKey: [String: Bool] = [:]
+            for record in adherence {
+                byKey[record.dateKey] = byKey[record.dateKey] == true || record.taken
+            }
+            adherenceByDateKey = byKey
             updateComparisonSummary(from: fetchedSessions, endingAt: now)
             updateChartPoints()
             updateStageCompositionPoints()
+            updateLatestInsights()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -205,6 +274,20 @@ private extension TrendsViewModel {
                     score: session.qualityScore
                 )
             )
+        }
+    }
+
+    func updateLatestInsights() {
+        let sorted = sessions.sorted { $0.startDate < $1.startDate }
+        let insightService = SleepInsightService()
+        if let latestSession = sorted.last {
+            latestSessionInsights = insightService.insights(
+                session: latestSession,
+                baseline: baseline,
+                recentSessions: sorted
+            )
+        } else {
+            latestSessionInsights = []
         }
     }
 
@@ -265,6 +348,8 @@ private extension TrendsViewModel {
             return rollingComparisonWindows(days: selectedWindow.days, endingAt: endDate)
         case .month:
             return monthComparisonWindows(endingAt: endDate)
+        case .twoMonths:
+            return rollingComparisonWindows(days: 60, endingAt: endDate)
         }
     }
 
@@ -314,7 +399,7 @@ private extension TrendsViewModel {
         case .totalSleep:
             return session.totalSleepTime / 3_600
         case .score:
-            return session.qualityScore.overall
+            return healthScore(for: session)
         case .deepSleep:
             guard session.dataQuality == .detailedStages else { return nil }
             return session.deepDuration / 3_600

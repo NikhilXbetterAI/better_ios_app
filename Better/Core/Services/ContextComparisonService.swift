@@ -45,7 +45,6 @@ nonisolated enum ContextFactor: String, Codable, CaseIterable, Hashable, Sendabl
         }
     }
 }
-
 // MARK: - ContextComparisonResult
 
 /// The result of comparing sleep metrics across nights where a single
@@ -93,12 +92,6 @@ nonisolated struct ContextComparisonResult: Codable, Hashable, Sendable {
 /// Uses the same confidence thresholds and stage-suppression logic as
 /// `ProtocolComparisonService` so behaviour is consistent and easy to test.
 nonisolated struct ContextComparisonService: Sendable {
-
-    // MARK: - Thresholds (centralised — used by tests)
-    static let meaningfulDurationDelta:  TimeInterval = 20 * 60   // 20 min
-    static let meaningfulEfficiencyDelta: Double      = 0.03      // 3 pp
-    static let meaningfulStageDelta:     TimeInterval = 10 * 60   // 10 min
-    static let meaningfulAwakeDelta:     TimeInterval = 10 * 60   // 10 min
 
     private let calendar: Calendar
     private let logger = Logger(subsystem: "Better", category: "ContextComparison")
@@ -288,24 +281,11 @@ nonisolated private extension ContextComparisonService {
         remDelta:        TimeInterval?,
         awakeDelta:      TimeInterval?
     ) -> Bool {
-        if let d = durationDelta,   abs(d) >= Self.meaningfulDurationDelta   { return true }
-        if let e = efficiencyDelta, abs(e) >= Self.meaningfulEfficiencyDelta { return true }
-        if let d = deepDelta,       abs(d) >= Self.meaningfulStageDelta       { return true }
-        if let r = remDelta,        abs(r) >= Self.meaningfulStageDelta       { return true }
-        if let a = awakeDelta,      abs(a) >= Self.meaningfulAwakeDelta       { return true }
+        if let d = durationDelta,   abs(d) >= SleepAnalysisThresholds.meaningfulDurationDelta   { return true }
+        if let e = efficiencyDelta, abs(e) >= SleepAnalysisThresholds.meaningfulEfficiencyDelta { return true }
+        if let d = deepDelta,       abs(d) >= SleepAnalysisThresholds.meaningfulStageDelta       { return true }
+        if let r = remDelta,        abs(r) >= SleepAnalysisThresholds.meaningfulStageDelta       { return true }
+        if let a = awakeDelta,      abs(a) >= SleepAnalysisThresholds.meaningfulAwakeDelta       { return true }
         return false
-    }
-}
-
-// MARK: - ComparisonConfidence sort order
-
-nonisolated private extension ComparisonConfidence {
-    var sortOrder: Int {
-        switch self {
-        case .unavailable: 0
-        case .low:         1
-        case .medium:      2
-        case .high:        3
-        }
     }
 }

@@ -4,16 +4,9 @@ import Security
 /// Stores and retrieves the per-install AES-256 encryption key from the iOS Keychain.
 /// Items are bound to this device only and require the device to be unlocked for access.
 enum KeychainService: Sendable {
-    private static let service = Bundle.main.bundleIdentifier ?? "com.better.app"
-    private static let defaultAccount = "healthDataEncryptionKey.v1"
-
     nonisolated static func storeKey(_ keyData: Data, account: String? = nil) throws {
-        let resolvedAccount = account ?? defaultAccount
-        let baseQuery: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: resolvedAccount
-        ]
+        let resolvedAccount = Self.resolvedAccount(account)
+        let baseQuery = Self.baseQuery(account: resolvedAccount)
         let insertQuery = baseQuery.merging([
             kSecValueData: keyData,
             kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
@@ -32,14 +25,11 @@ enum KeychainService: Sendable {
     }
 
     nonisolated static func loadKey(account: String? = nil) throws -> Data? {
-        let resolvedAccount = account ?? defaultAccount
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: resolvedAccount,
+        let resolvedAccount = Self.resolvedAccount(account)
+        let query = Self.baseQuery(account: resolvedAccount).merging([
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne
-        ]
+        ] as [CFString: Any]) { _, new in new }
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -52,16 +42,24 @@ enum KeychainService: Sendable {
     }
 
     nonisolated static func deleteKey(account: String? = nil) throws {
-        let resolvedAccount = account ?? defaultAccount
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: resolvedAccount
-        ]
+        let resolvedAccount = Self.resolvedAccount(account)
+        let query = Self.baseQuery(account: resolvedAccount)
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.deleteFailed(status)
         }
+    }
+
+    nonisolated private static func resolvedAccount(_ account: String?) -> String {
+        account ?? "healthDataEncryptionKey.v1"
+    }
+
+    nonisolated private static func baseQuery(account: String) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: "ai.better-health.Better",
+            kSecAttrAccount: account
+        ]
     }
 }
 
@@ -73,10 +71,14 @@ enum KeychainError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .storeFailed(let status): "Keychain store failed: \(status)"
-        case .loadFailed(let status): "Keychain load failed: \(status)"
-        case .updateFailed(let status): "Keychain update failed: \(status)"
-        case .deleteFailed(let status): "Keychain delete failed: \(status)"
+        case .storeFailed(let status): "Keychain store failed: \(Self.describe(status))"
+        case .loadFailed(let status): "Keychain load failed: \(Self.describe(status))"
+        case .updateFailed(let status): "Keychain update failed: \(Self.describe(status))"
+        case .deleteFailed(let status): "Keychain delete failed: \(Self.describe(status))"
         }
+    }
+
+    private static func describe(_ status: OSStatus) -> String {
+        SecCopyErrorMessageString(status, nil).map { $0 as String } ?? "OSStatus \(status)"
     }
 }

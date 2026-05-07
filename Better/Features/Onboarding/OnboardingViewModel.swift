@@ -63,6 +63,7 @@ final class OnboardingViewModel {
         errorMessage = nil
         do {
             var updated = profile
+            updated.normalizeForStorage()
             updated.hasCompletedOnboarding = true
             updated.sleepAssessmentAnswers = SleepAssessmentQuestion.allQuestions.compactMap { answersByQuestionID[$0.id] }
             updated.updatedAt = Date()

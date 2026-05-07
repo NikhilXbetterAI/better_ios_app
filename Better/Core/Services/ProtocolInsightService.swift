@@ -1,11 +1,6 @@
 import Foundation
 
 nonisolated struct ProtocolInsightService: Sendable {
-    static let meaningfulDurationDelta: TimeInterval = 20 * 60
-    static let meaningfulEfficiencyDelta = 0.03
-    static let meaningfulStageDelta: TimeInterval = 10 * 60
-    static let meaningfulAwakeDelta: TimeInterval = 10 * 60
-
     func insights(from result: ProtocolComparisonResult) -> [SleepInsight] {
         switch result.confidence {
         case .unavailable:
@@ -53,7 +48,7 @@ nonisolated private extension ProtocolInsightService {
     func meaningfulMetricInsights(from result: ProtocolComparisonResult, includeStageInsights: Bool) -> [SleepInsight] {
         var insights: [SleepInsight] = []
 
-        if let delta = result.deltaTotalSleep, abs(delta) >= Self.meaningfulDurationDelta {
+        if let delta = result.deltaTotalSleep, abs(delta) >= SleepAnalysisThresholds.meaningfulDurationDelta {
             let minutes = Int((abs(delta) / 60).rounded())
             let direction = delta > 0 ? "higher" : "lower"
             insights.append(
@@ -69,7 +64,7 @@ nonisolated private extension ProtocolInsightService {
             )
         }
 
-        if let delta = result.deltaEfficiency, abs(delta) >= Self.meaningfulEfficiencyDelta {
+        if let delta = result.deltaEfficiency, abs(delta) >= SleepAnalysisThresholds.meaningfulEfficiencyDelta {
             let points = Int((abs(delta) * 100).rounded())
             let direction = delta > 0 ? "higher" : "lower"
             insights.append(
@@ -86,15 +81,15 @@ nonisolated private extension ProtocolInsightService {
         }
 
         if includeStageInsights {
-            if let delta = result.deltaDeepSleep, abs(delta) >= Self.meaningfulStageDelta {
+            if let delta = result.deltaDeepSleep, abs(delta) >= SleepAnalysisThresholds.meaningfulStageDelta {
                 insights.append(stageInsight(id: "protocol-deep", label: "deep sleep", delta: delta, confidence: result.confidence))
             }
-            if let delta = result.deltaREMSleep, abs(delta) >= Self.meaningfulStageDelta {
+            if let delta = result.deltaREMSleep, abs(delta) >= SleepAnalysisThresholds.meaningfulStageDelta {
                 insights.append(stageInsight(id: "protocol-rem", label: "REM sleep", delta: delta, confidence: result.confidence))
             }
         }
 
-        if let delta = result.deltaAwakeTime, abs(delta) >= Self.meaningfulAwakeDelta {
+        if let delta = result.deltaAwakeTime, abs(delta) >= SleepAnalysisThresholds.meaningfulAwakeDelta {
             let minutes = Int((abs(delta) / 60).rounded())
             let direction = delta > 0 ? "higher" : "lower"
             insights.append(

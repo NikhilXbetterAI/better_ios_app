@@ -93,9 +93,263 @@ The app uses a **3-layer architecture**: Data (repositories + processors) → Bu
 ### Design System
 
 - **`Core/DesignSystem/`** — Colors, typography, spacing, and reusable UI components
-  - `BetterColors.swift` — Color tokens
-  - `BetterTypography.swift` — Font/size definitions
+  - `BetterColors.swift` — Color tokens (see Modern Design Tokens below)
+  - `BetterTypography.swift` — Font/size definitions (see Typography Updates below)
   - `BetterSpacing.swift` — Padding/margin standards
+  - `BetterHealthComponents.swift` — Modernized card, gauge, sparkline, and button components
+
+## Modern UI Design Patterns
+
+The app was modernized in 2026 with glassmorphism, gradient surfaces, and per-step accent colors. Use these patterns and tokens when updating or creating new views.
+
+### Design Tokens & Gradients
+
+**Color tokens added to `BetterColors.swift`:**
+```swift
+// Card surfaces — refined for gradient rendering
+static let card = Color(hex: "#1C1E2E")
+static let cardSecondary = Color(hex: "#232538")
+static let cardTertiary = Color(hex: "#2A2D3F")
+
+// Gradient fills
+static var brandGradient: LinearGradient {
+    LinearGradient(colors: [brand, Color(hex: "#818CF8")], startPoint: .topLeading, endPoint: .bottomTrailing)
+}
+static var cardGradient: LinearGradient {
+    LinearGradient(colors: [card, cardSecondary.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)
+}
+
+// Glass-stroke border for elevated cards
+static var glassStroke: LinearGradient {
+    LinearGradient(colors: [Color.white.opacity(0.14), Color.white.opacity(0.04)], startPoint: .top, endPoint: .bottom)
+}
+```
+
+### Typography Updates
+
+**Updated font weights in `BetterTypography.swift`:**
+```swift
+static let body = Font.system(size: 16, weight: .medium, design: .rounded)       // was .regular
+static let footnote = Font.system(size: 13, weight: .medium, design: .rounded)   // was .regular
+static let micro = Font.system(size: 10, weight: .medium, design: .rounded)      // new
+```
+
+### Modernized Components in `BetterHealthComponents.swift`
+
+#### `BetterHealthCard` — Glass-morphic container
+- **Fill**: `cardGradient` (dark→slightly darker)
+- **Border**: `glassStroke` overlaid as 1pt stroke in a RoundedRectangle (20pt radius)
+- **Shadow**: radius 20pt, opacity 0.36, blur y-offset 10pt
+- **Usage**: Wrap any content card for consistent elevated appearance
+
+```swift
+BetterHealthCard {
+    VStack(alignment: .leading) {
+        Text("Metric").font(BetterTypography.subheadline).foregroundStyle(BetterColors.text)
+        Text("Value").font(BetterTypography.title).foregroundStyle(BetterColors.brand)
+    }
+}
+.padding(.horizontal, BetterSpacing.screen)
+```
+
+#### `MetricGaugeView` — Donut arc with AngularGradient
+- **Arc**: 240° (trim 0.1→0.9), rotated 90° so gap is at 6 o'clock
+- **Stroke**: `AngularGradient(gradient: Gradient(colors: [color, color.opacity(0.5)]), center: .center)`
+- **Track**: opacity 0.10 (was 0.14), very subtle gray
+- **Center label**: optional large number + small unit text below
+- **Animation**: spring response 0.45, damping 0.75
+
+```swift
+MetricGaugeView(value: 0.72, max: 1.0, color: BetterColors.brand, label: "72%")
+    .frame(width: 140, height: 140)
+```
+
+#### `SparklineView` — Animated micro chart
+- **Line**: 2.8pt width (was 2.4), rounded lineCap, color driven by theme
+- **Fill gradient**: 30%→0% opacity fade from line to bottom
+- **Endpoint dot**: 10pt circle, solid color, no opacity
+- **Animation**: ease-in-out, inherits value binding changes
+
+```swift
+SparklineView(data: sleepQualityScores, lineColor: BetterColors.success)
+    .frame(height: 40)
+```
+
+#### `FloatingActionButton` — Premium pulse button
+- **Background**: `.ultraThinMaterial` layered with `cardSecondary.opacity(0.6)`
+- **Border**: `glassStroke` 1pt overlay
+- **Shadow**: radius 16pt, opacity 0.24
+- **Size**: 56pt diameter circle for compact, flexible for full-width
+- **Interaction**: scale 0.95 on press, spring animation 0.2s
+
+```swift
+FloatingActionButton(icon: "plus", color: BetterColors.brand, action: { /* */ })
+```
+
+### Tab Bar Material Style
+
+**In any tab view**, apply:
+```swift
+.toolbarBackground(.ultraThinMaterial, for: .tabBar)
+.toolbarBackground(.visible, for: .tabBar)
+```
+This gives the material effect with proper vibrancy on iOS 18+.
+
+### Background Glow Pattern
+
+For hero sections with per-step coloring:
+```swift
+ZStack {
+    // Background layer
+    BetterColors.background
+
+    // Per-step accent glow at top
+    RadialGradient(
+        colors: [accentColor.opacity(0.12), .clear],
+        center: .init(x: 0.5, y: 0.0),
+        startRadius: 0,
+        endRadius: UIScreen.main.bounds.height * 0.45
+    )
+}
+.ignoresSafeArea()
+.animation(.easeInOut(duration: 0.5), value: accentColor)
+```
+
+### Spring Animation Presets
+
+**Common animation configurations:**
+
+| Use Case | Animation | Params |
+|----------|-----------|--------|
+| Layout transitions (card swap) | spring | response: 0.45, damping: 0.82 |
+| Metric value changes | spring | response: 0.4, damping: 0.75 |
+| Gauge/arc fills | spring | response: 0.4, damping: 0.72 |
+| Page indicator width | spring | response: 0.35, damping: 0.75 |
+| Icon tilt / interactive | spring | response: 0.4, damping: 0.55 |
+| Smooth background fade | easeInOut | duration: 0.5 |
+| Floating/breathing motion | easeInOut repeat | duration: 3s, autoreverses: true |
+| Continuous orbit | linear repeat | duration: 12-14s, no-reverse |
+
+**Example — staggered animation:**
+```swift
+for (i, item) in items.enumerated() {
+    withAnimation(.spring(response: 0.55, dampingFraction: 0.8).delay(Double(i) * 0.12)) {
+        opacities[i] = 1.0
+        offsets[i] = 0
+    }
+}
+```
+
+### Onboarding Flow Patterns
+
+Each step in `OnboardingFlowView` follows the same structure for visual consistency:
+
+#### Per-Step Accent Colors
+```swift
+enum OnboardingStep {
+    // ...
+    var accentColor: Color {
+        switch self {
+        case .welcome: BetterColors.brand       // indigo
+        case .health: BetterColors.heartRate    // pink
+        case .sleepGoal: BetterColors.success   // green
+        case .assessment: BetterColors.stageDeep // violet
+        case .notifications: BetterColors.stageAwake // amber
+        case .research: BetterColors.hrv        // teal
+        }
+    }
+}
+```
+
+#### Step View Structure
+```
+┌─ Full-height VStack
+├─ Hero area (top 36-42% of screen)
+│  └─ Animated illustration (floating moon, activity rings, arc clock, canvas chart, etc.)
+├─ Centered text (title + body)
+├─ Content card(s) with cardGradient + glassStroke
+└─ Reserve 120pt at bottom for footer
+```
+
+#### Slide Transitions
+```swift
+@State private var movingForward = true
+
+var stepTransition: AnyTransition {
+    .asymmetric(
+        insertion: .move(edge: movingForward ? .trailing : .leading).combined(with: .opacity),
+        removal: .move(edge: movingForward ? .leading : .trailing).combined(with: .opacity)
+    )
+}
+```
+
+### Hero Illustration Components
+
+**Reusable hero builders in `OnboardingHeroComponents.swift`:**
+
+#### `PageDotsIndicator` — Dot progress
+```swift
+PageDotsIndicator(count: 5, activeIndex: 2, activeColor: BetterColors.brand)
+// Active: 22×6pt Capsule, inactive: 6×6pt circle
+// Animates width on change with .spring(response: 0.35, damping: 0.75)
+```
+
+#### `ActivityRingsHero` — Concentric AngularGradient arcs
+```swift
+ActivityRingsHero(rings: [
+    Ring(color: BetterColors.stageDeep, targetTrim: 0.75, lineWidth: 22, diameter: 200),
+    Ring(color: BetterColors.heartRate, targetTrim: 0.55, lineWidth: 22, diameter: 148),
+    Ring(color: BetterColors.hrv, targetTrim: 0.65, lineWidth: 22, diameter: 96),
+])
+// Stagger animates each ring in with .spring(response: 1.0, damping: 0.7).delay(i * 0.18)
+```
+
+#### `SleepArcView` — Interactive arc clock
+```swift
+@Binding var sleepGoalHours: Double
+let arcColor = sleepGoalHours >= 7 && sleepGoalHours <= 9 ? BetterColors.success : BetterColors.warning
+
+SleepArcView(value: sleepGoalHours, range: 6...10, color: arcColor)
+    .frame(width: 180, height: 180)
+// Center shows large number (52pt bold) with "hours" label
+// Arc fills smoothly: trim 0.15 + fraction*0.70 where fraction = (value - 6) / 4
+```
+
+### Interactive Element Patterns
+
+#### Two-Tap Permission Flow
+```swift
+@State private var healthConnectAttempted = false
+
+switch step {
+case .health:
+    if !healthConnectAttempted {
+        healthConnectAttempted = true
+        Task { await viewModel.connectHealth() }  // First tap: request permission
+    } else {
+        goForward()  // Second tap: advance
+    }
+}
+
+// Button title reflects state:
+let title = healthConnectAttempted ? "Continue" : "Connect Apple Health"
+```
+
+#### Scrub/Drag Interaction
+```swift
+@State private var dragX: CGFloat?
+
+.gesture(DragGesture(minimumDistance: 0)
+    .onChanged { value in
+        dragX = value.location.x
+    }
+    .onEnded { _ in
+        withAnimation(.easeOut(duration: 0.2)) {
+            dragX = nil
+        }
+    }
+)
+```
 
 ## Key Patterns & Conventions
 

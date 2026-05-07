@@ -77,7 +77,7 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
 // MARK: - Supporting types
 
 /// A snapshot of locally-stored health data record counts.
-struct LocalDataInventory: Sendable {
+nonisolated struct LocalDataInventory: Sendable {
     var sleepSessionCount: Int
     var baselineCount: Int
     var alertCount: Int

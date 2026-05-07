@@ -27,11 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
+	<true/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Better reads your sleep, heart, HRV, oxygen saturation, and respiratory data from Apple Health to show sleep trends and protocol insights.</string>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>Better asks before saving any sleep or wellness entries you choose to add to Apple Health.</string>
+	<string>Better reads sleep, heart rate, HRV, blood oxygen, respiratory rate, body composition (weight, body fat, temperature), fitness (VO2 Max), and daily activity (steps, calories, exercise, stand hours) from Apple Health to power sleep insights and research tracking.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -44,12 +42,11 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
+		<string>healthkit</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

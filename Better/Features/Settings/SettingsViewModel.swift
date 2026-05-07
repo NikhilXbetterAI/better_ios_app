@@ -44,6 +44,7 @@ final class SettingsViewModel {
     func saveProfile() async {
         do {
             var updated = profile
+            updated.normalizeForStorage()
             updated.updatedAt = Date()
             try await localRepository.saveProfile(updated)
             profile = updated
@@ -67,7 +68,7 @@ final class SettingsViewModel {
                 to: endDate,
                 protocolItems: ProtocolCatalog.load()
             )
-            exportURL = try csvExporter.writeZIP(package: package)
+            exportURL = try csvExporter.writeZIP(package: package, displayName: profile.displayName)
             insightSummary = package.insightSummary
         } catch {
             errorMessage = error.localizedDescription
@@ -88,7 +89,7 @@ final class SettingsViewModel {
                 to: now,
                 protocolItems: ProtocolCatalog.load()
             )
-            exportURL = try csvExporter.writeZIP(package: package)
+            exportURL = try csvExporter.writeZIP(package: package, displayName: profile.displayName)
             insightSummary = package.insightSummary
         } catch {
             errorMessage = error.localizedDescription

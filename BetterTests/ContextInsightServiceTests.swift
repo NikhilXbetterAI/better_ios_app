@@ -115,8 +115,8 @@ private extension ContextInsightServiceTests {
     ) -> ContextComparisonResult {
         let confidence = ProtocolComparisonService.confidence(takenCount: yesCount, notTakenCount: noCount)
         let durationDelta = durationDeltaMinutes * 60.0
-        let meaningful = abs(durationDelta) >= ContextComparisonService.meaningfulDurationDelta ||
-                         abs(efficiencyDelta) >= ContextComparisonService.meaningfulEfficiencyDelta
+        let meaningful = abs(durationDelta) >= SleepAnalysisThresholds.meaningfulDurationDelta ||
+                         abs(efficiencyDelta) >= SleepAnalysisThresholds.meaningfulEfficiencyDelta
         return ContextComparisonResult(
             factor: factor,
             window: .all,

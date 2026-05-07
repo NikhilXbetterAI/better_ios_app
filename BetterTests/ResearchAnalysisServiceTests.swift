@@ -361,13 +361,41 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("comparison_confidence"))
         XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("source_names,baseline_window_used"))
 
-        let zipURL = try exporter.writeZIP(package: package)
+        let zipURL = try exporter.writeZIP(package: package, displayName: "Ada O'Connor / Sleep")
         let data = try Data(contentsOf: zipURL)
         XCTAssertTrue(data.starts(with: Data([0x50, 0x4B, 0x03, 0x04])))
         let zipText = String(decoding: data, as: UTF8.self)
         XCTAssertTrue(zipText.contains("nightly_research_rows.csv"))
         XCTAssertTrue(zipText.contains("protocol_effect_summary.csv"))
         XCTAssertTrue(zipText.contains("export_metadata.csv"))
+        XCTAssertEqual(zipURL.lastPathComponent, "BetterSleep_Ada-O-Connor-Sleep_2026-05-01_to_2026-05-05.zip")
+    }
+
+    func testCSVExporterFallsBackToGenericFilenameWhenDisplayNameIsBlank() throws {
+        let exporter = ResearchCSVExporter()
+        let package = ResearchExportPackage(
+            generatedAt: Self.date("2026-05-04T12:00:00Z"),
+            rangeStart: Self.date("2026-05-01T00:00:00Z"),
+            rangeEnd: Self.date("2026-05-05T00:00:00Z"),
+            baselineWindowDays: 30,
+            baselineValidNights: 10,
+            isResearchMode: true,
+            nightlyRows: [],
+            protocolSummaries: [],
+            insightSummary: ResearchInsightSummary(
+                generatedAt: Self.date("2026-05-04T12:00:00Z"),
+                validNightCount: 0,
+                bestProtocolName: nil,
+                bestProtocolSleepDifferenceHours: nil,
+                confidence: .insufficient,
+                baselineSleepDifferenceHours: nil,
+                confounderNote: nil,
+                summary: "No data"
+            )
+        )
+
+        let zipURL = try exporter.writeZIP(package: package, displayName: "   ")
+        XCTAssertEqual(zipURL.lastPathComponent, "BetterSleep_2026-05-01_to_2026-05-05.zip")
     }
 }
 

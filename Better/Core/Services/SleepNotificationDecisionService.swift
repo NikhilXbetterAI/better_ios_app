@@ -259,7 +259,7 @@ nonisolated private extension SleepNotificationDecisionService {
             return [suppressed(.protocolDurationPattern, title: "Protocol cooldown", reason: "Protocol notification weekly cooldown is active.", confidence: result.confidence, createdAt: createdAt, cooldown: true)]
         }
 
-        if let delta = result.deltaTotalSleep, abs(delta) >= ProtocolInsightService.meaningfulDurationDelta {
+        if let delta = result.deltaTotalSleep, abs(delta) >= SleepAnalysisThresholds.meaningfulDurationDelta {
             let minutes = Int((abs(delta) / 60).rounded())
             let direction = delta > 0 ? "higher" : "lower"
             return [
@@ -276,7 +276,7 @@ nonisolated private extension SleepNotificationDecisionService {
             ]
         }
 
-        if let delta = result.deltaEfficiency, abs(delta) >= ProtocolInsightService.meaningfulEfficiencyDelta {
+        if let delta = result.deltaEfficiency, abs(delta) >= SleepAnalysisThresholds.meaningfulEfficiencyDelta {
             let points = Int((abs(delta) * 100).rounded())
             let direction = delta > 0 ? "higher" : "lower"
             return [

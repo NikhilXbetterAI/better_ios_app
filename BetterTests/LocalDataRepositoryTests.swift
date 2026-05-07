@@ -78,6 +78,7 @@ final class LocalDataRepositoryTests: XCTestCase {
         let profile = UserProfile(
             sleepGoalHours: 7.5,
             baselineWindowDays: 15,
+            displayName: "Maya",
             sleepAssessmentAnswers: [
                 SleepAssessmentAnswer(
                     questionID: "sleep_latency",
@@ -136,7 +137,8 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertNil(fetched?.workout)
         XCTAssertEqual(fetched?.perceivedSleepQuality, .good)
         XCTAssertEqual(fetched?.notes, "Encrypted note")
-        XCTAssertEqual(inventory.contextEntryCount, 1)
+        let contextEntryCount = inventory.contextEntryCount
+        XCTAssertEqual(contextEntryCount, 1)
 
         // Test replacement
         var updated = entry
@@ -149,7 +151,8 @@ final class LocalDataRepositoryTests: XCTestCase {
         // Test deletion
         try await repository.deleteAllContextEntries()
         let emptyInventory = try await repository.fetchDataInventory()
-        XCTAssertEqual(emptyInventory.contextEntryCount, 0)
+        let emptyContextEntryCount = emptyInventory.contextEntryCount
+        XCTAssertEqual(emptyContextEntryCount, 0)
     }
 
     func testLocalRepositoryPrunesOldData() async throws {
@@ -172,12 +175,14 @@ final class LocalDataRepositoryTests: XCTestCase {
         try await repository.saveSessions([oldSession, recentSession])
         
         var inventory = try await repository.fetchDataInventory()
-        XCTAssertEqual(inventory.sleepSessionCount, 2)
+        let initialSleepSessionCount = inventory.sleepSessionCount
+        XCTAssertEqual(initialSleepSessionCount, 2)
         
         try await repository.pruneDataOlderThan(days: 60)
         
         inventory = try await repository.fetchDataInventory()
-        XCTAssertEqual(inventory.sleepSessionCount, 1)
+        let prunedSleepSessionCount = inventory.sleepSessionCount
+        XCTAssertEqual(prunedSleepSessionCount, 1)
         
         let sessions = try await repository.fetchCachedSessions(
             from: sixtyOneDaysAgo.addingTimeInterval(-100 * 86_400),

@@ -174,7 +174,7 @@ extension ProtocolComparisonDashboardViewModel {
             efficiencyRow(result),
             stageRow(title: "Deep Sleep", taken: result.averageDeepSleepTaken, notTaken: result.averageDeepSleepNotTaken, delta: result.deltaDeepSleep),
             stageRow(title: "REM Sleep", taken: result.averageREMSleepTaken, notTaken: result.averageREMSleepNotTaken, delta: result.deltaREMSleep),
-            stageRow(title: "Awake Time", taken: result.averageAwakeTimeTaken, notTaken: result.averageAwakeTimeNotTaken, delta: result.deltaAwakeTime, threshold: ProtocolInsightService.meaningfulAwakeDelta)
+            stageRow(title: "Awake Time", taken: result.averageAwakeTimeTaken, notTaken: result.averageAwakeTimeNotTaken, delta: result.deltaAwakeTime, threshold: SleepAnalysisThresholds.meaningfulAwakeDelta)
         ].compactMap { $0 }
 
         return ProtocolComparisonDashboardState(
@@ -199,7 +199,7 @@ extension ProtocolComparisonDashboardViewModel {
             takenValue: formatDuration(taken),
             notTakenValue: formatDuration(notTaken),
             deltaText: delta.map { formatSignedMinutes($0) },
-            isMeaningful: delta.map { abs($0) >= ProtocolInsightService.meaningfulDurationDelta } ?? false
+            isMeaningful: delta.map { abs($0) >= SleepAnalysisThresholds.meaningfulDurationDelta } ?? false
         )
     }
 
@@ -211,7 +211,7 @@ extension ProtocolComparisonDashboardViewModel {
             takenValue: formatPercent(taken),
             notTakenValue: formatPercent(notTaken),
             deltaText: delta.map { formatSignedPercentagePoints($0) },
-            isMeaningful: delta.map { abs($0) >= ProtocolInsightService.meaningfulEfficiencyDelta } ?? false
+            isMeaningful: delta.map { abs($0) >= SleepAnalysisThresholds.meaningfulEfficiencyDelta } ?? false
         )
     }
 
@@ -220,7 +220,7 @@ extension ProtocolComparisonDashboardViewModel {
         taken: TimeInterval?,
         notTaken: TimeInterval?,
         delta: TimeInterval?,
-        threshold: TimeInterval = ProtocolInsightService.meaningfulStageDelta
+        threshold: TimeInterval = SleepAnalysisThresholds.meaningfulStageDelta
     ) -> ProtocolComparisonMetricRow? {
         guard let taken, let notTaken else { return nil }
         return ProtocolComparisonMetricRow(

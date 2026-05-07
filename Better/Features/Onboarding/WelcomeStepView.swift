@@ -1,41 +1,135 @@
 import SwiftUI
 
 struct WelcomeStepView: View {
+    @State private var floatOffset: CGFloat = 0
+    @State private var orbitAngle: Double = 0
+
     var body: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.xxLarge) {
-            Spacer(minLength: BetterSpacing.large)
+        GeometryReader { geometry in
+            let screenHeight = geometry.size.height
 
-            ZStack {
+            VStack(spacing: 0) {
+                // ── Hero ──────────────────────────────────────────────────────
+                heroArea
+                    .frame(height: screenHeight * 0.42)
+
+                // ── Text ──────────────────────────────────────────────────────
+                VStack(spacing: BetterSpacing.medium) {
+                    Text("Better sleep starts\nwith your baseline")
+                        .font(BetterTypography.display)
+                        .foregroundStyle(BetterColors.text)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Connect Apple Health and log your nights. Once your baseline is ready, you'll see exactly how your habits affect your sleep.")
+                        .font(BetterTypography.body)
+                        .foregroundStyle(BetterColors.subtext)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, BetterSpacing.screen)
+                .padding(.top, BetterSpacing.large)
+
+                // ── Mini feature cards ────────────────────────────────────────
+                HStack(spacing: BetterSpacing.medium) {
+                    OnboardingMiniCard(icon: "heart.text.square.fill", label: "Stays\nlocal")
+                    OnboardingMiniCard(icon: "magnifyingglass",         label: "Finds\nlinks")
+                    OnboardingMiniCard(icon: "shield.fill",             label: "Not\nmedical")
+                }
+                .padding(.horizontal, BetterSpacing.screen)
+                .padding(.top, BetterSpacing.xLarge)
+
+                Spacer(minLength: 0)
+                // Space for footer pill
+                Color.clear.frame(height: 120)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+        }
+        .onAppear { startAnimations() }
+    }
+
+    // MARK: - Hero
+
+    private var heroArea: some View {
+        ZStack {
+            // Outer ring
+            Circle()
+                .stroke(BetterColors.brand.opacity(0.08), lineWidth: 1.5)
+                .frame(width: 220, height: 220)
+
+            // Medium ring
+            Circle()
+                .stroke(BetterColors.brand.opacity(0.13), lineWidth: 1)
+                .frame(width: 160, height: 160)
+
+            // Inner filled circle
+            Circle()
+                .fill(BetterColors.brand.opacity(0.15))
+                .frame(width: 112, height: 112)
+
+            // Orbiting dots
+            ForEach([0.0, 120.0, 240.0], id: \.self) { startDeg in
+                let angle = Angle.degrees(startDeg + orbitAngle)
+                let radius: CGFloat = 72
                 Circle()
-                    .fill(BetterColors.brand.opacity(0.18))
-                    .frame(width: 112, height: 112)
-                Image(systemName: "moon.stars.fill")
-                    .font(.system(size: 46, weight: .semibold))
-                    .foregroundStyle(BetterColors.brand)
+                    .fill(BetterColors.brand.opacity(0.65))
+                    .frame(width: 8, height: 8)
+                    .offset(
+                        x: radius * cos(angle.radians),
+                        y: radius * sin(angle.radians)
+                    )
             }
 
-            VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                Text("Better sleep starts with your baseline")
-                    .font(BetterTypography.display)
-                    .foregroundStyle(BetterColors.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Connect Apple Health and log your nights. It takes a few days to build your personal baseline. Once ready, you'll see associations between your habits and your sleep.")
-                    .font(BetterTypography.body)
-                    .foregroundStyle(BetterColors.subtext)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // Moon symbol
+            Image(systemName: "moon.stars.fill")
+                .font(.system(size: 60, weight: .semibold))
+                .foregroundStyle(BetterColors.brandGradient)
+        }
+        .offset(y: floatOffset)
+    }
 
-            VStack(spacing: BetterSpacing.medium) {
-                OnboardingValueRow(icon: "heart.text.square.fill", title: "Data stays local", description: "Better reads sleep data securely from Apple Health.")
-                OnboardingValueRow(icon: "magnifyingglass", title: "Find associations", description: "Compare your routines to your sleep metrics.")
-                OnboardingValueRow(icon: "shield.fill", title: "Not a medical device", description: "Insights highlight trends, not medical causes.")
-            }
+    // MARK: - Animations
 
-            Spacer(minLength: BetterSpacing.large)
+    private func startAnimations() {
+        withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) {
+            floatOffset = -10
+        }
+        withAnimation(.linear(duration: 14).repeatForever(autoreverses: false)) {
+            orbitAngle = 360
         }
     }
 }
 
+// MARK: - Mini Card
+
+private struct OnboardingMiniCard: View {
+    let icon: String
+    let label: String
+
+    var body: some View {
+        VStack(spacing: BetterSpacing.small) {
+            Image(systemName: icon)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(BetterColors.brandGradient)
+                .frame(width: 44, height: 44)
+                .background(BetterColors.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Text(label)
+                .font(BetterTypography.micro)
+                .foregroundStyle(BetterColors.subtext)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, BetterSpacing.medium)
+        .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(BetterColors.glassStroke, lineWidth: 1)
+        )
+    }
+}
+
+// Keeping OnboardingValueRow for external use
 struct OnboardingValueRow: View {
     let icon: String
     let title: String

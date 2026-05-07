@@ -48,13 +48,16 @@ final class AppEnvironment {
         )
     }
 
+    #if DEBUG
     static func preview() -> AppEnvironment {
         sharedPreview
     }
 
     static func uiTesting() -> AppEnvironment { preview() }
+    #endif
 }
 
+#if DEBUG
 private extension AppEnvironment {
     static let sharedPreview: AppEnvironment = makePreview()
 
@@ -79,3 +82,4 @@ private extension AppEnvironment {
         )
     }
 }
+#endif

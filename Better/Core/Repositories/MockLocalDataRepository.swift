@@ -1,5 +1,6 @@
 import Foundation
 
+#if DEBUG
 actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     private var sessionsBySleepDateKey: [String: SleepSession]
     private var summariesBySessionID: [UUID: NightlyBiometricSummary]
@@ -288,3 +289,4 @@ nonisolated private extension MockLocalDataRepository {
         SleepDateKey.calendarDateKey(for: date)
     }
 }
+#endif

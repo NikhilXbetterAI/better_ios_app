@@ -166,6 +166,7 @@ nonisolated struct UserProfile: Codable, Hashable, Sendable, Identifiable {
     var baselineWindowDays: Int
     var isResearchMode: Bool
     var hasCompletedOnboarding: Bool
+    var displayName: String?
     var sleepAssessmentAnswers: [SleepAssessmentAnswer]
     var createdAt: Date
     var updatedAt: Date
@@ -176,6 +177,7 @@ nonisolated struct UserProfile: Codable, Hashable, Sendable, Identifiable {
         baselineWindowDays: Int = 30,
         isResearchMode: Bool = false,
         hasCompletedOnboarding: Bool = false,
+        displayName: String? = nil,
         sleepAssessmentAnswers: [SleepAssessmentAnswer] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -185,8 +187,22 @@ nonisolated struct UserProfile: Codable, Hashable, Sendable, Identifiable {
         self.baselineWindowDays = baselineWindowDays
         self.isResearchMode = isResearchMode
         self.hasCompletedOnboarding = hasCompletedOnboarding
+        self.displayName = displayName
         self.sleepAssessmentAnswers = sleepAssessmentAnswers
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+nonisolated extension UserProfile {
+    mutating func normalizeForStorage() {
+        displayName = displayName?.trimmedNonEmpty
+    }
+}
+
+nonisolated extension String {
+    var trimmedNonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

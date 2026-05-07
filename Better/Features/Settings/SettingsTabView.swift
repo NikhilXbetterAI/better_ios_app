@@ -87,14 +87,14 @@ struct SettingsTabView: View {
 
     private var profileCard: some View {
         HStack(spacing: BetterSpacing.medium) {
-            Text("A")
+            Text(profileInitial)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 56)
                 .background(BetterColors.brand)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 3) {
-                Text("Better Sleep")
+                Text(profileDisplayName)
                     .font(BetterTypography.title)
                     .foregroundStyle(BetterColors.text)
                 Text("\(String(format: "%.1f", viewModel.profile.sleepGoalHours))h goal · \(viewModel.profile.baselineWindowDays)-day baseline")
@@ -109,6 +109,15 @@ struct SettingsTabView: View {
         .padding(BetterSpacing.large)
         .background(BetterColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var profileDisplayName: String {
+        viewModel.profile.displayName?.trimmedNonEmpty ?? "Better Sleep"
+    }
+
+    private var profileInitial: String {
+        let fallback = "B"
+        return profileDisplayName.first.map { String($0).uppercased() } ?? fallback
     }
 
     private var about: some View {

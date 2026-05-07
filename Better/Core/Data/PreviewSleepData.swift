@@ -185,6 +185,7 @@ enum PreviewSleepData {
 
     // MARK: - Mock repository pre-populated for preview
 
+    #if DEBUG
     static func makeMockRepository() -> MockLocalDataRepository {
         let sessions = sampleSessions
         let baseline = sampleBaseline
@@ -198,6 +199,7 @@ enum PreviewSleepData {
             profile: UserProfile(sleepGoalHours: 8, baselineWindowDays: 30, isResearchMode: true, hasCompletedOnboarding: true)
         )
     }
+    #endif
 
     static var sampleActivityStatusLogs: [ActivityStatusLog] {
         let calendar = Calendar.current

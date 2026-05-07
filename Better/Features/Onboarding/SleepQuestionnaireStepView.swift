@@ -13,12 +13,16 @@ struct SleepQuestionnaireStepView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.large) {
             questionHeader
+                .padding(.horizontal, BetterSpacing.screen)
+                .padding(.top, BetterSpacing.large)
+
             questionContent
+                .padding(.horizontal, BetterSpacing.screen)
         }
         .onAppear { seekFirstUnanswered() }
     }
 
-    // MARK: - Subviews
+    // MARK: - Header
 
     private var questionHeader: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.small) {
@@ -44,11 +48,20 @@ struct SleepQuestionnaireStepView: View {
                     .animation(.spring(response: 0.3, dampingFraction: 0.8), value: currentIndex)
             }
 
-            ProgressView(value: Double(currentIndex + 1), total: Double(questions.count))
-                .tint(BetterColors.brand)
-                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: currentIndex)
+            // Segmented capsule progress — 12 pills
+            HStack(spacing: 4) {
+                ForEach(0..<questions.count, id: \.self) { i in
+                    Capsule()
+                        .fill(i <= currentIndex ? BetterColors.stageDeep : BetterColors.card)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 4)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: currentIndex)
+                }
+            }
         }
     }
+
+    // MARK: - Question content
 
     private var questionContent: some View {
         ZStack(alignment: .top) {
@@ -62,23 +75,34 @@ struct SleepQuestionnaireStepView: View {
 
     @ViewBuilder
     private func questionCard(for question: SleepAssessmentQuestion) -> some View {
+        let style = sectionStyle(for: question.section)
+
         VStack(alignment: .leading, spacing: BetterSpacing.large) {
-            VStack(alignment: .leading, spacing: BetterSpacing.small) {
+            // Section icon header
+            HStack(spacing: BetterSpacing.small) {
+                Image(systemName: style.icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(style.color)
+                    .frame(width: 34, height: 34)
+                    .background(style.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
                 Text(question.section.uppercased())
                     .font(BetterTypography.caption)
-                    .foregroundStyle(BetterColors.brand)
-
-                Text(question.prompt)
-                    .font(BetterTypography.title)
-                    .foregroundStyle(BetterColors.text)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(style.color)
+                    .tracking(0.6)
             }
+
+            Text(question.prompt)
+                .font(BetterTypography.title)
+                .foregroundStyle(BetterColors.text)
+                .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: BetterSpacing.small) {
                 ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
                     QuestionOptionButton(
                         text: option,
                         isSelected: answersByQuestionID[question.id]?.selectedOptionIndex == index,
+                        accentColor: style.color,
                         onTap: { selectOption(index, for: question) }
                     )
                 }
@@ -86,10 +110,26 @@ struct SleepQuestionnaireStepView: View {
         }
         .padding(BetterSpacing.large)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(BetterColors.glassStroke, lineWidth: 1)
+        )
     }
 
-    // MARK: - Navigation
+    // MARK: - Section accent system
+
+    private func sectionStyle(for section: String) -> (color: Color, icon: String) {
+        switch section {
+        case "Sleep Timing & Chronotype": return (BetterColors.brand,      "moon.fill")
+        case "Sleep Quality":             return (BetterColors.stageDeep,  "heart.fill")
+        case "Daytime Function":          return (BetterColors.stageAwake, "figure.run")
+        case "Behavioral Drivers":        return (BetterColors.hrv,        "brain.head.profile")
+        default:                          return (BetterColors.brand,      "questionmark")
+        }
+    }
+
+    // MARK: - Navigation (unchanged logic)
 
     private var slideTransition: AnyTransition {
         .asymmetric(
@@ -142,46 +182,38 @@ struct SleepQuestionnaireStepView: View {
 private struct QuestionOptionButton: View {
     let text: String
     let isSelected: Bool
+    var accentColor: Color = BetterColors.brand
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: BetterSpacing.medium) {
-                ZStack {
-                    Circle()
-                        .stroke(
-                            isSelected ? BetterColors.brand : BetterColors.border,
-                            lineWidth: 1.5
-                        )
-                        .frame(width: 22, height: 22)
-
-                    if isSelected {
-                        Circle()
-                            .fill(BetterColors.brand)
-                            .frame(width: 12, height: 12)
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                }
-                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
-
                 Text(text)
                     .font(BetterTypography.body)
                     .foregroundStyle(BetterColors.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(accentColor)
+                        .transition(.scale.combined(with: .opacity))
+                } else {
+                    Image(systemName: "circle")
+                        .font(.system(size: 20))
+                        .foregroundStyle(BetterColors.border.opacity(2))
+                }
             }
             .padding(.horizontal, BetterSpacing.medium)
-            .padding(.vertical, 13)
+            .padding(.vertical, 14)
             .background(
-                isSelected ? BetterColors.brand.opacity(0.12) : BetterColors.cardSecondary,
+                isSelected ? accentColor.opacity(0.12) : BetterColors.cardSecondary,
                 in: RoundedRectangle(cornerRadius: 12, style: .continuous)
             )
-            .overlay {
+            .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(
-                        isSelected ? BetterColors.brand.opacity(0.5) : Color.clear,
-                        lineWidth: 1
-                    )
-            }
+                    .stroke(isSelected ? accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.28, dampingFraction: 0.8), value: isSelected)

@@ -3,14 +3,27 @@ import SwiftUI
 enum BetterColors {
     static let background = Color(hex: "#07070F")
     static let backgroundElevated = Color(hex: "#10111B")
-    static let card = Color(hex: "#1A1D2A")
-    static let cardSecondary = Color(hex: "#222636")
+    static let card = Color(hex: "#1C1E2E")
+    static let cardSecondary = Color(hex: "#232538")
     static let cardTertiary = Color(hex: "#2B3042")
     static let brand = Color(hex: "#6366F1")
+    static let brandLight = Color(hex: "#818CF8")
     static let text = Color.white
     static let subtext = Color(hex: "#9A9AA7")
     static let mutedText = Color(hex: "#666979")
     static let border = Color.white.opacity(0.08)
+
+    static var brandGradient: LinearGradient {
+        LinearGradient(colors: [brand, brandLight], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    static var cardGradient: LinearGradient {
+        LinearGradient(colors: [card, cardSecondary.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    static var glassStroke: LinearGradient {
+        LinearGradient(colors: [Color.white.opacity(0.14), Color.white.opacity(0.04)], startPoint: .top, endPoint: .bottom)
+    }
     static let stageDeep = Color(hex: "#7C3AED")
     static let stageCore = Color(hex: "#2F80ED")
     static let stageREM = Color(hex: "#8FD3FF")

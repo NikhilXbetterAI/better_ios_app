@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct BetterHealthCard<Content: View>: View {
-    var cornerRadius: CGFloat = 20
+    var cornerRadius: CGFloat = 24
     var padding: CGFloat = BetterSpacing.large
     @ViewBuilder var content: Content
 
@@ -11,12 +11,12 @@ struct BetterHealthCard<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(BetterColors.card)
-                    .shadow(color: .black.opacity(0.24), radius: 14, x: 0, y: 8)
+                    .fill(BetterColors.cardGradient)
+                    .shadow(color: .black.opacity(0.36), radius: 20, x: 0, y: 12)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(BetterColors.border, lineWidth: 1)
+                    .stroke(BetterColors.glassStroke, lineWidth: 1)
             )
     }
 }
@@ -56,20 +56,19 @@ struct MetricGaugeView: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(color.opacity(0.14), lineWidth: lineWidth)
+                .stroke(color.opacity(0.10), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: min(max(progress, 0), 1))
                 .stroke(
-                    color,
+                    AngularGradient(
+                        colors: [color, color.opacity(0.5)],
+                        center: .center,
+                        startAngle: .degrees(-90),
+                        endAngle: .degrees(270)
+                    ),
                     style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
-            Circle()
-                .fill(color)
-                .frame(width: lineWidth + 2, height: lineWidth + 2)
-                .offset(y: -(44 - lineWidth) / 2)
-                .rotationEffect(.degrees(360 * min(max(progress, 0), 1)))
-                .shadow(color: color.opacity(0.65), radius: 8)
         }
         .frame(width: 44, height: 44)
     }
@@ -89,19 +88,18 @@ struct SparklineView: View {
                         .appending(bottomClosure(for: points, height: proxy.size.height))
                         .fill(
                             LinearGradient(
-                                colors: [color.opacity(0.30), color.opacity(0)],
+                                colors: [color.opacity(0.35), color.opacity(0)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
                         )
                 }
                 sparklinePath(points: points)
-                    .stroke(color, style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
+                    .stroke(color, style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round))
                 if let last = points.last {
                     Circle()
-                        .fill(BetterColors.card)
-                        .frame(width: 13, height: 13)
-                        .overlay(Circle().stroke(color, lineWidth: 3))
+                        .fill(color)
+                        .frame(width: 10, height: 10)
                         .shadow(color: color.opacity(0.65), radius: 8)
                         .position(last)
                 }
@@ -192,9 +190,19 @@ struct FloatingActionButton: View {
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(BetterColors.text)
                 .frame(width: 58, height: 58)
-                .background(BetterColors.cardSecondary.opacity(0.92), in: Circle())
-                .overlay(Circle().stroke(BetterColors.border, lineWidth: 1))
-                .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 8)
+                .background(.ultraThinMaterial, in: Circle())
+                .background(BetterColors.cardSecondary.opacity(0.6), in: Circle())
+                .overlay(
+                    Circle().stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.18), Color.white.opacity(0.05)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+                )
+                .shadow(color: .black.opacity(0.36), radius: 16, x: 0, y: 8)
         }
         .buttonStyle(.plain)
     }

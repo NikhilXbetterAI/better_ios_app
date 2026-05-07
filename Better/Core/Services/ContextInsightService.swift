@@ -38,7 +38,7 @@ nonisolated private extension ContextInsightService {
 
         // Duration
         if let delta = result.durationDelta,
-           abs(delta) >= ContextComparisonService.meaningfulDurationDelta {
+           abs(delta) >= SleepAnalysisThresholds.meaningfulDurationDelta {
             let minutes = Int((abs(delta) / 60).rounded())
             let direction = delta < 0 ? "lower" : "higher"
             out.append(makeInsight(
@@ -54,7 +54,7 @@ nonisolated private extension ContextInsightService {
 
         // Efficiency
         if let delta = result.efficiencyDelta,
-           abs(delta) >= ContextComparisonService.meaningfulEfficiencyDelta {
+           abs(delta) >= SleepAnalysisThresholds.meaningfulEfficiencyDelta {
             let points = Int((abs(delta) * 100).rounded())
             let direction = delta < 0 ? "lower" : "higher"
             out.append(makeInsight(
@@ -71,7 +71,7 @@ nonisolated private extension ContextInsightService {
         // Deep sleep
         if includeStages,
            let delta = result.deepSleepDelta,
-           abs(delta) >= ContextComparisonService.meaningfulStageDelta {
+           abs(delta) >= SleepAnalysisThresholds.meaningfulStageDelta {
             let minutes = Int((abs(delta) / 60).rounded())
             let direction = delta < 0 ? "lower" : "higher"
             out.append(makeInsight(
@@ -88,7 +88,7 @@ nonisolated private extension ContextInsightService {
         // REM sleep
         if includeStages,
            let delta = result.remSleepDelta,
-           abs(delta) >= ContextComparisonService.meaningfulStageDelta {
+           abs(delta) >= SleepAnalysisThresholds.meaningfulStageDelta {
             let minutes = Int((abs(delta) / 60).rounded())
             let direction = delta < 0 ? "lower" : "higher"
             out.append(makeInsight(
@@ -104,7 +104,7 @@ nonisolated private extension ContextInsightService {
 
         // Awake time
         if let delta = result.awakeTimeDelta,
-           abs(delta) >= ContextComparisonService.meaningfulAwakeDelta {
+           abs(delta) >= SleepAnalysisThresholds.meaningfulAwakeDelta {
             let minutes = Int((abs(delta) / 60).rounded())
             let direction = delta < 0 ? "less" : "more"
             out.append(makeInsight(

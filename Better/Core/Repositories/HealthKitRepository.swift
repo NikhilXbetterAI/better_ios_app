@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 @preconcurrency import HealthKit
 
 nonisolated enum HealthKitRepositoryError: Error {
@@ -13,6 +14,7 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
     private let sleepProcessor: SleepDataProcessor
     private let observerLock = NSLock()
     private var observerQueries: [HKObserverQuery] = []
+    private let logger = Logger(subsystem: "ai.better-health.Better", category: "HealthKitRepository")
 
     init(
         healthStore: HKHealthStore = HKHealthStore(),
@@ -141,14 +143,15 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
 
     func fetchSourceSummaries(from: Date, to: Date) async throws -> [SleepSource] {
         let samples = try await fetchSleepSamples(from: from, to: to)
-        var sourcesByKey: [String: SleepSource] = [:]
+        var sourcesByBundleID: [String: SleepSource] = [:]
 
         for sample in samples {
             let source = Self.sleepSource(from: sample)
-            sourcesByKey[source.sourceKey] = source
+            let key = source.bundleIdentifier ?? source.name
+            sourcesByBundleID[key] = source
         }
 
-        return sourcesByKey.values.sorted { $0.name < $1.name }
+        return sourcesByBundleID.values.sorted { $0.name < $1.name }
     }
 
     func startObservingSleepChanges() async throws -> AsyncStream<HealthKitChangeEvent> {
@@ -156,11 +159,20 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
             throw HealthKitRepositoryError.healthDataUnavailable
         }
 
+        // Stop any existing observers before registering a new one to prevent accumulation.
+        let existing = observerLock.withLock {
+            let current = observerQueries
+            observerQueries.removeAll()
+            return current
+        }
+        existing.forEach { healthStore.stop($0) }
+
         let sleepType = Self.sleepType
 
         return AsyncStream { continuation in
-            let query = HKObserverQuery(sampleType: sleepType, predicate: nil) { _, completionHandler, error in
-                if error != nil {
+            let query = HKObserverQuery(sampleType: sleepType, predicate: nil) { [weak self] _, completionHandler, error in
+                if let error {
+                    self?.logger.error("HealthKit observer error: \(error.localizedDescription, privacy: .public)")
                     completionHandler()
                     return
                 }
@@ -174,7 +186,11 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
 
             retainObserverQuery(query)
             healthStore.execute(query)
-            healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { _, _ in }
+            healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { [weak self] _, error in
+                if let error {
+                    self?.logger.error("HealthKit background delivery failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
 
             continuation.onTermination = { [weak self] _ in
                 self?.stopObserverQuery(query)
@@ -341,27 +357,15 @@ nonisolated extension HealthKitRepository {
     }
 
     func retainObserverQuery(_ query: HKObserverQuery) {
-        observerLock.lock()
-        observerQueries.append(query)
-        observerLock.unlock()
+        observerLock.withLock {
+            observerQueries.append(query)
+        }
     }
 
     func stopObserverQuery(_ query: HKObserverQuery) {
         healthStore.stop(query)
-        observerLock.lock()
-        observerQueries.removeAll { $0 === query }
-        observerLock.unlock()
-    }
-}
-
-nonisolated private extension SleepSource {
-    var sourceKey: String {
-        [
-            name,
-            bundleIdentifier ?? "",
-            productType ?? "",
-            operatingSystemVersion ?? "",
-            isManualEntry ? "manual" : "automatic"
-        ].joined(separator: "|")
+        observerLock.withLock {
+            observerQueries.removeAll { $0 === query }
+        }
     }
 }

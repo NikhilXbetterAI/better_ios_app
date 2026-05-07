@@ -11,6 +11,7 @@ struct ProfileSettingsView: View {
                 .foregroundStyle(BetterColors.text)
 
             VStack(spacing: BetterSpacing.medium) {
+                preferredNameField
                 goalSlider
                 baselinePicker
                 Toggle("Research Mode", isOn: $profile.isResearchMode)
@@ -31,6 +32,22 @@ struct ProfileSettingsView: View {
         .padding(BetterSpacing.large)
         .background(BetterColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var preferredNameField: some View {
+        VStack(alignment: .leading, spacing: BetterSpacing.xSmall) {
+            Text("Preferred Name")
+                .font(BetterTypography.footnote)
+                .foregroundStyle(BetterColors.text)
+
+            TextField("What can I call you?", text: bindingForDisplayName)
+                .font(BetterTypography.body)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .padding(.horizontal, BetterSpacing.medium)
+                .padding(.vertical, 12)
+                .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
     }
 
     private var goalSlider: some View {
@@ -54,5 +71,11 @@ struct ProfileSettingsView: View {
         }
         .pickerStyle(.segmented)
     }
-}
 
+    private var bindingForDisplayName: Binding<String> {
+        Binding(
+            get: { profile.displayName ?? "" },
+            set: { profile.displayName = $0 }
+        )
+    }
+}

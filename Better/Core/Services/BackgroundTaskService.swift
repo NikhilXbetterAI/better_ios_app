@@ -74,9 +74,11 @@ final class BackgroundTaskService {
         await syncCoordinator.startObservingHealthChanges()
     }
 
+    static let backgroundRefreshInterval: TimeInterval = 6 * 60 * 60
+
     @discardableResult
     func scheduleNextSleepRefresh(
-        earliestBeginDate: Date = Date(timeIntervalSinceNow: 60 * 60)
+        earliestBeginDate: Date = Date(timeIntervalSinceNow: 6 * 60 * 60)
     ) -> Bool {
         guard isEnabled else { return false }
 
@@ -98,25 +100,11 @@ private extension BackgroundTaskService {
     func handleSleepRefresh(task: BGAppRefreshTask) async {
         scheduleNextSleepRefresh()
 
-        var didCompleteTask = false
         let refreshTask = Task { @MainActor in
             await syncCoordinator.performIncrementalRefresh()
         }
-
-        task.expirationHandler = {
-            refreshTask.cancel()
-            Task { @MainActor in
-                guard !didCompleteTask else { return }
-                didCompleteTask = true
-                task.setTaskCompleted(success: false)
-            }
-        }
-
+        task.expirationHandler = { refreshTask.cancel() }
         await refreshTask.value
-
-        guard !didCompleteTask else { return }
-        didCompleteTask = true
-
         if case .failed = syncCoordinator.phase {
             task.setTaskCompleted(success: false)
         } else {

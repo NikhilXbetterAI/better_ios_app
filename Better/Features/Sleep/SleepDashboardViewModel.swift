@@ -24,6 +24,7 @@ final class SleepDashboardViewModel {
     var errorMessage: String?
     var lastSyncedAt: Date?
     var sleepGoalHours: Double = 8.0
+    var displayName: String?
     var sleepInsights: [SleepInsight] = []
 
     var isViewingToday: Bool {
@@ -136,6 +137,7 @@ final class SleepDashboardViewModel {
             selectedSession = try await localRepository.fetchSession(forSleepDateKey: selectedSleepDateKey)
             let profile = try await localRepository.fetchProfile()
             sleepGoalHours = profile.sleepGoalHours
+            displayName = profile.displayName
             selectedBaseline = try await baseline(asOfSleepDateKey: selectedSleepDateKey, windowDays: profile.baselineWindowDays)
             recentSessions = try await loadRecentSessions(endingAt: selectedSleepDateKey, selectedSession: selectedSession)
             sleepInsights = try await buildSleepInsights()

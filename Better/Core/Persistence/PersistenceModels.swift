@@ -60,7 +60,7 @@ enum PersistenceJSON {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let jsonData = try encoder.encode(value)
-        return (try? EncryptionService.shared.encrypt(jsonData)) ?? jsonData
+        return try EncryptionService.shared.encrypt(jsonData)
     }
 
     /// Decrypts the data and decodes it.  If decryption fails the data is
@@ -532,6 +532,7 @@ final class StoredUserProfile {
     var baselineWindowDays: Int
     var isResearchMode: Bool
     var hasCompletedOnboarding: Bool
+    var displayName: String?
     var sleepAssessmentAnswersData: Data?
     var createdAt: Date
     var updatedAt: Date
@@ -542,6 +543,7 @@ final class StoredUserProfile {
         self.baselineWindowDays = domain.baselineWindowDays
         self.isResearchMode = domain.isResearchMode
         self.hasCompletedOnboarding = domain.hasCompletedOnboarding
+        self.displayName = domain.displayName
         self.sleepAssessmentAnswersData = try? PersistenceJSON.encode(domain.sleepAssessmentAnswers)
         self.createdAt = domain.createdAt
         self.updatedAt = domain.updatedAt
@@ -556,6 +558,7 @@ final class StoredUserProfile {
             baselineWindowDays: baselineWindowDays,
             isResearchMode: isResearchMode,
             hasCompletedOnboarding: hasCompletedOnboarding,
+            displayName: displayName,
             sleepAssessmentAnswers: answers,
             createdAt: createdAt,
             updatedAt: updatedAt

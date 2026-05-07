@@ -3,6 +3,8 @@ import SwiftUI
 struct TrendLineChartView: View {
     let points: [TrendChartPoint]
     let metric: TrendMetric
+    var protocolStatus: [String: Bool] = [:]
+    var protocolStartDate: Date? = nil
 
     @State private var selectedDateKey: String?
 
@@ -36,14 +38,18 @@ struct TrendLineChartView: View {
                         horizontalGrid(size: size)
                         path
                             .stroke(BetterColors.brand, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                        if let protocolStartDate {
+                            protocolStartLine(date: protocolStartDate, size: size)
+                        }
                         ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
                             let isSelected = selectedDateKey == point.dateKey
+                            let dotColor = dotColor(for: point.dateKey)
                             Circle()
-                                .fill(isSelected ? BetterColors.text : BetterColors.brand)
+                                .fill(isSelected ? BetterColors.text : dotColor)
                                 .frame(width: isSelected ? 11 : 7, height: isSelected ? 11 : 7)
                                 .overlay(
                                     Circle()
-                                        .stroke(BetterColors.brand, lineWidth: isSelected ? 3 : 0)
+                                        .stroke(dotColor, lineWidth: isSelected ? 3 : 0)
                                 )
                                 .position(position(for: point.value, at: index, size: size))
                         }
@@ -209,9 +215,69 @@ struct TrendLineChartView: View {
         }
     }
 
+    private func dotColor(for dateKey: String) -> Color {
+        guard !protocolStatus.isEmpty else { return BetterColors.brand }
+        guard let taken = protocolStatus[dateKey] else { return BetterColors.brand }
+        return taken ? BetterColors.success : BetterColors.warning
+    }
+
+    @ViewBuilder
+    private func protocolStartLine(date: Date, size: CGSize) -> some View {
+        if let firstPoint = points.first, let lastPoint = points.last {
+            let totalInterval = lastPoint.date.timeIntervalSince(firstPoint.date)
+            if totalInterval > 0 {
+                let fraction = CGFloat(date.timeIntervalSince(firstPoint.date) / totalInterval)
+                let x = size.width * min(max(fraction, 0), 1)
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                .stroke(BetterColors.brand.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+
+                Text("Started")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundStyle(BetterColors.brand)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(BetterColors.brand.opacity(0.15), in: Capsule())
+                    .position(x: min(x + 32, size.width - 30), y: 10)
+            }
+        }
+    }
+
     private func formatDuration(_ interval: TimeInterval) -> String {
         let h = Int(interval) / 3600
         let m = (Int(interval) % 3600) / 60
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    }
+}
+
+// MARK: - Protocol Chart Legend
+
+struct ProtocolChartLegend: View {
+    let hasTaken: Bool
+    let hasNotTaken: Bool
+
+    var body: some View {
+        HStack(spacing: BetterSpacing.large) {
+            if hasTaken {
+                legendItem(color: BetterColors.success, label: "Protocol taken")
+            }
+            if hasNotTaken {
+                legendItem(color: BetterColors.subtext, label: "Not taken")
+            }
+        }
+        .padding(.horizontal, BetterSpacing.small)
+    }
+
+    private func legendItem(color: Color, label: String) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(BetterTypography.caption)
+                .foregroundStyle(BetterColors.subtext)
+        }
     }
 }

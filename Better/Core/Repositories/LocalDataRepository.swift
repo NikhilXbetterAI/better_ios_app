@@ -517,11 +517,11 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         for session in try modelContext.fetch(FetchDescriptor<StoredSleepSession>()) {
             await Task.yield()
             guard let domain = try? session.toDomain() else { continue }
-            session.qualityScoreData = (try? PersistenceJSON.encode(domain.qualityScore)) ?? session.qualityScoreData
-            session.stagesData = (try? PersistenceJSON.encode(domain.stages)) ?? session.stagesData
-            session.sourcesData = (try? PersistenceJSON.encode(domain.sources)) ?? session.sourcesData
+            session.qualityScoreData = try PersistenceJSON.encode(domain.qualityScore)
+            session.stagesData = try PersistenceJSON.encode(domain.stages)
+            session.sourcesData = try PersistenceJSON.encode(domain.sources)
             if let biometrics = domain.biometrics {
-                session.biometricsData = try? PersistenceJSON.encode(biometrics)
+                session.biometricsData = try PersistenceJSON.encode(biometrics)
             }
         }
 
@@ -529,7 +529,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         for summary in try modelContext.fetch(FetchDescriptor<StoredNightlyBiometricSummary>()) {
             await Task.yield()
             guard let domain = try? summary.toDomain() else { continue }
-            summary.samplesData = (try? PersistenceJSON.encode(domain.samples)) ?? summary.samplesData
+            summary.samplesData = try PersistenceJSON.encode(domain.samples)
         }
 
         // User profile — onboarding assessment answers.
@@ -538,7 +538,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
                 let raw = profile.sleepAssessmentAnswersData,
                 let answers = try? PersistenceJSON.decode([SleepAssessmentAnswer].self, from: raw)
             else { continue }
-            profile.sleepAssessmentAnswersData = try? PersistenceJSON.encode(answers)
+            profile.sleepAssessmentAnswersData = try PersistenceJSON.encode(answers)
         }
 
         try modelContext.save()

@@ -27,7 +27,8 @@ struct RootTabView: View {
             localRepository: environment.localRepository
         ))
         _protocolViewModel = State(initialValue: ProtocolViewModel(
-            localRepository: environment.localRepository
+            localRepository: environment.localRepository,
+            healthRepository: environment.healthRepository
         ))
         _protocolComparisonViewModel = State(initialValue: ProtocolComparisonDashboardViewModel(
             localRepository: environment.localRepository
@@ -94,16 +95,17 @@ struct RootTabView: View {
             }
             .tabItem { Label(AppTab.sleep.title, systemImage: AppTab.sleep.systemImageName) }
             .tag(AppTab.sleep)
+            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
 
             // ── Insights / Trends ────────────────────────────────────────
             NavigationStack {
-                TrendsTabView(
-                    viewModel: trendsViewModel,
-                    protocolComparisonViewModel: protocolComparisonViewModel
-                )
+                TrendsTabView(viewModel: trendsViewModel)
             }
             .tabItem { Label(AppTab.insights.title, systemImage: AppTab.insights.systemImageName) }
             .tag(AppTab.insights)
+            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
 
             // ── Protocol ─────────────────────────────────────────────────
             NavigationStack {
@@ -115,6 +117,8 @@ struct RootTabView: View {
             }
             .tabItem { Label(AppTab.protocol.title, systemImage: AppTab.protocol.systemImageName) }
             .tag(AppTab.protocol)
+            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
 
             // ── Biology ─────────────────────────────────────────────────
             NavigationStack {
@@ -122,6 +126,8 @@ struct RootTabView: View {
             }
             .tabItem { Label(AppTab.biology.title, systemImage: AppTab.biology.systemImageName) }
             .tag(AppTab.biology)
+            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
 
             // ── Activity ────────────────────────────────────────────────
             NavigationStack {
@@ -132,6 +138,8 @@ struct RootTabView: View {
             }
             .tabItem { Label(AppTab.activity.title, systemImage: AppTab.activity.systemImageName) }
             .tag(AppTab.activity)
+            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
         }
         .tint(BetterColors.brand)
         .onChange(of: sleepViewModel.selectedSleepDateKey) { _, newKey in

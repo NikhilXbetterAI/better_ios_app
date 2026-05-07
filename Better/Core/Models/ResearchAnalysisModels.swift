@@ -29,6 +29,15 @@ nonisolated enum ComparisonConfidence: String, Codable, CaseIterable, Hashable, 
     case high
 
     var id: String { rawValue }
+
+    var sortOrder: Int {
+        switch self {
+        case .unavailable: 0
+        case .low:         1
+        case .medium:      2
+        case .high:        3
+        }
+    }
 }
 
 nonisolated enum ProtocolUsageStatus: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
