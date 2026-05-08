@@ -735,14 +735,14 @@ struct ProtocolTabView: View {
 
     private func booleanPrompt(for index: Int) -> (icon: String, title: String, subtitle: String, color: Color) {
         switch index {
-        case 0: ("cup.and.saucer.fill", "Coffee today?", "Any caffeine after lunch.", BetterColors.warning)
-        case 1: ("wineglass.fill", "Alcohol today?", "Even one drink counts.", BetterColors.danger)
-        case 2: ("figure.run", "Workout today?", "Training or hard movement.", BetterColors.success)
-        case 3: ("fork.knife", "Late meal?", "Food close to bedtime.", BetterColors.warning)
-        case 4: ("brain.head.profile", "High stress?", "A mentally heavy evening.", BetterColors.danger)
-        case 5: ("iphone", "Screens late?", "Phone, TV, or laptop near bed.", BetterColors.brand)
-        case 6: ("zzz", "Nap today?", "Any daytime sleep.", BetterColors.hrv)
-        default: ("airplane", "Travel today?", "Travel or jet lag.", BetterColors.subtext)
+        case 0: ("cup.and.saucer.fill", "Coffee today?", "", BetterColors.warning)
+        case 1: ("wineglass.fill", "Alcohol today?", "", BetterColors.danger)
+        case 2: ("figure.run", "Workout today?", "", BetterColors.success)
+        case 3: ("fork.knife", "Late meal?", "", BetterColors.warning)
+        case 4: ("brain.head.profile", "High stress?", "", BetterColors.danger)
+        case 5: ("iphone", "Screens late?", "", BetterColors.brand)
+        case 6: ("zzz", "Nap today?", "", BetterColors.hrv)
+        default: ("airplane", "Travel today?", "", BetterColors.subtext)
         }
     }
 

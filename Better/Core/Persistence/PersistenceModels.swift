@@ -18,7 +18,16 @@ nonisolated enum BetterPersistenceContainerFactory {
 
     static func makeLiveContainer() throws -> ModelContainer {
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
-        let container = try ModelContainer(for: schema, configurations: config)
+        let container: ModelContainer
+        do {
+            container = try ModelContainer(for: schema, configurations: config)
+        } catch {
+            // WAL corruption from a failed background write (e.g. device locked during BGTask)
+            // can leave the store unreadable. Delete the store files and recreate rather than
+            // leaving the app permanently broken.
+            try? deleteStoreFiles(at: config.url)
+            container = try ModelContainer(for: schema, configurations: config)
+        }
         applyFileProtection(to: container.configurations.first?.url)
         return container
     }
@@ -30,8 +39,13 @@ nonisolated enum BetterPersistenceContainerFactory {
         )
     }
 
-    /// Upgrades SQLite store files to FileProtectionType.complete so they are
-    /// inaccessible while the device is locked, independently of app-level encryption.
+    /// Upgrades SQLite store files to FileProtectionType.completeUnlessOpen.
+    ///
+    /// We intentionally use completeUnlessOpen (not .complete) because background tasks
+    /// (BGAppRefreshTask) fire while the device is locked. With .complete the SQLite
+    /// WAL files become inaccessible mid-write, corrupting them and crashing the next
+    /// foreground open. completeUnlessOpen keeps already-open files accessible across
+    /// a lock event while still protecting files that are closed at rest.
     private static func applyFileProtection(to storeURL: URL?) {
         guard let storeURL else { return }
         let fileManager = FileManager.default
@@ -44,9 +58,17 @@ nonisolated enum BetterPersistenceContainerFactory {
         for path in candidatePaths {
             guard fileManager.fileExists(atPath: path) else { continue }
             try? fileManager.setAttributes(
-                [.protectionKey: FileProtectionType.complete],
+                [.protectionKey: FileProtectionType.completeUnlessOpen],
                 ofItemAtPath: path
             )
+        }
+    }
+
+    private static func deleteStoreFiles(at storeURL: URL) throws {
+        let fileManager = FileManager.default
+        let paths = [storeURL.path, storeURL.path + "-shm", storeURL.path + "-wal"]
+        for path in paths where fileManager.fileExists(atPath: path) {
+            try fileManager.removeItem(atPath: path)
         }
     }
 }

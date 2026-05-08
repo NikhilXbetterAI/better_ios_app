@@ -6,6 +6,7 @@ struct PrivacyControlsView: View {
     let onResync: () -> Void
 
     @State private var showDeleteConfirmation = false
+    @State private var showPrivacyPolicy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.medium) {
@@ -31,6 +32,9 @@ struct PrivacyControlsView: View {
         .background(BetterColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .task { await service.loadInventory() }
+        .sheet(isPresented: $showPrivacyPolicy) {
+            PrivacyPolicyView()
+        }
         .alert("Delete all health data?", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
                 Task { await service.deleteAllLocalData() }
@@ -45,9 +49,16 @@ struct PrivacyControlsView: View {
 
     private var sectionHeader: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("Privacy & Data")
-                .font(BetterTypography.subheadline)
-                .foregroundStyle(BetterColors.text)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Privacy & Data")
+                    .font(BetterTypography.subheadline)
+                    .foregroundStyle(BetterColors.text)
+                Spacer()
+                Button("Privacy Policy") { showPrivacyPolicy = true }
+                    .font(BetterTypography.caption)
+                    .foregroundStyle(BetterColors.brand)
+                    .buttonStyle(.plain)
+            }
             Text("All data stays on this device. Nothing is sent to external servers.")
                 .font(BetterTypography.caption)
                 .foregroundStyle(BetterColors.subtext)

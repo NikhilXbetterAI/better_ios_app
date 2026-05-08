@@ -248,7 +248,7 @@ private extension SyncCoordinator {
                 )
                 
                 // Save the relevant baseline for this window
-                if let baseline = selection.allBaselines.first(where: { $0.windowDays == days }) {
+                if let baseline = selection.allBaselines.first(where: { $0.windowDays <= days }) {
                     try await localRepository.saveBaseline(baseline)
                 }
                 

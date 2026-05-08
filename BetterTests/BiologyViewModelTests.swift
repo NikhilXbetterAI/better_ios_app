@@ -78,6 +78,37 @@ final class BiologyViewModelTests: XCTestCase {
         XCTAssertEqual(rhr?.value, 56)
     }
 
+    func testLoadBuildsBiomarkerSummaries() async {
+        let session = makeSession(key: "1970-01-01", hrvAverage: 55)
+        let repo = MockLocalDataRepository(sessions: [session])
+        let vm = BiologyViewModel(
+            localRepository: repo,
+            healthRepository: BiologyFakeHealthKitRepository()
+        )
+
+        await vm.load(now: Self.end)
+
+        XCTAssertEqual(vm.biomarkerSummaries[.hrv]?[.thirtyDays]?.currentValue, 55)
+        XCTAssertEqual(vm.biomarkerSummaries[.hrv]?[.thirtyDays]?.validSampleCount, 1)
+    }
+
+    func testReloadRefreshesBiomarkerSummaries() async {
+        let first = makeSession(key: "1970-01-01", hrvAverage: 45)
+        let second = makeSession(key: "1970-01-02", hrvAverage: 65)
+        let repo = MockLocalDataRepository(sessions: [first])
+        let vm = BiologyViewModel(
+            localRepository: repo,
+            healthRepository: BiologyFakeHealthKitRepository()
+        )
+
+        await vm.load(now: Self.end)
+        try? await repo.saveSessions([second])
+        await vm.load(now: Self.end.addingTimeInterval(86_400))
+
+        XCTAssertEqual(vm.biomarkerSummaries[.hrv]?[.thirtyDays]?.currentValue, 65)
+        XCTAssertEqual(vm.biomarkerSummaries[.hrv]?[.thirtyDays]?.validSampleCount, 2)
+    }
+
     func testAllMetricsNilWhenNoData() async {
         let vm = BiologyViewModel(
             localRepository: MockLocalDataRepository(),

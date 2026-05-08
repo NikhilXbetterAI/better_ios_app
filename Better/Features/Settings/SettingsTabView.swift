@@ -77,7 +77,7 @@ struct SettingsTabView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.xSmall) {
             Text("Settings")
-                .font(BetterTypography.display)
+                .font(BetterTypography.boardDisplay)
                 .foregroundStyle(BetterColors.text)
             Text("Health sync, profile and data export")
                 .font(BetterTypography.footnote)
@@ -89,9 +89,9 @@ struct SettingsTabView: View {
         HStack(spacing: BetterSpacing.medium) {
             Text(profileInitial)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(BetterColors.boardTextPrimary)
                 .frame(width: 56, height: 56)
-                .background(BetterColors.brand)
+                .background(BetterColors.boardBrand03)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 3) {
                 Text(profileDisplayName)

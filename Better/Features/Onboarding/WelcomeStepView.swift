@@ -16,13 +16,13 @@ struct WelcomeStepView: View {
                 // ── Text ──────────────────────────────────────────────────────
                 VStack(spacing: BetterSpacing.medium) {
                     Text("Better sleep starts\nwith your baseline")
-                        .font(BetterTypography.display)
+                        .font(BetterTypography.boardDisplay)
                         .foregroundStyle(BetterColors.text)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text("Connect Apple Health and log your nights. Once your baseline is ready, you'll see exactly how your habits affect your sleep.")
-                        .font(BetterTypography.body)
+                        .font(BetterTypography.boardBody)
                         .foregroundStyle(BetterColors.subtext)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -54,17 +54,17 @@ struct WelcomeStepView: View {
         ZStack {
             // Outer ring
             Circle()
-                .stroke(BetterColors.brand.opacity(0.08), lineWidth: 1.5)
+                .stroke(BetterColors.boardDeepCobaltBlue.opacity(0.18), lineWidth: 1.5)
                 .frame(width: 220, height: 220)
 
             // Medium ring
             Circle()
-                .stroke(BetterColors.brand.opacity(0.13), lineWidth: 1)
+                .stroke(BetterColors.boardBrand03.opacity(0.18), lineWidth: 1)
                 .frame(width: 160, height: 160)
 
             // Inner filled circle
             Circle()
-                .fill(BetterColors.brand.opacity(0.15))
+                .fill(BetterColors.boardBackgroundSecondary.opacity(0.18))
                 .frame(width: 112, height: 112)
 
             // Orbiting dots
@@ -72,7 +72,7 @@ struct WelcomeStepView: View {
                 let angle = Angle.degrees(startDeg + orbitAngle)
                 let radius: CGFloat = 72
                 Circle()
-                    .fill(BetterColors.brand.opacity(0.65))
+                    .fill(BetterColors.boardBrand03.opacity(0.72))
                     .frame(width: 8, height: 8)
                     .offset(
                         x: radius * cos(angle.radians),
@@ -83,7 +83,7 @@ struct WelcomeStepView: View {
             // Moon symbol
             Image(systemName: "moon.stars.fill")
                 .font(.system(size: 60, weight: .semibold))
-                .foregroundStyle(BetterColors.brandGradient)
+                .foregroundStyle(BetterColors.boardHighlightGradient)
         }
         .offset(y: floatOffset)
     }
@@ -110,18 +110,18 @@ private struct OnboardingMiniCard: View {
         VStack(spacing: BetterSpacing.small) {
             Image(systemName: icon)
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(BetterColors.brandGradient)
+                .foregroundStyle(BetterColors.boardHighlightGradient)
                 .frame(width: 44, height: 44)
-                .background(BetterColors.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(BetterColors.boardDeepCobaltBlue.opacity(0.88), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Text(label)
-                .font(BetterTypography.micro)
-                .foregroundStyle(BetterColors.subtext)
+                .font(BetterTypography.boardMonoLabel)
+                .foregroundStyle(BetterColors.boardGrey1)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, BetterSpacing.medium)
-        .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(BetterColors.boardHeroGradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(BetterColors.glassStroke, lineWidth: 1)

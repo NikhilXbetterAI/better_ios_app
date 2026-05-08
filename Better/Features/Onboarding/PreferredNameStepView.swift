@@ -36,6 +36,7 @@ struct PreferredNameStepView: View {
 
                     TextField("What can I call you?", text: binding)
                         .font(BetterTypography.body)
+                        .foregroundStyle(BetterColors.text)
                         .textInputAutocapitalization(.words)
                         .autocorrectionDisabled()
                         .submitLabel(.done)

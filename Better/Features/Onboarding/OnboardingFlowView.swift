@@ -62,6 +62,8 @@ struct OnboardingFlowView: View {
         switch step {
         case .welcome:
             WelcomeStepView()
+        case .privacyDisclosure:
+            PrivacyDisclosureStepView()
         case .health:
             HealthPermissionStepView(
                 authorizationState: viewModel.syncCoordinatorAuthorizationState,
@@ -265,6 +267,7 @@ private extension OnboardingViewModel {
 
 private enum OnboardingStep: Int, CaseIterable {
     case welcome
+    case privacyDisclosure
     case health
     case sleepGoal
     case assessment
@@ -286,16 +289,17 @@ private enum OnboardingStep: Int, CaseIterable {
 
     var primaryTitle: String {
         switch self {
-        case .welcome:                          "Get Started"
+        case .welcome:                              "Get Started"
+        case .privacyDisclosure:                    "Continue"
         case .health, .sleepGoal, .assessment,
-             .notifications:                   "Continue"
-        case .research:                         "Continue"
-        case .preferredName:                    "Finish"
+             .notifications:                       "Continue"
+        case .research:                             "Continue"
+        case .preferredName:                        "Finish"
         }
     }
 
     // Dot indicator — excludes .assessment (it has its own chrome)
-    static let dotSteps: [OnboardingStep] = [.welcome, .health, .sleepGoal, .notifications, .research, .preferredName]
+    static let dotSteps: [OnboardingStep] = [.welcome, .privacyDisclosure, .health, .sleepGoal, .notifications, .research, .preferredName]
 
     var dotIndex: Int {
         Self.dotSteps.firstIndex(of: self) ?? 0
@@ -303,13 +307,14 @@ private enum OnboardingStep: Int, CaseIterable {
 
     var accentColor: Color {
         switch self {
-        case .welcome:       BetterColors.brand
-        case .health:        BetterColors.heartRate
-        case .sleepGoal:     BetterColors.success
-        case .assessment:    BetterColors.stageDeep
-        case .notifications: BetterColors.stageAwake
-        case .research:      BetterColors.hrv
-        case .preferredName: BetterColors.brand
+        case .welcome:            BetterColors.brand
+        case .privacyDisclosure:  BetterColors.brand
+        case .health:             BetterColors.heartRate
+        case .sleepGoal:          BetterColors.success
+        case .assessment:         BetterColors.stageDeep
+        case .notifications:      BetterColors.stageAwake
+        case .research:           BetterColors.hrv
+        case .preferredName:      BetterColors.brand
         }
     }
 }

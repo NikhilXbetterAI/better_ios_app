@@ -39,7 +39,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         )
         descriptor.includePendingChanges = true
 
-        return try modelContext.fetch(descriptor).map { try $0.toDomain() }
+        return try modelContext.fetch(descriptor).compactMap { try? $0.toDomain() }
     }
 
     func fetchSession(forSleepDateKey key: String) async throws -> SleepSession? {
@@ -62,7 +62,9 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         )
         descriptor.fetchLimit = max(0, limit)
 
-        return try modelContext.fetch(descriptor).map { try $0.toDomain() }
+        // compactMap: skip any record whose JSON blob is corrupted (e.g. from a
+        // failed background write) rather than crashing the whole fetch.
+        return try modelContext.fetch(descriptor).compactMap { try? $0.toDomain() }
     }
 
     func fetchAvailableSleepDates(from startKey: String, to endKey: String) async throws -> [SleepDaySummary] {
@@ -154,15 +156,17 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
     }
 
     func fetchLatestBaseline(windowDays: Int) async throws -> SleepBaseline? {
-        var descriptor = FetchDescriptor<StoredBaseline>(
-            predicate: #Predicate { baseline in
-                baseline.windowDays == windowDays
-            },
+        let descriptor = FetchDescriptor<StoredBaseline>(
             sortBy: [SortDescriptor(\.generatedAt, order: .reverse)]
         )
-        descriptor.fetchLimit = 1
+        let storedBaselines = try modelContext.fetch(descriptor)
+        let baselines = storedBaselines.map { $0.toDomain() }
 
-        return try modelContext.fetch(descriptor).first?.toDomain()
+        if let exactMatch = baselines.first(where: { $0.windowDays == windowDays }) {
+            return exactMatch
+        }
+
+        return baselines.first(where: { $0.windowDays <= windowDays })
     }
 
     func saveAlerts(_ alerts: [SleepAlert]) async throws {

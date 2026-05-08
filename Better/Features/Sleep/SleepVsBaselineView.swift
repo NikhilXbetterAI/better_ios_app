@@ -17,15 +17,7 @@ struct SleepVsBaselineView: View {
             // Summary banner
             summaryBanner
 
-            // Comparison bars
-            ComparisonBar(
-                label: "Duration",
-                tonightValue: session.totalSleepTime / 60,
-                baselineValue: baseline.totalSleepAverage / 60,
-                unit: "min",
-                maxValue: 540,
-                higherIsBetter: true
-            )
+            // Comparison bars — ordered by USP priority
             ComparisonBar(
                 label: "Deep Sleep",
                 tonightValue: session.deepDuration / 60,
@@ -43,23 +35,33 @@ struct SleepVsBaselineView: View {
                 higherIsBetter: true
             )
             ComparisonBar(
-                label: "WASO",
-                tonightValue: session.waso / 60,
-                baselineValue: baseline.wasoAverage / 60,
+                label: "Duration",
+                tonightValue: session.totalSleepTime / 60,
+                baselineValue: baseline.totalSleepAverage / 60,
                 unit: "min",
-                maxValue: 80,
+                maxValue: 540,
+                higherIsBetter: true
+            )
+            ComparisonBar(
+                label: "Time to Fall Asleep",
+                tonightValue: session.sleepLatency / 60,
+                baselineValue: baseline.latencyAverage / 60,
+                unit: "min",
+                maxValue: 60,
                 higherIsBetter: false
             )
-            if let hrv = session.biometrics?.hrvAverage {
-                ComparisonBar(
-                    label: "HRV",
-                    tonightValue: hrv,
-                    baselineValue: baseline.hrvAverage,
-                    unit: "ms",
-                    maxValue: max(hrv, baseline.hrvAverage) * 1.3,
-                    higherIsBetter: true
-                )
-            }
+            TimeComparisonRow(
+                label: "Bedtime",
+                sessionDate: session.startDate,
+                baselineMinuteAverage: baseline.bedtimeMinuteAverage,
+                earlierIsBetter: true
+            )
+            TimeComparisonRow(
+                label: "Wake Time",
+                sessionDate: session.endDate,
+                baselineMinuteAverage: baseline.wakeMinuteAverage,
+                earlierIsBetter: false
+            )
         }
     }
 
@@ -72,7 +74,7 @@ struct SleepVsBaselineView: View {
             Image(systemName: isAboveBaseline ? "arrow.up" : "arrow.down")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(color)
-            Text("\(diffAbs) min \(direction) average")
+            Text("\(diffAbs) min \(direction) \(baseline.windowDays)-day avg")
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(color)
         }
@@ -144,6 +146,70 @@ private struct ComparisonBar: View {
 
     private func formatted(_ value: Double) -> String {
         unit == "ms" ? String(format: "%.0f", value) : String(format: "%.0f", value)
+    }
+}
+
+// MARK: - Time comparison row (bedtime / wake time)
+
+private struct TimeComparisonRow: View {
+    let label: String
+    let sessionDate: Date
+    let baselineMinuteAverage: Double
+    let earlierIsBetter: Bool
+
+    private var sessionMinutes: Double {
+        let cal = Calendar.current
+        let h = Double(cal.component(.hour, from: sessionDate))
+        let m = Double(cal.component(.minute, from: sessionDate))
+        return h * 60 + m
+    }
+
+    private var diffMinutes: Double {
+        var d = sessionMinutes - baselineMinuteAverage
+        // Wrap across midnight for values near 0/1440 boundary
+        if d > 720 { d -= 1440 }
+        if d < -720 { d += 1440 }
+        return d
+    }
+
+    private var isPositive: Bool {
+        earlierIsBetter ? diffMinutes <= 0 : diffMinutes >= 0
+    }
+
+    private var diffLabel: String {
+        let abs = Int(Swift.abs(diffMinutes).rounded())
+        let direction = diffMinutes < 0 ? "earlier" : "later"
+        return "\(abs)m \(direction) than avg"
+    }
+
+    private var color: Color { isPositive ? BetterColors.success : BetterColors.warning }
+
+    private static let timeFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12, design: .rounded))
+                .foregroundStyle(BetterColors.text)
+            Spacer()
+            HStack(spacing: 6) {
+                Text(Self.timeFmt.string(from: sessionDate))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(BetterColors.text)
+                HStack(spacing: 2) {
+                    Image(systemName: diffMinutes < 0 ? "arrow.up" : "arrow.down")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(diffLabel)
+                        .font(.system(size: 11, design: .rounded))
+                }
+                .foregroundStyle(color)
+            }
+        }
     }
 }
 

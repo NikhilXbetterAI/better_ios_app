@@ -9,8 +9,11 @@ final class BiologyViewModel {
     private let calendar: Calendar
 
     var metrics: [BiologyMetric] = []
+    var biomarkerSummaries: [BiomarkerKind: [BiomarkerTimeline: BiomarkerSummary]] = [:]
     var isLoading = false
+    var isLoadingBiomarkers = false
     var errorMessage: String?
+    var biomarkerErrorMessage: String?
 
     init(
         localRepository: LocalDataRepositoryProtocol,
@@ -25,15 +28,22 @@ final class BiologyViewModel {
     func onAppear(now: Date = Date()) async {
         guard !isLoading else { return }
         let hasData = metrics.contains { $0.value != nil }
-        guard !hasData else { return }
+        guard !hasData || biomarkerSummaries.isEmpty else { return }
         await load(now: now)
     }
 
     func load(now: Date = Date()) async {
         isLoading = true
+        isLoadingBiomarkers = true
         errorMessage = nil
+        biomarkerErrorMessage = nil
 
         let start = calendar.date(byAdding: .day, value: -30, to: now) ?? now.addingTimeInterval(-30 * 86_400)
+        let biomarkerService = BiomarkerSummaryService(
+            localRepository: localRepository,
+            healthRepository: healthRepository,
+            calendar: calendar
+        )
 
         // Fetch manual entries unconditionally — they must survive HealthKit failures.
         let manualEntries = (try? await localRepository.fetchManualBiologyEntries()) ?? []
@@ -62,13 +72,22 @@ final class BiologyViewModel {
                 baseline: baseline
             )
             metrics = mergeManualEntries(manualEntries, into: built)
+            do {
+                biomarkerSummaries = try await biomarkerService.summaries(now: now)
+            } catch {
+                biomarkerErrorMessage = error.localizedDescription
+                biomarkerSummaries = [:]
+            }
         } catch {
             errorMessage = error.localizedDescription
             // Still apply any saved manual entries so user-entered values remain visible.
             metrics = mergeManualEntries(manualEntries, into: Self.placeholderMetrics)
+            biomarkerSummaries = [:]
+            biomarkerErrorMessage = error.localizedDescription
         }
 
         isLoading = false
+        isLoadingBiomarkers = false
     }
 
     /// Saves a user-provided value for a metric kind and refreshes the metrics list.

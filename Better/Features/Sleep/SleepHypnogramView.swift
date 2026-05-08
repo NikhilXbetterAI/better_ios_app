@@ -141,9 +141,9 @@ struct SleepHypnogramView: View {
     private var stageLanes: [(type: SleepStageType, label: String)] {
         [
             (.awake, "Awake"),
-            (.rem, "REM"),
-            (.core, "Core"),
+            (.core, "Light"),
             (.deep, "Deep"),
+            (.rem, "REM"),
         ]
     }
 
@@ -173,7 +173,7 @@ struct SleepHypnogramView: View {
     private func stageName(_ type: SleepStageType) -> String {
         switch type {
         case .deep:        return "Deep Sleep"
-        case .core:        return "Core Sleep"
+        case .core:        return "Light Sleep"
         case .rem:         return "REM Sleep"
         case .awake:       return "Awake"
         case .unspecified: return "Sleep"

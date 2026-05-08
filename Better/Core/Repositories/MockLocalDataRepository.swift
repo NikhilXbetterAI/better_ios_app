@@ -112,9 +112,9 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     }
 
     func fetchLatestBaseline(windowDays: Int) async throws -> SleepBaseline? {
-        baselines
-            .filter { $0.windowDays == windowDays }
-            .max { $0.generatedAt < $1.generatedAt }
+        let sorted = baselines.sorted { $0.generatedAt > $1.generatedAt }
+        return sorted.first(where: { $0.windowDays == windowDays })
+            ?? sorted.first(where: { $0.windowDays <= windowDays })
     }
 
     func saveAlerts(_ alerts: [SleepAlert]) async throws {

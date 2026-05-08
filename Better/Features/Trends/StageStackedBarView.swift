@@ -1,310 +1,457 @@
 import SwiftUI
 
-struct StageStackedBarView: View {
+struct StageDurationCompositionView: View {
     let points: [StageCompositionPoint]
+    let selectedWindow: TrendWindow
+    let onSelectWindow: (TrendWindow) -> Void
 
     @State private var selectedDateKey: String?
 
+    private var sortedPoints: [StageCompositionPoint] {
+        points.sorted { $0.date < $1.date }
+    }
+
     private var selectedPoint: StageCompositionPoint? {
-        guard let selectedDateKey else { return nil }
-        return points.first { $0.dateKey == selectedDateKey }
+        if let selectedDateKey,
+           let point = sortedPoints.first(where: { $0.dateKey == selectedDateKey }) {
+            return point
+        }
+        return sortedPoints.last
+    }
+
+    private var axisMaxDuration: TimeInterval {
+        let longestNight = sortedPoints.map(\.totalStageDuration).max() ?? 0
+        let roundedHours = ceil(longestNight / 3_600)
+        return max(roundedHours * 3_600, 8 * 3_600)
+    }
+
+    private var averageSleepDuration: TimeInterval {
+        guard !sortedPoints.isEmpty else { return 0 }
+        return sortedPoints.map(\.sleepDuration).reduce(0, +) / Double(sortedPoints.count)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+        VStack(alignment: .leading, spacing: BetterSpacing.large) {
             header
+            windowSelector
 
-            if points.isEmpty {
-                Text("Detailed stages are unavailable for the selected range.")
-                    .font(BetterTypography.footnote)
-                    .foregroundStyle(BetterColors.subtext)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, BetterSpacing.large)
+            if sortedPoints.isEmpty {
+                emptyState
             } else {
-                GeometryReader { proxy in
-                    let size = proxy.size
-                    ZStack {
-                        grid(size: size)
-                        stageArea(stage: .deep, size: size)
-                        stageArea(stage: .core, size: size)
-                        stageArea(stage: .rem, size: size)
-                        stageArea(stage: .awake, size: size)
+                chart
+                stageInspector
+            }
+        }
+        .padding(BetterSpacing.large)
+        .background(BetterColors.card)
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(BetterColors.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: .black.opacity(0.2), radius: 18, y: 10)
+        .onAppear {
+            selectedDateKey = selectedPoint?.dateKey
+        }
+        .onChange(of: sortedPoints.map(\.dateKey)) { _, keys in
+            guard !keys.isEmpty else {
+                selectedDateKey = nil
+                return
+            }
+            if let selectedDateKey, keys.contains(selectedDateKey) {
+                return
+            }
+            selectedDateKey = keys.last
+        }
+    }
 
-                        if let selectedPoint,
-                           let index = points.firstIndex(where: { $0.dateKey == selectedPoint.dateKey }) {
-                            let x = xPosition(for: index, width: size.width)
-                            selectionRule(x: x, height: size.height)
-                            tooltip(for: selectedPoint)
-                                .position(tooltipPosition(x: x, size: size))
+    private var header: some View {
+        HStack(alignment: .top, spacing: BetterSpacing.medium) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Sleep Stage Composition")
+                    .font(BetterTypography.title)
+                    .foregroundStyle(BetterColors.text)
+                Text("Duration-stacked stages across nights")
+                    .font(BetterTypography.caption)
+                    .foregroundStyle(BetterColors.subtext)
+            }
+
+            Spacer(minLength: BetterSpacing.medium)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(selectedPoint?.date.formatted(.dateTime.month(.abbreviated).day()) ?? selectedWindow.displayName)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(BetterColors.subtext)
+                Text(formatDuration(selectedPoint?.sleepDuration ?? averageSleepDuration))
+                    .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(BetterColors.text)
+                Text(selectedPoint == nil ? "avg sleep" : "sleep duration")
+                    .font(BetterTypography.micro)
+                    .foregroundStyle(BetterColors.mutedText)
+            }
+        }
+    }
+
+    private var windowSelector: some View {
+        HStack(spacing: BetterSpacing.small) {
+            ForEach(TrendWindow.allCases) { window in
+                Button {
+                    withAnimation(.snappy(duration: 0.28)) {
+                        selectedDateKey = nil
+                    }
+                    onSelectWindow(window)
+                } label: {
+                    Text(window.displayName)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(selectedWindow == window ? BetterColors.text : BetterColors.subtext)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            selectedWindow == window
+                                ? BetterColors.brand
+                                : BetterColors.cardSecondary,
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(BetterColors.backgroundElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: BetterSpacing.small) {
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(BetterColors.stageDeep)
+            Text("Detailed stages are unavailable for this range.")
+                .font(BetterTypography.footnote)
+                .foregroundStyle(BetterColors.subtext)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var chart: some View {
+        GeometryReader { proxy in
+            let chartWidth = proxy.size.width
+            let chartHeight = proxy.size.height
+            let yAxisWidth: CGFloat = 34
+            let xAxisHeight: CGFloat = 24
+            let plotSize = CGSize(width: chartWidth - yAxisWidth, height: chartHeight - xAxisHeight)
+            let maxHours = axisMaxDuration / 3_600
+            let contentWidth = max(plotSize.width, preferredContentWidth)
+
+            ZStack(alignment: .topLeading) {
+                chartBackground
+
+                yAxisLabels(maxHours: maxHours, height: plotSize.height)
+                    .frame(width: yAxisWidth, height: plotSize.height)
+                    .offset(x: 0, y: 8)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ZStack(alignment: .bottomLeading) {
+                            horizontalGrid(height: plotSize.height, width: contentWidth)
+                            bars(width: contentWidth, height: plotSize.height)
+                            selectedTooltip(width: contentWidth, height: plotSize.height)
                         }
+                        .frame(width: contentWidth, height: plotSize.height)
+
+                        xAxisLabels(width: contentWidth)
+                            .frame(width: contentWidth, height: xAxisHeight)
                     }
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
-                                updateSelection(at: value.location.x, width: size.width)
+                                updateSelection(at: value.location.x, width: contentWidth)
                             }
                     )
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            updateSelection(at: location.x, width: size.width)
-                        case .ended:
-                            break
-                        }
-                    }
                 }
-                .frame(height: 190)
-
-                axisLabels
-                stageLegend
+                .frame(width: plotSize.width, height: chartHeight)
+                .offset(x: yAxisWidth, y: 8)
             }
         }
-        .padding(BetterSpacing.large)
-        .background(BetterColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onChange(of: points.map(\.dateKey)) { _, keys in
-            if let selectedDateKey, !keys.contains(selectedDateKey) {
-                self.selectedDateKey = nil
-            }
-        }
+        .frame(height: 292)
     }
 
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Stage Composition")
-                    .font(BetterTypography.headline)
-                    .foregroundStyle(BetterColors.text)
-                Text("Tap or drag across the chart for nightly details.")
-                    .font(BetterTypography.caption)
-                    .foregroundStyle(BetterColors.subtext)
-            }
-            Spacer()
-            Text("%")
-                .font(BetterTypography.caption)
-                .foregroundStyle(BetterColors.subtext)
-        }
-    }
-
-    private func stageArea(stage: CompositionStage, size: CGSize) -> some View {
-        areaPath(for: stage, size: size)
-            .fill(stage.color.opacity(stage.opacity))
+    private var chartBackground: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        BetterColors.backgroundElevated.opacity(0.96),
+                        BetterColors.cardSecondary.opacity(0.68)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
             .overlay(
-                areaPath(for: stage, size: size)
-                    .stroke(stage.color.opacity(0.75), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(BetterColors.border, lineWidth: 1)
             )
     }
 
-    private func areaPath(for stage: CompositionStage, size: CGSize) -> Path {
-        Path { path in
-            guard !points.isEmpty else { return }
+    private var preferredContentWidth: CGFloat {
+        switch selectedWindow {
+        case .week:
+            return CGFloat(max(sortedPoints.count, 7)) * 38
+        case .month:
+            return CGFloat(max(sortedPoints.count, 30)) * 12
+        case .twoMonths:
+            return CGFloat(max(sortedPoints.count, 60)) * 9
+        }
+    }
 
-            let topPoints = points.enumerated().map { index, point in
-                CGPoint(
-                    x: xPosition(for: index, width: size.width),
-                    y: yPosition(for: cumulativeTop(stage: stage, point: point), height: size.height)
+    private func bars(width: CGFloat, height: CGFloat) -> some View {
+        let spacing = barSpacing
+        let count = max(sortedPoints.count, 1)
+        let barWidth = max(4, min(30, (width - (CGFloat(count - 1) * spacing)) / CGFloat(count)))
+
+        return HStack(alignment: .bottom, spacing: spacing) {
+            ForEach(sortedPoints) { point in
+                stageBar(
+                    for: point,
+                    barWidth: barWidth,
+                    maxHeight: height,
+                    isSelected: point.dateKey == selectedPoint?.dateKey
                 )
-            }
-            let bottomPoints = points.enumerated().map { index, point in
-                CGPoint(
-                    x: xPosition(for: index, width: size.width),
-                    y: yPosition(for: cumulativeBottom(stage: stage, point: point), height: size.height)
-                )
-            }
-
-            guard let first = topPoints.first else { return }
-            path.move(to: first)
-            for point in topPoints.dropFirst() {
-                path.addLine(to: point)
-            }
-            for point in bottomPoints.reversed() {
-                path.addLine(to: point)
-            }
-            path.closeSubpath()
-        }
-    }
-
-    private func cumulativeBottom(stage: CompositionStage, point: StageCompositionPoint) -> Double {
-        switch stage {
-        case .deep:
-            return 0
-        case .core:
-            return point.deepPercent
-        case .rem:
-            return point.deepPercent + point.corePercent
-        case .awake:
-            return point.deepPercent + point.corePercent + point.remPercent
-        }
-    }
-
-    private func cumulativeTop(stage: CompositionStage, point: StageCompositionPoint) -> Double {
-        switch stage {
-        case .deep:
-            return point.deepPercent
-        case .core:
-            return point.deepPercent + point.corePercent
-        case .rem:
-            return point.deepPercent + point.corePercent + point.remPercent
-        case .awake:
-            return point.deepPercent + point.corePercent + point.remPercent + point.awakePercent
-        }
-    }
-
-    private func xPosition(for index: Int, width: CGFloat) -> CGFloat {
-        points.count == 1 ? width / 2 : width * CGFloat(index) / CGFloat(points.count - 1)
-    }
-
-    private func yPosition(for percent: Double, height: CGFloat) -> CGFloat {
-        let clamped = min(max(percent, 0), 1)
-        return height - (height * CGFloat(clamped))
-    }
-
-    private func updateSelection(at x: CGFloat, width: CGFloat) {
-        guard !points.isEmpty else { return }
-        if points.count == 1 {
-            selectedDateKey = points[0].dateKey
-            return
-        }
-        let clampedX = min(max(0, x), width)
-        let rawIndex = (clampedX / max(width, 1)) * CGFloat(points.count - 1)
-        let index = min(max(Int(rawIndex.rounded()), 0), points.count - 1)
-        selectedDateKey = points[index].dateKey
-    }
-
-    private func grid(size: CGSize) -> some View {
-        ZStack(alignment: .leading) {
-            Path { path in
-                for step in 0...4 {
-                    let y = size.height * CGFloat(step) / 4
-                    path.move(to: CGPoint(x: 0, y: y))
-                    path.addLine(to: CGPoint(x: size.width, y: y))
+                .onTapGesture {
+                    withAnimation(.snappy(duration: 0.22)) {
+                        selectedDateKey = point.dateKey
+                    }
                 }
             }
-            .stroke(BetterColors.border, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+        }
+        .frame(width: width, height: height, alignment: .bottomLeading)
+        .padding(.horizontal, 2)
+    }
 
-            VStack {
-                Text("100")
-                Spacer()
-                Text("50")
-                Spacer()
-                Text("0")
+    private var barSpacing: CGFloat {
+        switch selectedWindow {
+        case .week:
+            return 12
+        case .month:
+            return 5
+        case .twoMonths:
+            return 3
+        }
+    }
+
+    private func stageBar(for point: StageCompositionPoint, barWidth: CGFloat, maxHeight: CGFloat, isSelected: Bool) -> some View {
+        let barHeight = max(8, maxHeight * CGFloat(point.totalStageDuration / axisMaxDuration))
+        let scale: CGFloat = isSelected ? 1.08 : 1
+
+        return VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            VStack(spacing: 0) {
+                stageSegment(duration: point.awakeDuration, maxHeight: maxHeight, color: BetterColors.stageAwake)
+                stageSegment(duration: point.remDuration, maxHeight: maxHeight, color: BetterColors.stageREM)
+                stageSegment(duration: point.coreDuration, maxHeight: maxHeight, color: BetterColors.stageCore)
+                stageSegment(duration: point.deepDuration, maxHeight: maxHeight, color: BetterColors.stageDeep)
             }
-            .font(.system(size: 9, weight: .semibold, design: .rounded))
-            .foregroundStyle(BetterColors.mutedText)
-            .offset(x: 4)
+            .frame(width: barWidth * scale, height: barHeight)
+            .clipShape(RoundedRectangle(cornerRadius: isSelected ? 8 : 4, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: isSelected ? 8 : 4, style: .continuous)
+                    .stroke(isSelected ? BetterColors.text.opacity(0.9) : Color.clear, lineWidth: 1.5)
+            )
+            .shadow(color: isSelected ? BetterColors.brand.opacity(0.45) : .clear, radius: 10, y: 3)
         }
+        .frame(width: max(barWidth * 1.18, 8), height: maxHeight, alignment: .bottom)
+        .animation(.snappy(duration: 0.22), value: isSelected)
     }
 
-    private func selectionRule(x: CGFloat, height: CGFloat) -> some View {
+    private func stageSegment(duration: TimeInterval, maxHeight: CGFloat, color: Color) -> some View {
+        Rectangle()
+            .fill(color)
+            .frame(height: max(duration > 0 ? 1.5 : 0, maxHeight * CGFloat(duration / axisMaxDuration)))
+    }
+
+    private func horizontalGrid(height: CGFloat, width: CGFloat) -> some View {
         Path { path in
-            path.move(to: CGPoint(x: x, y: 0))
-            path.addLine(to: CGPoint(x: x, y: height))
+            for step in 0...4 {
+                let y = height * CGFloat(step) / 4
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: width, y: y))
+            }
         }
-        .stroke(BetterColors.text.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        .stroke(BetterColors.border, style: StrokeStyle(lineWidth: 1, dash: [4, 5]))
     }
 
-    private func tooltip(for point: StageCompositionPoint) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(point.date.formatted(.dateTime.month(.abbreviated).day()))
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-            tooltipRow("Deep", duration: point.deepDuration, percent: point.deepPercent, color: BetterColors.stageDeep)
-            tooltipRow("Core", duration: point.coreDuration, percent: point.corePercent, color: BetterColors.stageCore)
-            tooltipRow("REM", duration: point.remDuration, percent: point.remPercent, color: BetterColors.stageREM)
-            tooltipRow("Awake", duration: point.awakeDuration, percent: point.awakePercent, color: BetterColors.stageAwake)
+    private func selectedTooltip(width: CGFloat, height: CGFloat) -> some View {
+        guard let selectedPoint,
+              let index = sortedPoints.firstIndex(where: { $0.dateKey == selectedPoint.dateKey }) else {
+            return AnyView(EmptyView())
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(width: 150, alignment: .leading)
-        .background(BetterColors.cardTertiary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(BetterColors.border, lineWidth: 1)
+
+        let x = selectionX(index: index, width: width)
+        let barHeight = max(8, height * CGFloat(selectedPoint.totalStageDuration / axisMaxDuration))
+        let clampedTooltipX = min(max(x, 82), max(width - 82, 82))
+        let tooltipY = max(56, height - barHeight - 52)
+
+        return AnyView(
+            ZStack(alignment: .bottomLeading) {
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: height))
+                }
+                .stroke(BetterColors.text.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(selectedPoint.date.formatted(.dateTime.month(.abbreviated).day()))
+                            .foregroundStyle(BetterColors.subtext)
+                        Spacer()
+                        Text(formatDuration(selectedPoint.sleepDuration))
+                            .foregroundStyle(BetterColors.text)
+                    }
+                    .font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
+
+                    tooltipRow("Deep", duration: selectedPoint.deepDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageDeep)
+                    tooltipRow("Core", duration: selectedPoint.coreDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageCore)
+                    tooltipRow("REM", duration: selectedPoint.remDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageREM)
+                    tooltipRow("Awake", duration: selectedPoint.awakeDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageAwake)
+                }
+                .padding(10)
+                .frame(width: 164, alignment: .leading)
+                .background(BetterColors.cardTertiary.opacity(0.96), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(BetterColors.border, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
+                .position(x: clampedTooltipX, y: tooltipY)
+            }
+            .frame(width: width, height: height, alignment: .bottomLeading)
         )
-        .shadow(color: .black.opacity(0.25), radius: 10, y: 5)
     }
 
-    private func tooltipRow(_ label: String, duration: TimeInterval, percent: Double, color: Color) -> some View {
+    private func tooltipRow(_ label: String, duration: TimeInterval, total: TimeInterval, color: Color) -> some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
                 .frame(width: 7, height: 7)
             Text(label)
-                .font(.system(size: 10, design: .rounded))
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundStyle(BetterColors.subtext)
             Spacer()
-            Text("\(formatDuration(duration)) \(Int((percent * 100).rounded()))%")
-                .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+            Text("\(formatDuration(duration)) \(formatPercent(duration, total: total))")
+                .font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(BetterColors.text)
         }
     }
 
-    private func tooltipPosition(x: CGFloat, size: CGSize) -> CGPoint {
-        let tooltipX = x < size.width / 2 ? min(x + 88, size.width - 75) : max(x - 88, 75)
-        return CGPoint(x: tooltipX, y: 76)
-    }
-
-    private var axisLabels: some View {
-        HStack {
-            Text(points.first?.date.formatted(.dateTime.month(.abbreviated).day()) ?? "")
+    private func yAxisLabels(maxHours: Double, height: CGFloat) -> some View {
+        VStack(alignment: .trailing) {
+            Text("\(Int(maxHours.rounded()))h")
             Spacer()
-            Text(points.last?.date.formatted(.dateTime.month(.abbreviated).day()) ?? "")
+            Text("\(Int((maxHours / 2).rounded()))h")
+            Spacer()
+            Text("0h")
         }
-        .font(.system(size: 10, weight: .semibold, design: .rounded))
+        .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+        .foregroundStyle(BetterColors.mutedText)
+        .frame(height: height)
+    }
+
+    private func xAxisLabels(width: CGFloat) -> some View {
+        HStack {
+            Text(sortedPoints.first?.date.formatted(.dateTime.month(.abbreviated).day()) ?? "")
+            Spacer()
+            if let selectedPoint {
+                Text(selectedPoint.date.formatted(.dateTime.month(.abbreviated).day()))
+                    .foregroundStyle(BetterColors.text)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(BetterColors.brand, in: Capsule())
+            }
+            Spacer()
+            Text(sortedPoints.last?.date.formatted(.dateTime.month(.abbreviated).day()) ?? "")
+        }
+        .font(.system(size: 10, weight: .bold, design: .rounded))
         .foregroundStyle(BetterColors.subtext)
+        .frame(width: width)
     }
 
-    private var stageLegend: some View {
-        HStack(spacing: BetterSpacing.medium) {
-            legend("Deep", BetterColors.stageDeep)
-            legend("Core", BetterColors.stageCore)
-            legend("REM", BetterColors.stageREM)
-            legend("Awake", BetterColors.stageAwake)
+    private func updateSelection(at x: CGFloat, width: CGFloat) {
+        guard !sortedPoints.isEmpty else { return }
+        let count = sortedPoints.count
+        guard count > 1 else {
+            selectedDateKey = sortedPoints[0].dateKey
+            return
+        }
+        let clampedX = min(max(0, x), width)
+        let rawIndex = (clampedX / max(width, 1)) * CGFloat(count - 1)
+        let index = min(max(Int(rawIndex.rounded()), 0), count - 1)
+        withAnimation(.snappy(duration: 0.18)) {
+            selectedDateKey = sortedPoints[index].dateKey
         }
     }
 
-    private func legend(_ label: String, _ color: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(label).font(BetterTypography.caption).foregroundStyle(BetterColors.subtext)
+    private func selectionX(index: Int, width: CGFloat) -> CGFloat {
+        guard sortedPoints.count > 1 else { return width / 2 }
+        return width * CGFloat(index) / CGFloat(sortedPoints.count - 1)
+    }
+
+    private var stageInspector: some View {
+        VStack(alignment: .leading, spacing: BetterSpacing.small) {
+            HStack {
+                Text(selectedPoint?.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) ?? "Selected night")
+                    .font(BetterTypography.subheadline)
+                    .foregroundStyle(BetterColors.text)
+                Spacer()
+                Text("\(formatDuration(selectedPoint?.totalStageDuration ?? 0)) total")
+                    .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(BetterColors.subtext)
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: BetterSpacing.small) {
+                stagePill("Deep", duration: selectedPoint?.deepDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageDeep)
+                stagePill("Core", duration: selectedPoint?.coreDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageCore)
+                stagePill("REM", duration: selectedPoint?.remDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageREM)
+                stagePill("Awake", duration: selectedPoint?.awakeDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageAwake)
+            }
         }
+        .padding(BetterSpacing.medium)
+        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func stagePill(_ label: String, duration: TimeInterval, total: TimeInterval, color: Color) -> some View {
+        HStack(spacing: BetterSpacing.small) {
+            Circle()
+                .fill(color)
+                .frame(width: 9, height: 9)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(BetterTypography.caption)
+                    .foregroundStyle(BetterColors.subtext)
+                Text(formatDuration(duration))
+                    .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(BetterColors.text)
+            }
+            Spacer()
+            Text(formatPercent(duration, total: total))
+                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, BetterSpacing.small)
+        .padding(.vertical, 10)
+        .background(BetterColors.backgroundElevated.opacity(0.72), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func formatPercent(_ duration: TimeInterval, total: TimeInterval) -> String {
+        guard total > 0 else { return "0%" }
+        return "\(Int(((duration / total) * 100).rounded()))%"
     }
 
     private func formatDuration(_ interval: TimeInterval) -> String {
-        let h = Int(interval) / 3600
-        let m = (Int(interval) % 3600) / 60
+        let h = Int(interval) / 3_600
+        let m = (Int(interval) % 3_600) / 60
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-    }
-}
-
-private enum CompositionStage: CaseIterable {
-    case deep
-    case core
-    case rem
-    case awake
-
-    var color: Color {
-        switch self {
-        case .deep:
-            return BetterColors.stageDeep
-        case .core:
-            return BetterColors.stageCore
-        case .rem:
-            return BetterColors.stageREM
-        case .awake:
-            return BetterColors.stageAwake
-        }
-    }
-
-    var opacity: Double {
-        switch self {
-        case .rem:
-            return 0.9
-        case .awake:
-            return 0.82
-        default:
-            return 0.86
-        }
     }
 }

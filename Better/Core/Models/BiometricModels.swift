@@ -160,6 +160,114 @@ nonisolated struct BiologyMetric: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+nonisolated enum BiomarkerKind: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case hrv
+    case restingHeartRate
+    case spo2
+    case respiratoryRate
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .hrv:
+            "HRV"
+        case .restingHeartRate:
+            "RHR"
+        case .spo2:
+            "SpO2"
+        case .respiratoryRate:
+            "Breath"
+        }
+    }
+
+    var fullName: String {
+        switch self {
+        case .hrv:
+            "Heart rate variability"
+        case .restingHeartRate:
+            "Resting heart rate"
+        case .spo2:
+            "Blood oxygen"
+        case .respiratoryRate:
+            "Respiratory rate"
+        }
+    }
+
+    var unit: String {
+        switch self {
+        case .hrv:
+            "ms"
+        case .restingHeartRate:
+            "bpm"
+        case .spo2:
+            "%"
+        case .respiratoryRate:
+            "br/min"
+        }
+    }
+
+    var healthKitType: BiometricType? {
+        switch self {
+        case .restingHeartRate:
+            .restingHeartRate
+        case .hrv, .spo2, .respiratoryRate:
+            nil
+        }
+    }
+}
+
+nonisolated enum BiomarkerTimeline: Int, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case sevenDays = 7
+    case thirtyDays = 30
+    case sixtyDays = 60
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .sevenDays:
+            "7D"
+        case .thirtyDays:
+            "30D"
+        case .sixtyDays:
+            "60D"
+        }
+    }
+
+    var description: String {
+        "\(rawValue)-day"
+    }
+}
+
+nonisolated struct BiomarkerDailyPoint: Codable, Hashable, Sendable, Identifiable {
+    var id: String { "\(kind.rawValue)-\(dateKey)" }
+    var kind: BiomarkerKind
+    var dateKey: String
+    var date: Date
+    var value: Double
+    var unit: String
+    var status: String
+    var source: String
+    var isSelectedEligible: Bool
+}
+
+nonisolated struct BiomarkerSummary: Codable, Hashable, Sendable, Identifiable {
+    var id: String { "\(kind.rawValue)-\(timeline.rawValue)" }
+    var kind: BiomarkerKind
+    var timeline: BiomarkerTimeline
+    var currentValue: Double?
+    var average: Double?
+    var bestValue: Double?
+    var minValue: Double?
+    var maxValue: Double?
+    var validSampleCount: Int
+    var expectedDayCount: Int
+    var points: [BiomarkerDailyPoint]
+    var education: String
+    var calculationNote: String
+}
+
 nonisolated struct ActivityMetricSummary: Codable, Hashable, Sendable {
     var steps: Double?
     var activeEnergy: Double?
@@ -225,5 +333,29 @@ nonisolated struct NightlyBiometricSummary: Codable, Hashable, Sendable, Identif
         self.oxygenSaturationAverage = oxygenSaturationAverage
         self.oxygenSaturationMinimum = oxygenSaturationMinimum
         self.respiratoryRateAverage = respiratoryRateAverage
+    }
+}
+
+nonisolated struct BiometricTrendPoint: Codable, Hashable, Sendable, Identifiable {
+    var id: String { sleepDateKey }
+    var sleepDateKey: String
+    var date: Date
+    var value: Double
+}
+
+nonisolated extension Array where Element == SleepSession {
+    func biometricTrendPoints(_ value: (NightlyBiometricSummary) -> Double?) -> [BiometricTrendPoint] {
+        compactMap { session in
+            guard let biometrics = session.biometrics,
+                  let trendValue = value(biometrics),
+                  let date = SleepDateKey.date(from: session.sleepDateKey)
+            else { return nil }
+            return BiometricTrendPoint(
+                sleepDateKey: session.sleepDateKey,
+                date: date,
+                value: trendValue
+            )
+        }
+        .sorted { $0.date < $1.date }
     }
 }

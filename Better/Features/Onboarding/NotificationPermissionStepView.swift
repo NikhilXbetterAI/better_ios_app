@@ -27,12 +27,12 @@ struct NotificationPermissionStepView: View {
                 // ── Text ──────────────────────────────────────────────────────
                 VStack(spacing: BetterSpacing.small) {
                     Text("Choose sleep reminders")
-                        .font(BetterTypography.display)
+                        .font(BetterTypography.boardDisplay)
                         .foregroundStyle(BetterColors.text)
                         .multilineTextAlignment(.center)
 
                     Text("Notifications are optional. Better nudges you when analysis is ready or when a sleep trend needs attention.")
-                        .font(BetterTypography.body)
+                        .font(BetterTypography.boardBody)
                         .foregroundStyle(BetterColors.subtext)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -84,7 +84,7 @@ struct NotificationPermissionStepView: View {
         ZStack {
             Image(systemName: "bell.badge.fill")
                 .font(.system(size: 72, weight: .semibold))
-                .foregroundStyle(BetterColors.brandGradient)
+                .foregroundStyle(BetterColors.boardHighlightGradient)
                 .opacity(0.20)
                 .offset(y: -30)
 
@@ -137,18 +137,18 @@ private struct MockNotificationCard: View {
     var body: some View {
         HStack(spacing: BetterSpacing.medium) {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(BetterColors.brandGradient)
+                .fill(BetterColors.boardHeroGradient)
                 .frame(width: 36, height: 36)
                 .overlay(
                     Image(systemName: "moon.stars.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(BetterColors.boardTextInvert)
                 )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(BetterTypography.caption)
-                    .foregroundStyle(BetterColors.subtext)
+                    .font(BetterTypography.boardMonoBody)
+                    .foregroundStyle(BetterColors.boardGrey1)
                 Text(message)
                     .font(BetterTypography.footnote)
                     .foregroundStyle(BetterColors.text)

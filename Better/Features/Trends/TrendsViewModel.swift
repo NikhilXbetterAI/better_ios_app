@@ -3,7 +3,6 @@ import Observation
 
 enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
     case week = 7
-    case biWeekly = 15
     case month = 30
     case twoMonths = 60
 
@@ -13,7 +12,6 @@ enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
     var displayName: String {
         switch self {
         case .week: "7D"
-        case .biWeekly: "15D"
         case .month: "30D"
         case .twoMonths: "60D"
         }
@@ -94,6 +92,14 @@ struct StageCompositionPoint: Identifiable, Sendable {
     let coreDuration: TimeInterval
     let remDuration: TimeInterval
     let awakeDuration: TimeInterval
+
+    var sleepDuration: TimeInterval {
+        deepDuration + coreDuration + remDuration
+    }
+
+    var totalStageDuration: TimeInterval {
+        sleepDuration + awakeDuration
+    }
 
     init(
         date: Date,
@@ -294,7 +300,8 @@ private extension TrendsViewModel {
     func updateStageCompositionPoints() {
         stageCompositionPoints = sessions.compactMap { session -> StageCompositionPoint? in
             guard session.dataQuality == .detailedStages, session.totalSleepTime > 0 else { return nil }
-            let total = session.totalSleepTime
+            let total = session.deepDuration + session.coreDuration + session.remDuration + session.awakeDuration
+            guard total > 0 else { return nil }
             return StageCompositionPoint(
                 date: session.startDate,
                 dateKey: session.sleepDateKey,
@@ -344,8 +351,6 @@ private extension TrendsViewModel {
         switch selectedWindow {
         case .week:
             return weekComparisonWindows(endingAt: endDate)
-        case .biWeekly:
-            return rollingComparisonWindows(days: selectedWindow.days, endingAt: endDate)
         case .month:
             return monthComparisonWindows(endingAt: endDate)
         case .twoMonths:
@@ -399,7 +404,7 @@ private extension TrendsViewModel {
         case .totalSleep:
             return session.totalSleepTime / 3_600
         case .score:
-            return healthScore(for: session)
+            return session.qualityScore.overall
         case .deepSleep:
             guard session.dataQuality == .detailedStages else { return nil }
             return session.deepDuration / 3_600

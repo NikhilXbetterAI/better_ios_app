@@ -56,9 +56,7 @@ struct TrendsTabView: View {
                         }
 
                         // Stage composition over time
-                        if !viewModel.stageCompositionPoints.isEmpty {
-                            stageSectionCard
-                        }
+                        stageSection
 
                         // Baseline comparison chart
                         BaselineComparisonChartView(
@@ -156,20 +154,13 @@ struct TrendsTabView: View {
 
     // MARK: - Stage Section Card
 
-    private var stageSectionCard: some View {
-        BetterHealthCard {
-            VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                HStack(spacing: BetterSpacing.small) {
-                    Image(systemName: "moon.stars.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(BetterColors.stageDeep, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    Text("Sleep Stage Composition")
-                        .font(BetterTypography.subheadline)
-                        .foregroundStyle(BetterColors.text)
-                }
-                StageStackedBarView(points: viewModel.stageCompositionPoints)
+    private var stageSection: some View {
+        StageDurationCompositionView(
+            points: viewModel.stageCompositionPoints,
+            selectedWindow: viewModel.selectedWindow
+        ) { window in
+            Task {
+                await viewModel.selectWindow(window)
             }
         }
     }

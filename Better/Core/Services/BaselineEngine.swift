@@ -45,7 +45,7 @@ nonisolated struct BaselineEngine: Sendable {
         let excludedCount = evaluated.count - validSessions.count
 
         let stableSessions = Array(validSessions.suffix(30))
-        let primarySessions = Array(validSessions.suffix(15))
+        let primarySessions = Array(validSessions.suffix(14))
         let recentSessions = Array(validSessions.suffix(7))
 
         let stable = stableSessions.isEmpty ? nil : processor.computeBaseline(
@@ -53,9 +53,9 @@ nonisolated struct BaselineEngine: Sendable {
             windowDays: 30,
             generatedAt: generatedAt
         )
-        let primary = primarySessions.count >= 15 ? processor.computeBaseline(
+        let primary = primarySessions.count >= 14 ? processor.computeBaseline(
             from: primarySessions,
-            windowDays: 15,
+            windowDays: 14,
             generatedAt: generatedAt
         ) : nil
         let recent = recentSessions.count >= 7 ? processor.computeBaseline(
@@ -109,9 +109,9 @@ nonisolated struct BaselineEngine: Sendable {
 
     static func confidence(validNightCount: Int) -> ComparisonConfidence {
         switch validNightCount {
-        case 15...:
+        case 14...:
             return .high
-        case 7...14:
+        case 7...13:
             return .medium
         case 3...6:
             return .low
