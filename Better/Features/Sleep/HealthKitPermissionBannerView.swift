@@ -107,9 +107,9 @@ struct HealthKitPermissionBannerView: View {
             connectBanner(
                 icon: "heart.fill",
                 iconColor: BetterColors.heartRate,
-                title: "Connect Apple Health",
+                title: "Apple Health Access",
                 body: "Better reads your sleep and biometric data from Apple Health to show personalized insights.",
-                buttonLabel: "Connect",
+                buttonLabel: "Continue",
                 buttonAction: onConnect
             )
 

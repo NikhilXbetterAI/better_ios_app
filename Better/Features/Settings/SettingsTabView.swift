@@ -18,7 +18,11 @@ struct SettingsTabView: View {
                     HealthStatusView(
                         isAvailable: viewModel.healthAvailability,
                         lastSync: viewModel.lastSuccessfulSync,
-                        openSettings: openAppSettings
+                        isRunningBiomarkerDiagnostic: viewModel.isLoadingBiomarkerDiagnostic,
+                        openSettings: openAppSettings,
+                        runBiomarkerDiagnostic: {
+                            Task { await viewModel.runBiomarkerDiagnostic() }
+                        }
                     )
                     ConnectedDevicesView(sources: viewModel.connectedSources)
                     ProfileSettingsView(profile: $viewModel.profile) {
@@ -56,6 +60,9 @@ struct SettingsTabView: View {
         .sheet(item: $exportDocument) { document in
             ResearchExportDocumentPicker(url: document.url)
                 .ignoresSafeArea()
+        }
+        .sheet(item: $viewModel.biomarkerDiagnosticReport) { report in
+            BiomarkerDiagnosticReportSheet(report: report)
         }
         .alert("Export Failed", isPresented: $showExportError) {
             Button("OK", role: .cancel) {}
@@ -137,6 +144,38 @@ struct SettingsTabView: View {
 private struct ResearchExportDocument: Identifiable {
     let id = UUID()
     let url: URL
+}
+
+private struct BiomarkerDiagnosticReportSheet: View {
+    let report: BiomarkerDiagnosticReport
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                BetterColors.background.ignoresSafeArea()
+                ScrollView {
+                    Text(report.plainText)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(BetterColors.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(BetterSpacing.screen)
+                }
+            }
+            .navigationTitle("Biomarker Diagnostic")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .font(BetterTypography.subheadline.bold())
+                    .foregroundStyle(BetterColors.brand)
+                }
+            }
+        }
+    }
 }
 
 private struct ResearchExportDocumentPicker: UIViewControllerRepresentable {

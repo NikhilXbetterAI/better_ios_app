@@ -32,4 +32,38 @@ final class BetterUITests: XCTestCase {
         app.tabBars.buttons["Activity"].tap()
         XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 3))
     }
+
+    @MainActor
+    func testOnboardingHealthPermissionFlowUsesCompliantPrePromptControls() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--uitesting-onboarding"]
+        app.launch()
+
+        let primaryButton = app.buttons["onboarding.primary"]
+        XCTAssertTrue(primaryButton.waitForExistence(timeout: 5))
+        XCTAssertEqual(primaryButton.label, "Get Started")
+        primaryButton.tap()
+
+        let privacyPolicyButton = app.buttons["onboarding.privacyPolicy"]
+        XCTAssertTrue(privacyPolicyButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(privacyPolicyButton.isHittable)
+        XCTAssertEqual(primaryButton.label, "Continue")
+        primaryButton.tap()
+
+        XCTAssertTrue(app.staticTexts["Apple Health Access"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["onboarding.skip"].exists)
+        XCTAssertFalse(app.buttons["Skip for now"].exists)
+        XCTAssertFalse(app.buttons["onboarding.back"].exists)
+        XCTAssertEqual(primaryButton.label, "Continue")
+
+        primaryButton.tap()
+        XCTAssertTrue(app.staticTexts["Set your sleep goal"].waitForExistence(timeout: 3))
+        XCTAssertEqual(primaryButton.label, "Continue")
+        primaryButton.tap()
+
+        XCTAssertTrue(app.staticTexts["A few quick sleep questions"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["onboarding.skip"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["onboarding.skip"].isHittable)
+        XCTAssertEqual(primaryButton.label, "Continue")
+    }
 }

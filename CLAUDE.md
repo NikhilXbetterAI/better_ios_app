@@ -317,7 +317,7 @@ SleepArcView(value: sleepGoalHours, range: 6...10, color: arcColor)
 
 ### Interactive Element Patterns
 
-#### Two-Tap Permission Flow
+#### HealthKit Permission Flow
 ```swift
 @State private var healthConnectAttempted = false
 
@@ -331,8 +331,8 @@ case .health:
     }
 }
 
-// Button title reflects state:
-let title = healthConnectAttempted ? "Continue" : "Connect Apple Health"
+// App Review requirement: HealthKit pre-permission CTA must stay neutral.
+let title = "Continue"
 ```
 
 #### Scrub/Drag Interaction
@@ -406,7 +406,7 @@ Key test files:
 
 ## Important Implementation Notes
 
-1. **HealthKit is read-only** — The app reads sleep + biometrics but does not write back to HealthKit (except manual entries via Settings)
+1. **HealthKit is read-only** — The app reads sleep + biometrics but does not write back to HealthKit.
 
 2. **SwiftData model version** — Domain models are mapped to SwiftData models in `PersistenceModels.swift`. Changes to persistence models require schema migration support.
 
@@ -418,7 +418,7 @@ Key test files:
 
 6. **Background sync** — `BackgroundTaskService` schedules sleep refreshes every 6 hours. Changes to sync frequency require updating the `BGTaskSchedulerPermittedIdentifiers` entry in `Info.plist`.
 
-7. **HealthKit permissions** — Both read and write permissions are declared in `Info.plist`. Permissions are requested during onboarding via `HealthKitRepository.requestAuthorization()`.
+7. **HealthKit permissions** — `Info.plist` declares Health read usage only. Permissions are requested during onboarding via `HealthKitRepository.requestAuthorization()`, with `toShare: []` and the required read types.
 
 8. **Encryption & storage protection** — All sensitive data (sleep sessions, baselines, onboarding answers, protocol adherence) is encrypted via `EncryptionService` (AES-256-GCM). The encryption key is stored in iOS Keychain with device-level protection. SQLite files get `FileProtectionType.complete`. Non-sensitive settings (theme, notification flags) remain unencrypted for faster access.
 

@@ -668,6 +668,7 @@ final class FakeHealthKitRepository: HealthKitRepositoryProtocol, @unchecked Sen
     var sleepSamples: [HKCategorySample]
     var biometricSamples: [BiometricType: [BiometricSample]]
     var anchoredResult: HealthKitAnchoredResult?
+    var requestAuthorizationCallCount = 0
 
     init(
         sleepSamples: [HKCategorySample] = [],
@@ -684,7 +685,8 @@ final class FakeHealthKitRepository: HealthKitRepositoryProtocol, @unchecked Sen
     }
 
     func requestAuthorization() async throws -> HealthAuthorizationResult {
-        HealthAuthorizationResult(
+        requestAuthorizationCallCount += 1
+        return HealthAuthorizationResult(
             requestCompleted: true,
             healthDataAvailable: true,
             canQuerySleep: true,

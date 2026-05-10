@@ -53,7 +53,12 @@ final class AppEnvironment {
         sharedPreview
     }
 
-    static func uiTesting() -> AppEnvironment { preview() }
+    static func uiTesting() -> AppEnvironment {
+        if ProcessInfo.processInfo.arguments.contains("--uitesting-onboarding") {
+            return makePreview(hasCompletedOnboarding: false)
+        }
+        return preview()
+    }
     #endif
 }
 
@@ -61,11 +66,11 @@ final class AppEnvironment {
 private extension AppEnvironment {
     static let sharedPreview: AppEnvironment = makePreview()
 
-    static func makePreview() -> AppEnvironment {
+    static func makePreview(hasCompletedOnboarding: Bool = true) -> AppEnvironment {
         guard let container = try? BetterPersistenceContainerFactory.makePreviewContainer() else {
             fatalError("Unable to create the preview SwiftData container for Better.")
         }
-        let localRepo = PreviewSleepData.makeMockRepository()
+        let localRepo = PreviewSleepData.makeMockRepository(hasCompletedOnboarding: hasCompletedOnboarding)
         let healthRepo = PreviewHealthKitRepository()
         let coordinator = SyncCoordinator(healthRepository: healthRepo, localRepository: localRepo)
         let backgroundTaskService = BackgroundTaskService(syncCoordinator: coordinator, isEnabled: false)

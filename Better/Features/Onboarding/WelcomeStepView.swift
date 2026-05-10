@@ -21,7 +21,7 @@ struct WelcomeStepView: View {
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("Connect Apple Health and log your nights. Once your baseline is ready, you'll see exactly how your habits affect your sleep.")
+                    Text("Use Apple Health data and log your nights. Once your baseline is ready, you'll see exactly how your habits affect your sleep.")
                         .font(BetterTypography.boardBody)
                         .foregroundStyle(BetterColors.subtext)
                         .multilineTextAlignment(.center)

@@ -9,6 +9,7 @@ struct OnboardingFlowView: View {
     @State private var healthConnectAttempted = false
     @State private var notificationAttempted = false
     @State private var finishPulse = false
+    @State private var showPrivacyPolicy = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -38,6 +39,9 @@ struct OnboardingFlowView: View {
                 }
             }
             .task { await viewModel.load() }
+            .sheet(isPresented: $showPrivacyPolicy) {
+                PrivacyPolicyView()
+            }
         }
     }
 
@@ -72,6 +76,8 @@ struct OnboardingFlowView: View {
             )
         case .sleepGoal:
             SleepGoalStepView(sleepGoalHours: $viewModel.profile.sleepGoalHours)
+        case .assessmentIntro:
+            SleepAssessmentIntroStepView()
         case .assessment:
             SleepQuestionnaireStepView(
                 answersByQuestionID: $viewModel.answersByQuestionID,
@@ -97,40 +103,61 @@ struct OnboardingFlowView: View {
 
     private var topChrome: some View {
         HStack {
-            Button {
-                movingForward = false
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                    step = step.previous ?? step
+            if shouldShowBackButton {
+                Button {
+                    movingForward = false
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                        step = step.previous ?? step
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(BetterColors.text)
+                        .frame(width: 36, height: 36)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().stroke(BetterColors.glassStroke, lineWidth: 1))
                 }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(step.previous == nil
-                        ? BetterColors.subtext.opacity(0.3)
-                        : BetterColors.text)
-                    .frame(width: 36, height: 36)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().stroke(BetterColors.glassStroke, lineWidth: 1))
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                .accessibilityIdentifier("onboarding.back")
+            } else {
+                Color.clear.frame(width: 36, height: 36)
             }
-            .disabled(step.previous == nil)
-            .buttonStyle(.plain)
 
             Spacer()
 
+            trailingTopChrome
+        }
+        .overlay {
             PageDotsIndicator(
                 count: OnboardingStep.dotSteps.count,
                 activeIndex: step.dotIndex,
                 activeColor: step.accentColor
             )
             .animation(.spring(response: 0.3, dampingFraction: 0.75), value: step)
-
-            Spacer()
-
-            // Invisible mirror for centering
-            Color.clear.frame(width: 36, height: 36)
+            .allowsHitTesting(false)
         }
         .padding(.horizontal, BetterSpacing.screen)
         .padding(.top, BetterSpacing.large)
+    }
+
+    @ViewBuilder
+    private var trailingTopChrome: some View {
+        if step == .privacyDisclosure {
+            // Keep the privacy policy in the chrome so the disclosure copy stays focused and App Review-friendly.
+            Button("Privacy Policy") { showPrivacyPolicy = true }
+                .font(BetterTypography.caption)
+                .foregroundStyle(BetterColors.brand)
+                .padding(.horizontal, BetterSpacing.small)
+                .frame(height: 36)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(BetterColors.glassStroke, lineWidth: 1))
+                .buttonStyle(.plain)
+                .accessibilityLabel("Privacy Policy")
+                .accessibilityIdentifier("onboarding.privacyPolicy")
+        } else {
+            Color.clear.frame(width: 36, height: 36)
+        }
     }
 
     // MARK: - Bottom chrome (skip + CTA pill)
@@ -146,10 +173,11 @@ struct OnboardingFlowView: View {
             }
 
             if step.canSkip {
-                Button("Skip for now") { goForward() }
+                Button("Skip for now") { skipAction() }
                     .font(BetterTypography.footnote)
                     .foregroundStyle(BetterColors.subtext)
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("onboarding.skip")
             }
 
             Button(action: primaryAction) {
@@ -176,8 +204,24 @@ struct OnboardingFlowView: View {
             .padding(.horizontal, BetterSpacing.screen)
             .scaleEffect(finishPulse ? 1.04 : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.5), value: finishPulse)
+            .accessibilityIdentifier("onboarding.primary")
         }
         .padding(.bottom, BetterSpacing.xLarge)
+    }
+
+    private var shouldShowBackButton: Bool {
+        step.previous != nil && (step != .health || healthConnectAttempted)
+    }
+
+    private func skipAction() {
+        switch step {
+        case .assessmentIntro:
+            move(to: .notifications)
+        case .notifications:
+            goForward()
+        default:
+            goForward()
+        }
     }
 
     // MARK: - Primary button title
@@ -185,7 +229,9 @@ struct OnboardingFlowView: View {
     private var resolvedPrimaryTitle: String {
         switch step {
         case .health:
-            return healthConnectAttempted ? "Continue" : "Connect Apple Health"
+            return "Continue"
+        case .assessmentIntro:
+            return "Continue"
         case .notifications:
             return notificationAttempted ? "Continue" : "Enable Notifications"
         case .preferredName:
@@ -215,6 +261,8 @@ struct OnboardingFlowView: View {
             }
         case .research:
             goForward()
+        case .assessmentIntro:
+            goForward()
         case .preferredName:
             finishPulse = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { finishPulse = false }
@@ -229,11 +277,16 @@ struct OnboardingFlowView: View {
 
     private var primaryDisabled: Bool {
         viewModel.isLoading ||
+        (step == .health && viewModel.syncCoordinatorIsBusy) ||
         (step == .assessment && viewModel.answersByQuestionID.count < SleepAssessmentQuestion.allQuestions.count)
     }
 
     private func goForward() {
         guard let next = step.next else { return }
+        move(to: next)
+    }
+
+    private func move(to next: OnboardingStep) {
         movingForward = true
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             step = next
@@ -265,11 +318,12 @@ private extension OnboardingViewModel {
     }
 }
 
-private enum OnboardingStep: Int, CaseIterable {
+enum OnboardingStep: Int, CaseIterable {
     case welcome
     case privacyDisclosure
     case health
     case sleepGoal
+    case assessmentIntro
     case assessment
     case notifications
     case research
@@ -282,7 +336,7 @@ private enum OnboardingStep: Int, CaseIterable {
 
     var canSkip: Bool {
         switch self {
-        case .health, .notifications: true
+        case .assessmentIntro, .notifications: true
         default: false
         }
     }
@@ -291,7 +345,7 @@ private enum OnboardingStep: Int, CaseIterable {
         switch self {
         case .welcome:                              "Get Started"
         case .privacyDisclosure:                    "Continue"
-        case .health, .sleepGoal, .assessment,
+        case .health, .sleepGoal, .assessmentIntro, .assessment,
              .notifications:                       "Continue"
         case .research:                             "Continue"
         case .preferredName:                        "Finish"
@@ -299,7 +353,7 @@ private enum OnboardingStep: Int, CaseIterable {
     }
 
     // Dot indicator — excludes .assessment (it has its own chrome)
-    static let dotSteps: [OnboardingStep] = [.welcome, .privacyDisclosure, .health, .sleepGoal, .notifications, .research, .preferredName]
+    static let dotSteps: [OnboardingStep] = [.welcome, .privacyDisclosure, .health, .sleepGoal, .assessmentIntro, .notifications, .research, .preferredName]
 
     var dotIndex: Int {
         Self.dotSteps.firstIndex(of: self) ?? 0
@@ -311,6 +365,7 @@ private enum OnboardingStep: Int, CaseIterable {
         case .privacyDisclosure:  BetterColors.brand
         case .health:             BetterColors.heartRate
         case .sleepGoal:          BetterColors.success
+        case .assessmentIntro:    BetterColors.stageDeep
         case .assessment:         BetterColors.stageDeep
         case .notifications:      BetterColors.stageAwake
         case .research:           BetterColors.hrv

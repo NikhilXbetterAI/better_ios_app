@@ -25,6 +25,7 @@ struct PrivacyControlsView: View {
                         .font(BetterTypography.caption)
                         .foregroundStyle(BetterColors.danger)
                 }
+                privacyPolicyButton
                 actionButtons
             }
         }
@@ -49,16 +50,9 @@ struct PrivacyControlsView: View {
 
     private var sectionHeader: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Privacy & Data")
-                    .font(BetterTypography.subheadline)
-                    .foregroundStyle(BetterColors.text)
-                Spacer()
-                Button("Privacy Policy") { showPrivacyPolicy = true }
-                    .font(BetterTypography.caption)
-                    .foregroundStyle(BetterColors.brand)
-                    .buttonStyle(.plain)
-            }
+            Text("Privacy & Data")
+                .font(BetterTypography.subheadline)
+                .foregroundStyle(BetterColors.text)
             Text("All data stays on this device. Nothing is sent to external servers.")
                 .font(BetterTypography.caption)
                 .foregroundStyle(BetterColors.subtext)
@@ -116,6 +110,17 @@ struct PrivacyControlsView: View {
             Divider()
             deleteButton
         }
+    }
+
+    private var privacyPolicyButton: some View {
+        Button { showPrivacyPolicy = true } label: {
+            Label("Privacy Policy", systemImage: "lock.shield")
+                .font(BetterTypography.footnote)
+                .foregroundStyle(BetterColors.brand)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 6)
     }
 
     private var healthKitStatusRow: some View {

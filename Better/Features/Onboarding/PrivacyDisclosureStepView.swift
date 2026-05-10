@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct PrivacyDisclosureStepView: View {
-    @State private var showPrivacyPolicy = false
     @State private var shieldScale: CGFloat = 0.6
     @State private var shieldOpacity: Double = 0
     @State private var rowOpacities: [Double] = [0, 0, 0, 0]
@@ -55,12 +54,9 @@ struct PrivacyDisclosureStepView: View {
                     Text("Never uploaded to any server · AES-256 encrypted · Delete anytime")
                         .font(BetterTypography.micro)
                         .foregroundStyle(BetterColors.subtext)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    Button("Privacy Policy") { showPrivacyPolicy = true }
-                        .font(BetterTypography.micro)
-                        .foregroundStyle(BetterColors.brand)
-                        .buttonStyle(.plain)
                 }
                 .padding(.horizontal, BetterSpacing.screen)
                 .padding(.top, BetterSpacing.medium)
@@ -71,9 +67,6 @@ struct PrivacyDisclosureStepView: View {
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }
         .onAppear { startAnimations() }
-        .sheet(isPresented: $showPrivacyPolicy) {
-            PrivacyPolicyView()
-        }
     }
 
     // MARK: - Hero

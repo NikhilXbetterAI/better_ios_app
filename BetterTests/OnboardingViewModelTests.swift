@@ -3,6 +3,24 @@ import XCTest
 
 @MainActor
 final class OnboardingViewModelTests: XCTestCase {
+    func testHealthOnboardingStepUsesAppReviewCompliantControls() {
+        XCTAssertFalse(OnboardingStep.health.canSkip)
+        XCTAssertEqual(OnboardingStep.health.primaryTitle, "Continue")
+        XCTAssertTrue(OnboardingStep.assessmentIntro.canSkip)
+        XCTAssertEqual(OnboardingStep.assessmentIntro.primaryTitle, "Continue")
+        XCTAssertTrue(OnboardingStep.notifications.canSkip)
+    }
+
+    func testConnectHealthRequestsAuthorizationOnFirstAction() async throws {
+        let repository = try await makeRepository()
+        let healthRepository = FakeHealthKitRepository()
+        let viewModel = makeViewModel(repository: repository, healthRepository: healthRepository)
+
+        await viewModel.connectHealth()
+
+        XCTAssertEqual(healthRepository.requestAuthorizationCallCount, 1)
+    }
+
     func testCompleteOnboardingTrimsPreferredNameBeforeSaving() async throws {
         let repository = try await makeRepository()
         let viewModel = makeViewModel(repository: repository)
@@ -31,11 +49,14 @@ final class OnboardingViewModelTests: XCTestCase {
 }
 
 private extension OnboardingViewModelTests {
-    func makeViewModel(repository: LocalDataRepository) -> OnboardingViewModel {
+    func makeViewModel(
+        repository: LocalDataRepository,
+        healthRepository: FakeHealthKitRepository = FakeHealthKitRepository()
+    ) -> OnboardingViewModel {
         OnboardingViewModel(
             localRepository: repository,
             syncCoordinator: SyncCoordinator(
-                healthRepository: FakeHealthKitRepository(),
+                healthRepository: healthRepository,
                 localRepository: repository
             )
         )

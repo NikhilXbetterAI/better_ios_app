@@ -18,8 +18,10 @@ final class SettingsViewModel {
     var insightSummary: ResearchInsightSummary?
     var isExporting = false
     var isLoading = false
+    var isLoadingBiomarkerDiagnostic = false
     var errorMessage: String?
     var healthAuthorizationState: HealthAuthorizationPresentationState = .notRequested
+    var biomarkerDiagnosticReport: BiomarkerDiagnosticReport?
 
     let privacyService: PrivacyDataService
 
@@ -130,6 +132,22 @@ final class SettingsViewModel {
         } catch {
             insightSummary = nil
         }
+    }
+
+    func runBiomarkerDiagnostic(now: Date = Date()) async {
+        isLoadingBiomarkerDiagnostic = true
+        errorMessage = nil
+        do {
+            let service = BiomarkerDiagnosticService(
+                localRepository: localRepository,
+                healthRepository: healthRepository
+            )
+            biomarkerDiagnosticReport = try await service.latestNightReport(now: now)
+        } catch {
+            biomarkerDiagnosticReport = nil
+            errorMessage = error.localizedDescription
+        }
+        isLoadingBiomarkerDiagnostic = false
     }
 }
 

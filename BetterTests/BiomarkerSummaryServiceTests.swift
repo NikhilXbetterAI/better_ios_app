@@ -119,6 +119,77 @@ final class BiomarkerSummaryServiceTests: XCTestCase {
         XCTAssertEqual(hrv?.expectedDayCount, 7)
         XCTAssertEqual(hrv?.points.count, 2)
     }
+
+    func testDiagnosticReportKeepsAvailableBiomarkersWhenOneTypeIsMissing() async throws {
+        let now = date("2026-01-31")
+        let session = makeSession(date: now, hrv: nil, spo2: nil, breath: nil)
+        let samples: [BiometricType: [BiometricSample]] = [
+            .heartRate: [
+                biometricSample(.heartRate, value: 58, start: session.startDate.addingTimeInterval(600), end: session.startDate.addingTimeInterval(660))
+            ],
+            .respiratoryRate: [
+                biometricSample(.respiratoryRate, value: 14.2, start: session.startDate.addingTimeInterval(900), end: session.startDate.addingTimeInterval(960))
+            ]
+        ]
+        let service = BiomarkerDiagnosticService(
+            localRepository: MockLocalDataRepository(sessions: [session]),
+            healthRepository: BiologyFakeHealthKitRepository(samples: samples),
+            calendar: calendar
+        )
+
+        let report = try await service.latestNightReport(now: now)
+
+        XCTAssertEqual(report.metric(for: .heartRate)?.sleepWindow.count, 1)
+        XCTAssertEqual(report.metric(for: .heartRateVariabilitySDNN)?.sleepWindow.count, 0)
+        XCTAssertEqual(report.metric(for: .respiratoryRate)?.sleepWindow.count, 1)
+        XCTAssertTrue(report.plainText.contains("Heart Rate"))
+        XCTAssertTrue(report.plainText.contains("HRV"))
+    }
+
+    func testDiagnosticReportFlagsSamplesOutsideSleepWindow() async throws {
+        let now = date("2026-01-31")
+        let session = makeSession(date: now)
+        let lateSample = biometricSample(
+            .oxygenSaturation,
+            value: 0.97,
+            start: session.endDate.addingTimeInterval(3_600),
+            end: session.endDate.addingTimeInterval(3_660)
+        )
+        let service = BiomarkerDiagnosticService(
+            localRepository: MockLocalDataRepository(sessions: [session]),
+            healthRepository: BiologyFakeHealthKitRepository(samples: [.oxygenSaturation: [lateSample]]),
+            calendar: calendar
+        )
+
+        let report = try await service.latestNightReport(now: now)
+        let oxygen = try XCTUnwrap(report.metric(for: .oxygenSaturation))
+
+        XCTAssertEqual(oxygen.sleepWindow.count, 0)
+        XCTAssertEqual(oxygen.expandedWindow.count, 1)
+        XCTAssertEqual(oxygen.outsideSleepWindowCount, 1)
+    }
+
+    func testDiagnosticReportDocumentsSleepTabRHRUsesOvernightLowHeartRate() async throws {
+        let now = date("2026-01-31")
+        let session = makeSession(date: now, sleepHeartRateMinimum: 44)
+        let rhrSample = biometricSample(
+            .restingHeartRate,
+            value: 62,
+            start: now.addingTimeInterval(10 * 3_600),
+            end: now.addingTimeInterval(10 * 3_600 + 300)
+        )
+        let service = BiomarkerDiagnosticService(
+            localRepository: MockLocalDataRepository(sessions: [session]),
+            healthRepository: BiologyFakeHealthKitRepository(samples: [.restingHeartRate: [rhrSample]]),
+            calendar: calendar
+        )
+
+        let report = try await service.latestNightReport(now: now)
+
+        XCTAssertTrue(report.plainText.contains("Overnight low HR used by Sleep tab RHR: 44 bpm"))
+        XCTAssertTrue(report.plainText.contains("not HealthKit restingHeartRate"))
+        XCTAssertEqual(report.metric(for: .restingHeartRate)?.expandedWindow.count, 1)
+    }
 }
 
 private extension BiomarkerSummaryServiceTests {
@@ -172,5 +243,22 @@ private extension BiomarkerSummaryServiceTests {
             startDate: start,
             endDate: end
         )
+    }
+
+    func biometricSample(_ type: BiometricType, value: Double, start: Date, end: Date) -> BiometricSample {
+        BiometricSample(
+            type: type,
+            value: value,
+            unit: type.unitSymbol,
+            startDate: start,
+            endDate: end,
+            source: SleepSource(name: "Oura", bundleIdentifier: "com.ouraring.oura")
+        )
+    }
+}
+
+private extension BiomarkerDiagnosticReport {
+    func metric(for type: BiometricType) -> BiomarkerDiagnosticMetricReport? {
+        metricReports.first { $0.type == type }
     }
 }

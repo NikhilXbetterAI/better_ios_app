@@ -21,7 +21,7 @@ struct HealthPermissionStepView: View {
 
                 // ── Text ──────────────────────────────────────────────────────
                 VStack(spacing: BetterSpacing.small) {
-                    Text("Connect Apple Health")
+                    Text("Apple Health Access")
                         .font(BetterTypography.display)
                         .foregroundStyle(BetterColors.text)
                         .multilineTextAlignment(.center)
