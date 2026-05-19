@@ -401,6 +401,70 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.save()
     }
 
+    // MARK: - Sleep Mode
+
+    func saveSleepModeSettings(_ settings: SleepModeSettings) async throws {
+        for existing in try modelContext.fetch(FetchDescriptor<StoredSleepModeSettings>()) {
+            modelContext.delete(existing)
+        }
+        modelContext.insert(try StoredSleepModeSettings(domain: settings))
+        try modelContext.save()
+    }
+
+    func fetchSleepModeSettings() async throws -> SleepModeSettings? {
+        var descriptor = FetchDescriptor<StoredSleepModeSettings>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
+    }
+
+    func saveSleepModeSchedule(_ schedule: SleepModeSchedule) async throws {
+        for existing in try modelContext.fetch(FetchDescriptor<StoredSleepModeSchedule>()) {
+            modelContext.delete(existing)
+        }
+        modelContext.insert(try StoredSleepModeSchedule(domain: schedule))
+        try modelContext.save()
+    }
+
+    func fetchSleepModeSchedule() async throws -> SleepModeSchedule? {
+        var descriptor = FetchDescriptor<StoredSleepModeSchedule>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
+    }
+
+    func saveSleepModeSession(_ session: SleepModeSession) async throws {
+        let id = session.id
+        let descriptor = FetchDescriptor<StoredSleepModeSession>(
+            predicate: #Predicate { stored in
+                stored.id == id
+            }
+        )
+        for existing in try modelContext.fetch(descriptor) {
+            modelContext.delete(existing)
+        }
+        modelContext.insert(try StoredSleepModeSession(domain: session))
+        try modelContext.save()
+    }
+
+    func fetchSleepModeSessions(from: Date, to: Date) async throws -> [SleepModeSession] {
+        let descriptor = FetchDescriptor<StoredSleepModeSession>(
+            sortBy: [SortDescriptor(\.startedAt)]
+        )
+        return try modelContext.fetch(descriptor)
+            .filter { ($0.endedAt ?? $0.startedAt) > from && $0.startedAt < to }
+            .compactMap { try? $0.toDomain() }
+    }
+
+    func deleteAllSleepModeData() async throws {
+        try modelContext.delete(model: StoredSleepModeSettings.self)
+        try modelContext.delete(model: StoredSleepModeSchedule.self)
+        try modelContext.delete(model: StoredSleepModeSession.self)
+        try modelContext.save()
+    }
+
     // MARK: - Context entries
 
     func saveContextEntry(_ entry: SleepContextEntry) async throws {
@@ -505,6 +569,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.delete(model: StoredManualBiologyEntry.self)
         try modelContext.delete(model: StoredSyncAnchor.self)
         try modelContext.delete(model: StoredSleepContextEntry.self)
+        try modelContext.delete(model: StoredSleepModeSession.self)
 
         // Clear health-sensitive profile fields; keep non-sensitive preferences.
         for profile in try modelContext.fetch(FetchDescriptor<StoredUserProfile>()) {
@@ -527,6 +592,21 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             if let biometrics = domain.biometrics {
                 session.biometricsData = try PersistenceJSON.encode(biometrics)
             }
+        }
+
+        // Sleep Mode blobs.
+        for settings in try modelContext.fetch(FetchDescriptor<StoredSleepModeSettings>()) {
+            guard let domain = try? settings.toDomain() else { continue }
+            settings.settingsData = try PersistenceJSON.encode(domain)
+        }
+        for schedule in try modelContext.fetch(FetchDescriptor<StoredSleepModeSchedule>()) {
+            guard let domain = try? schedule.toDomain() else { continue }
+            schedule.scheduleData = try PersistenceJSON.encode(domain)
+        }
+        for session in try modelContext.fetch(FetchDescriptor<StoredSleepModeSession>()) {
+            await Task.yield()
+            guard let domain = try? session.toDomain() else { continue }
+            session.sessionData = try PersistenceJSON.encode(domain)
         }
 
         // Nightly biometric summaries.
@@ -560,6 +640,11 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         contextDescriptor.fetchLimit = 1
         let latestContextEntry = try modelContext.fetch(contextDescriptor).first
         let contextCount = try modelContext.fetchCount(FetchDescriptor<StoredSleepContextEntry>())
+        var sleepModeSessionDescriptor = FetchDescriptor<StoredSleepModeSession>(
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        sleepModeSessionDescriptor.fetchLimit = 1
+        let latestSleepModeSession = try modelContext.fetch(sleepModeSessionDescriptor).first
 
         return LocalDataInventory(
             sleepSessionCount: sessions.count,
@@ -568,8 +653,12 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             protocolAdherenceCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolAdherence>()),
             activityLogCount: try modelContext.fetchCount(FetchDescriptor<StoredActivityStatusLog>()),
             manualBiologyEntryCount: try modelContext.fetchCount(FetchDescriptor<StoredManualBiologyEntry>()),
+            sleepModeSettingsCount: try modelContext.fetchCount(FetchDescriptor<StoredSleepModeSettings>()),
+            sleepModeScheduleCount: try modelContext.fetchCount(FetchDescriptor<StoredSleepModeSchedule>()),
+            sleepModeSessionCount: try modelContext.fetchCount(FetchDescriptor<StoredSleepModeSession>()),
             contextEntryCount: contextCount,
             lastContextEntryDate: latestContextEntry?.updatedAt,
+            lastSleepModeSessionDate: latestSleepModeSession?.startedAt,
             oldestSessionDate: sessions.first?.startDate,
             newestSessionDate: sessions.last?.startDate
         )

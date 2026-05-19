@@ -13,6 +13,7 @@ final class ResearchAnalysisServiceTests: XCTestCase {
             end: Self.date("2026-05-04T06:00:00Z"),
             totalSleepHours: 8,
             score: 84,
+            stages: Self.continuityStages(),
             biometrics: Self.biometrics(key: "2026-05-04")
         )
         let repository = MockLocalDataRepository(
@@ -60,6 +61,47 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         XCTAssertEqual(row.baselineWASODeltaMinutes ?? 0, 10, accuracy: 0.001)
         XCTAssertEqual(row.baselineLatencyDeltaMinutes ?? 0, 5, accuracy: 0.001)
         XCTAssertEqual(row.baselineHRVDelta ?? 0, 10, accuracy: 0.001)
+        XCTAssertEqual(row.restorativeSleepHours ?? 0, 3, accuracy: 0.001)
+        XCTAssertEqual(row.longestRestorativeBlockMinutes ?? 0, 230, accuracy: 0.001)
+        XCTAssertEqual(row.sleepContinuityCategory, SleepContinuityCategory.good.rawValue)
+        XCTAssertEqual(row.sleepBlockCount, 3)
+        XCTAssertEqual(row.meaningfulAwakeCount, 2)
+        XCTAssertEqual(row.sleepBlockDurationsMinutes?.map(Int.init), [230, 83, 140])
+        XCTAssertEqual(package.chronotypeResult?.status, .insufficientData)
+        XCTAssertTrue(package.chronotypeResult?.missingRequirements.contains(.totalNights) == true)
+    }
+
+    func testInBedOnlySessionExportsUnavailableContinuity() async throws {
+        let session = Self.session(
+            key: "2026-05-04",
+            start: Self.date("2026-05-03T22:00:00Z"),
+            end: Self.date("2026-05-04T06:00:00Z"),
+            totalSleepHours: 0,
+            dataQuality: .inBedOnly,
+            stages: [
+                Self.stage(.inBed, "2026-05-03T22:00:00Z", "2026-05-04T06:00:00Z")
+            ]
+        )
+        let repository = MockLocalDataRepository(
+            sessions: [session],
+            profile: UserProfile(baselineWindowDays: 30, isResearchMode: true)
+        )
+        let service = ResearchAnalysisService(
+            localRepository: repository,
+            healthRepository: ResearchFakeHealthKitRepository(),
+            calendar: Self.utcCalendar
+        )
+
+        let package = try await service.buildExportPackage(
+            from: Self.date("2026-05-04T00:00:00Z"),
+            to: Self.date("2026-05-05T00:00:00Z"),
+            protocolItems: []
+        )
+
+        let row = try XCTUnwrap(package.nightlyRows.first)
+        XCTAssertNil(row.longestRestorativeBlockMinutes)
+        XCTAssertEqual(row.sleepContinuityCategory, SleepContinuityCategory.unavailable.rawValue)
+        XCTAssertEqual(row.sleepBlockCount, 0)
     }
 
     func testProtocolSummariesComparePerProtocolAnyProtocolAndJetLagAdjustedRows() async throws {
@@ -360,6 +402,76 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("protocol_usage_status"))
         XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("comparison_confidence"))
         XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("source_names,baseline_window_used"))
+        XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("restorative_sleep_hrs"))
+        XCTAssertTrue(csv.components(separatedBy: "\n")[0].contains("longest_restorative_block_min"))
+        XCTAssertTrue(csv.contains(",NA,NA,NA,,0,0,,,"))
+
+        let continuityRow = NightlyResearchRow(
+            sleepDateKey: "2026-05-05",
+            sleepStart: Self.date("2026-05-04T23:00:00Z"),
+            sleepEnd: Self.date("2026-05-05T06:45:00Z"),
+            dataQuality: .detailedStages,
+            totalSleepHours: 7.55,
+            inBedHours: 7.75,
+            efficiencyPercent: 97,
+            deepHours: 1.5,
+            remHours: 1.7,
+            coreHours: 4.35,
+            awakeHours: 0.2,
+            wasoMinutes: 12,
+            latencyMinutes: 8,
+            sleepScore: 91,
+            durationScore: 92,
+            efficiencyScore: 93,
+            remScore: 90,
+            deepScore: 88,
+            hrvAverage: nil,
+            hrvMedian: nil,
+            heartRateAverage: nil,
+            heartRateMinimum: nil,
+            heartRateMaximum: nil,
+            respiratoryRateAverage: nil,
+            oxygenSaturationAveragePercent: nil,
+            oxygenSaturationMinimumPercent: nil,
+            steps: nil,
+            activeEnergyKcal: nil,
+            exerciseMinutes: nil,
+            standHours: nil,
+            distanceMeters: nil,
+            activityStatus: nil,
+            isJetLagged: false,
+            activityNote: nil,
+            protocolTakenAny: false,
+            protocolIDsTaken: [],
+            protocolNamesTaken: [],
+            protocolTakenAt: [],
+            minutesFromProtocolToSleep: [],
+            baselineTotalSleepDeltaHours: nil,
+            baselineEfficiencyDeltaPercent: nil,
+            baselineWASODeltaMinutes: nil,
+            baselineLatencyDeltaMinutes: nil,
+            baselineHRVDelta: nil,
+            sourceNames: ["Apple Watch"],
+            restorativeSleepHours: 3.2,
+            longestRestorativeBlockHours: 3.83,
+            longestRestorativeBlockMinutes: 230,
+            sleepContinuityCategory: SleepContinuityCategory.good.rawValue,
+            sleepBlockCount: 3,
+            meaningfulAwakeCount: 2,
+            sleepBlockDurationsMinutes: [230, 83, 140],
+            sleepBlockStartDates: [
+                Self.date("2026-05-04T23:00:00Z"),
+                Self.date("2026-05-05T02:57:00Z"),
+                Self.date("2026-05-05T04:25:00Z")
+            ],
+            sleepBlockEndDates: [
+                Self.date("2026-05-05T02:50:00Z"),
+                Self.date("2026-05-05T04:20:00Z"),
+                Self.date("2026-05-05T06:45:00Z")
+            ]
+        )
+        let continuityCSV = exporter.nightlyRowsCSV([continuityRow])
+        XCTAssertTrue(continuityCSV.contains(",3.20,3.83,230.00,good,3,2,230|83|140,"))
 
         let zipURL = try exporter.writeZIP(package: package, displayName: "Ada O'Connor / Sleep")
         let data = try Data(contentsOf: zipURL)
@@ -369,6 +481,39 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         XCTAssertTrue(zipText.contains("protocol_effect_summary.csv"))
         XCTAssertTrue(zipText.contains("export_metadata.csv"))
         XCTAssertEqual(zipURL.lastPathComponent, "BetterSleep_Ada-O-Connor-Sleep_2026-05-01_to_2026-05-05.zip")
+    }
+
+    func testCSVExporterIncludesChronotypeSummarySectionWhenAvailable() async throws {
+        let protocolItem = Self.protocolItem()
+        let session = Self.session(
+            key: "2026-05-04",
+            start: Self.date("2026-05-03T22:00:00Z"),
+            end: Self.date("2026-05-04T06:00:00Z"),
+            totalSleepHours: 8
+        )
+        let repository = MockLocalDataRepository(
+            sessions: [session],
+            baselines: [Self.baseline()],
+            profile: UserProfile(baselineWindowDays: 30, isResearchMode: true)
+        )
+        let service = ResearchAnalysisService(
+            localRepository: repository,
+            healthRepository: ResearchFakeHealthKitRepository(),
+            calendar: Self.utcCalendar
+        )
+        let exporter = ResearchCSVExporter()
+
+        let package = try await service.buildExportPackage(
+            from: Self.date("2026-05-04T00:00:00Z"),
+            to: Self.date("2026-05-05T00:00:00Z"),
+            protocolItems: [protocolItem]
+        )
+
+        let zipURL = try exporter.writeZIP(package: package, displayName: "Ada")
+        let zipText = String(decoding: try Data(contentsOf: zipURL), as: UTF8.self)
+        XCTAssertTrue(zipText.contains("chronotype_summary.csv"))
+        XCTAssertTrue(zipText.contains("corrected_midpoint_min"))
+        XCTAssertTrue(zipText.contains(package.chronotypeResult?.status.rawValue ?? ""))
     }
 
     func testCSVExporterFallsBackToGenericFilenameWhenDisplayNameIsBlank() throws {
@@ -423,6 +568,7 @@ private extension ResearchAnalysisServiceTests {
         totalSleepHours: Double = 7,
         score: Double = 80,
         dataQuality: SleepDataQuality = .detailedStages,
+        stages: [SleepStage] = [],
         biometrics: NightlyBiometricSummary? = nil
     ) -> SleepSession {
         let totalSleep = totalSleepHours * 3_600
@@ -431,7 +577,7 @@ private extension ResearchAnalysisServiceTests {
             sleepDateKey: key,
             startDate: start,
             endDate: end,
-            stages: [],
+            stages: stages,
             sources: [SleepSource(name: "Apple Watch", bundleIdentifier: "hidden.example")],
             dataQuality: dataQuality,
             totalInBedTime: totalInBed,
@@ -498,6 +644,20 @@ private extension ResearchAnalysisServiceTests {
             wakeMinuteAverage: 6 * 60,
             wakeMinuteStandardDeviation: 0
         )
+    }
+
+    static func continuityStages() -> [SleepStage] {
+        [
+            stage(.core, "2026-05-03T23:00:00Z", "2026-05-04T02:50:00Z"),
+            stage(.awake, "2026-05-04T02:50:00Z", "2026-05-04T02:57:00Z"),
+            stage(.rem, "2026-05-04T02:57:00Z", "2026-05-04T04:20:00Z"),
+            stage(.awake, "2026-05-04T04:20:00Z", "2026-05-04T04:25:00Z"),
+            stage(.deep, "2026-05-04T04:25:00Z", "2026-05-04T06:45:00Z")
+        ]
+    }
+
+    static func stage(_ type: SleepStageType, _ start: String, _ end: String) -> SleepStage {
+        SleepStage(type: type, startDate: date(start), endDate: date(end))
     }
 
     static func date(_ string: String) -> Date {

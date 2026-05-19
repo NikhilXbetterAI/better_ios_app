@@ -12,7 +12,7 @@ struct ResearchExportView: View {
             Text("Research Export")
                 .font(BetterTypography.headline)
                 .foregroundStyle(BetterColors.text)
-            Text("ZIP exports contain derived sleep, protocol, activity, biology, and analysis CSVs.")
+            Text("ZIP exports contain derived sleep, protocol, activity, biology, chronotype, and analysis CSVs.")
                 .font(BetterTypography.caption)
                 .foregroundStyle(BetterColors.subtext)
 

@@ -142,6 +142,41 @@ final class AlertGenerationServiceTests: XCTestCase {
         XCTAssertEqual(requests[0].title, "Sleep analysis ready")
         XCTAssertTrue(requests[0].body.contains("2 sleep insights"))
     }
+
+    func testAnalysisReadyNotificationSchedulesWhenEnabled() async throws {
+        let scheduler = CapturingNotificationScheduler(state: .authorized)
+        let service = AlertGenerationService(calendar: Self.utcCalendar, notificationScheduler: scheduler)
+        var settings = AlertGenerationSettings.default
+        settings.localNotificationsEnabled = true
+        settings.notificationEnabledKinds = [.analysisReady]
+        var baseline = Self.baseline
+        baseline.validNights = 0
+        let session = Self.session(
+            score: 88,
+            totalSleep: 8 * 3_600,
+            deep: 90 * 60,
+            rem: 120 * 60,
+            waso: 10 * 60,
+            hrv: 58,
+            oxygenAverage: 0.97,
+            oxygenMinimum: 0.95
+        )
+
+        _ = try await service.generateAlerts(
+            latestSession: session,
+            recentSessions: [session],
+            baseline: baseline,
+            profile: UserProfile(sleepGoalHours: 8),
+            adherence: [],
+            settings: settings,
+            createdAt: Self.date("2026-05-04T08:00:00Z")
+        )
+
+        let requests = await scheduler.requests()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].title, "Sleep analysis ready")
+        XCTAssertEqual(requests[0].body, "Your sleep dashboard has been updated.")
+    }
 }
 
 private actor CapturingNotificationScheduler: LocalNotificationScheduling {
@@ -159,6 +194,10 @@ private actor CapturingNotificationScheduler: LocalNotificationScheduling {
     func scheduleNotification(identifier: String, title: String, body: String) async throws {
         scheduledRequests.append((identifier, title, body))
     }
+
+    func isAlreadyDelivered(identifier: String) async -> Bool { false }
+
+    func cancelPending(identifier: String) async {}
 
     func requests() -> [(identifier: String, title: String, body: String)] {
         scheduledRequests

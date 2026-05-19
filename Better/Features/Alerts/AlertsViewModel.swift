@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-struct DailyReminderSettings: Sendable {
+nonisolated struct DailyReminderSettings: Codable, Sendable, Hashable {
     var isEnabled: Bool
     var hour: Int
     var minute: Int
@@ -9,18 +9,30 @@ struct DailyReminderSettings: Sendable {
     static let `default` = DailyReminderSettings(isEnabled: false, hour: 21, minute: 0)
 }
 
-struct SmartAlertSettings: Sendable {
+nonisolated struct SmartAlertSettings: Codable, Sendable, Hashable {
+    var analysisReadyEnabled: Bool
     var lowScoreEnabled: Bool
     var lowDeepSleepEnabled: Bool
     var lowRemSleepEnabled: Bool
     var missedProtocolEnabled: Bool
 
     static let `default` = SmartAlertSettings(
+        analysisReadyEnabled: true,
         lowScoreEnabled: true,
         lowDeepSleepEnabled: true,
         lowRemSleepEnabled: true,
         missedProtocolEnabled: false
     )
+
+    var enabledKinds: Set<SleepAlertKind> {
+        var kinds: Set<SleepAlertKind> = []
+        if analysisReadyEnabled { kinds.insert(.analysisReady) }
+        if lowScoreEnabled { kinds.insert(.lowScore) }
+        if lowDeepSleepEnabled { kinds.insert(.lowDeepSleep) }
+        if lowRemSleepEnabled { kinds.insert(.lowRemSleep) }
+        if missedProtocolEnabled { kinds.insert(.missedProtocol) }
+        return kinds
+    }
 }
 
 @MainActor
@@ -29,20 +41,31 @@ final class AlertsViewModel {
     private static let alertDisplayLimit = 100
 
     private let localRepository: LocalDataRepositoryProtocol
+    private let notificationPreferencesStore: AlertNotificationPreferencesStoring
 
     var alerts: [SleepAlert] = []
     var unreadCount: Int = 0
     var groupedAlerts: [SleepAlertKind: [SleepAlert]] = [:]
-    var dailyReminderSettings: DailyReminderSettings = .default
-    var smartAlertSettings: SmartAlertSettings = .default
+    var dailyReminderSettings: DailyReminderSettings = .default {
+        didSet { saveNotificationPreferencesIfNeeded() }
+    }
+    var smartAlertSettings: SmartAlertSettings = .default {
+        didSet { saveNotificationPreferencesIfNeeded() }
+    }
     var isLoading = false
     var errorMessage: String?
+    private var isApplyingNotificationPreferences = false
 
-    init(localRepository: LocalDataRepositoryProtocol) {
+    init(
+        localRepository: LocalDataRepositoryProtocol,
+        notificationPreferencesStore: AlertNotificationPreferencesStoring = UserDefaultsAlertNotificationPreferencesStore()
+    ) {
         self.localRepository = localRepository
+        self.notificationPreferencesStore = notificationPreferencesStore
     }
 
     func onAppear() async {
+        loadNotificationPreferences()
         await loadAlerts()
     }
 
@@ -88,5 +111,23 @@ final class AlertsViewModel {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func loadNotificationPreferences() {
+        isApplyingNotificationPreferences = true
+        let preferences = notificationPreferencesStore.load()
+        dailyReminderSettings = preferences.dailyReminderSettings
+        smartAlertSettings = preferences.smartAlertSettings
+        isApplyingNotificationPreferences = false
+    }
+
+    private func saveNotificationPreferencesIfNeeded() {
+        guard !isApplyingNotificationPreferences else { return }
+        notificationPreferencesStore.save(
+            AlertNotificationPreferences(
+                dailyReminderSettings: dailyReminderSettings,
+                smartAlertSettings: smartAlertSettings
+            )
+        )
     }
 }

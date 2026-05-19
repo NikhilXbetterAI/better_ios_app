@@ -13,6 +13,8 @@ struct RootTabView: View {
     @State private var biologyViewModel: BiologyViewModel
     @State private var activityViewModel: ActivityViewModel
     @State private var onboardingViewModel: OnboardingViewModel
+    @State private var sleepModeCoordinator: SleepModeCoordinator
+    @State private var sleepModeViewModel: SleepModeViewModel
     @State private var hasLoadedProfile = false
     @State private var hasCompletedOnboarding = false
     @State private var secondarySheet: SecondarySheet?
@@ -57,6 +59,11 @@ struct RootTabView: View {
             localRepository: environment.localRepository,
             syncCoordinator: environment.syncCoordinator
         ))
+        _sleepModeCoordinator = State(initialValue: environment.sleepModeCoordinator)
+        _sleepModeViewModel = State(initialValue: SleepModeViewModel(
+            scheduleService: environment.sleepModeScheduleService,
+            localRepository: environment.localRepository
+        ))
     }
 
     var body: some View {
@@ -90,6 +97,7 @@ struct RootTabView: View {
             NavigationStack {
                 SleepTabView(
                     viewModel: sleepViewModel,
+                    sleepModeViewModel: sleepModeViewModel,
                     onOpenProfile: { secondarySheet = .settings }
                 )
             }
@@ -153,9 +161,15 @@ struct RootTabView: View {
                 case .alerts:
                     AlertsTabView(viewModel: alertsViewModel)
                 case .settings:
-                    SettingsTabView(viewModel: settingsViewModel)
+                    SettingsTabView(viewModel: settingsViewModel, sleepModeViewModel: sleepModeViewModel)
                 }
             }
+        }
+        .fullScreenCover(item: $sleepModeCoordinator.activePresentation) { _ in
+            SleepModeView(viewModel: sleepModeViewModel)
+                .task {
+                    await sleepModeViewModel.reloadSchedule()
+                }
         }
     }
 

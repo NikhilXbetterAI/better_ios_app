@@ -15,10 +15,18 @@ struct NotificationSettingsView: View {
                 isOn: $dailyReminderSettings.isEnabled
             )
             sectionTitle("Smart Alerts")
+            toggleRow(
+                title: "Analysis Ready",
+                subtitle: "Get notified when a night has been processed.",
+                systemImage: "checkmark.circle.fill",
+                color: BetterColors.brand,
+                isOn: $smartAlertSettings.analysisReadyEnabled
+            )
+            Divider().overlay(BetterColors.border)
             toggleRow(title: "Low Sleep Score", subtitle: "Below 70", systemImage: "chart.line.downtrend.xyaxis", color: BetterColors.danger, isOn: $smartAlertSettings.lowScoreEnabled)
             toggleRow(title: "Low Deep Sleep", subtitle: "Below personal baseline", systemImage: "moon.fill", color: BetterColors.stageDeep, isOn: $smartAlertSettings.lowDeepSleepEnabled)
             toggleRow(title: "Low REM", subtitle: "Below personal baseline", systemImage: "brain.head.profile", color: BetterColors.stageREM, isOn: $smartAlertSettings.lowRemSleepEnabled)
-            toggleRow(title: "Missed Protocol", subtitle: "Quiet in-app reminder", systemImage: "pills.fill", color: BetterColors.warning, isOn: $smartAlertSettings.missedProtocolEnabled)
+            toggleRow(title: "Missed Protocol", subtitle: "Notify me when protocol logging is missed.", systemImage: "pills.fill", color: BetterColors.warning, isOn: $smartAlertSettings.missedProtocolEnabled)
         }
         .padding(BetterSpacing.large)
         .background(BetterColors.card)
@@ -58,4 +66,3 @@ struct NotificationSettingsView: View {
         }
     }
 }
-

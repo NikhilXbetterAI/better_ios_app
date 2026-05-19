@@ -25,6 +25,10 @@ struct TrendsTabView: View {
                             comparisonSummary: viewModel.comparisonSummary
                         )
 
+                        if let chronotypeResult = viewModel.chronotypeResult {
+                            ChronotypeInsightCardView(result: chronotypeResult)
+                        }
+
                         // Sleep insights (moved from Sleep dashboard)
                         InsightsSleepInsightsCard(insights: viewModel.latestSessionInsights)
 

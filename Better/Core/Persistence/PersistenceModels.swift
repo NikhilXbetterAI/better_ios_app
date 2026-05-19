@@ -13,7 +13,10 @@ nonisolated enum BetterPersistenceContainerFactory {
         StoredUserProfile.self,
         StoredSyncAnchor.self,
         StoredManualBiologyEntry.self,
-        StoredSleepContextEntry.self
+        StoredSleepContextEntry.self,
+        StoredSleepModeSettings.self,
+        StoredSleepModeSchedule.self,
+        StoredSleepModeSession.self
     ])
 
     static func makeLiveContainer() throws -> ModelContainer {
@@ -660,5 +663,99 @@ final class StoredSleepContextEntry {
 
     func toDomain() throws -> SleepContextEntry {
         try PersistenceJSON.decode(SleepContextEntry.self, from: entryData)
+    }
+}
+
+@Model
+final class StoredSleepModeSettings {
+    @Attribute(.unique) var id: UUID
+    var settingsData: Data
+    var updatedAt: Date
+
+    init(id: UUID, settingsData: Data, updatedAt: Date) {
+        self.id = id
+        self.settingsData = settingsData
+        self.updatedAt = updatedAt
+    }
+
+    convenience init(domain: SleepModeSettings) throws {
+        self.init(
+            id: domain.id,
+            settingsData: try PersistenceJSON.encode(domain),
+            updatedAt: domain.updatedAt
+        )
+    }
+
+    func toDomain() throws -> SleepModeSettings {
+        try PersistenceJSON.decode(SleepModeSettings.self, from: settingsData)
+    }
+}
+
+@Model
+final class StoredSleepModeSchedule {
+    @Attribute(.unique) var id: UUID
+    var isEnabled: Bool
+    var scheduleData: Data
+    var updatedAt: Date
+
+    init(id: UUID, isEnabled: Bool, scheduleData: Data, updatedAt: Date) {
+        self.id = id
+        self.isEnabled = isEnabled
+        self.scheduleData = scheduleData
+        self.updatedAt = updatedAt
+    }
+
+    convenience init(domain: SleepModeSchedule) throws {
+        self.init(
+            id: domain.id,
+            isEnabled: domain.isEnabled,
+            scheduleData: try PersistenceJSON.encode(domain),
+            updatedAt: domain.updatedAt
+        )
+    }
+
+    func toDomain() throws -> SleepModeSchedule {
+        try PersistenceJSON.decode(SleepModeSchedule.self, from: scheduleData)
+    }
+}
+
+@Model
+final class StoredSleepModeSession {
+    @Attribute(.unique) var id: UUID
+    var sleepDateKey: String
+    var startedAt: Date
+    var endedAt: Date?
+    var sessionData: Data
+    var updatedAt: Date
+
+    init(
+        id: UUID,
+        sleepDateKey: String,
+        startedAt: Date,
+        endedAt: Date?,
+        sessionData: Data,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.sleepDateKey = sleepDateKey
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.sessionData = sessionData
+        self.updatedAt = updatedAt
+    }
+
+    convenience init(domain: SleepModeSession) throws {
+        self.init(
+            id: domain.id,
+            sleepDateKey: domain.sleepDateKey,
+            startedAt: domain.startedAt,
+            endedAt: domain.endedAt,
+            sessionData: try PersistenceJSON.encode(domain),
+            updatedAt: domain.updatedAt
+        )
+    }
+
+    func toDomain() throws -> SleepModeSession {
+        try PersistenceJSON.decode(SleepModeSession.self, from: sessionData)
     }
 }

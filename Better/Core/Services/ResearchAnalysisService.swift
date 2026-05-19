@@ -61,6 +61,14 @@ nonisolated struct ResearchAnalysisService: Sendable {
         )
         let summaries = buildProtocolSummaries(rows: rows, protocolItems: protocolItems)
         let insight = buildInsightSummary(rows: rows, summaries: summaries, generatedAt: generatedAt)
+        let chronotypeResult = ChronotypeCalculationService().estimate(
+            sessions: sessions,
+            contextEntries: contextEntries,
+            activityLogs: statusLogs,
+            windowDays: 90,
+            endingAt: endDate,
+            calendar: calendar
+        )
 
         return ResearchExportPackage(
             generatedAt: generatedAt,
@@ -71,7 +79,8 @@ nonisolated struct ResearchAnalysisService: Sendable {
             isResearchMode: profile.isResearchMode,
             nightlyRows: rows,
             protocolSummaries: summaries,
-            insightSummary: insight
+            insightSummary: insight,
+            chronotypeResult: chronotypeResult
         )
     }
 }
@@ -111,6 +120,8 @@ nonisolated private extension ResearchAnalysisService {
             let protocolNames = nightlyAdherence.map { protocolNameByID[$0.protocolID] ?? $0.protocolID }
             let baselineTotalSleepMinutes = baseline.map { $0.totalSleepAverage / 60 }
             let durationVsBaselineMinutes = baseline.map { (session.totalSleepTime - $0.totalSleepAverage) / 60 }
+            let continuity = session.continuitySummary
+            let hasContinuity = !continuity.blocks.isEmpty
 
             return NightlyResearchRow(
                 sleepDateKey: session.sleepDateKey,
@@ -181,7 +192,16 @@ nonisolated private extension ResearchAnalysisService {
                 perceivedSleepQuality:   context?.perceivedSleepQuality?.displayName,
                 morningEnergy:           context?.morningEnergy?.displayName,
                 contextNotesPresent:     context.map { $0.hasNotes },
-                contextCompletionStatus: context?.completionStatus.rawValue
+                contextCompletionStatus: context?.completionStatus.rawValue,
+                restorativeSleepHours: hasDetailedStages ? session.restorativeSleepDuration / 3_600 : nil,
+                longestRestorativeBlockHours: hasContinuity ? continuity.longestBlockDuration / 3_600 : nil,
+                longestRestorativeBlockMinutes: hasContinuity ? continuity.longestBlockDuration / 60 : nil,
+                sleepContinuityCategory: hasContinuity ? continuity.continuityCategory.rawValue : SleepContinuityCategory.unavailable.rawValue,
+                sleepBlockCount: continuity.blocks.count,
+                meaningfulAwakeCount: continuity.meaningfulAwakeningCount,
+                sleepBlockDurationsMinutes: continuity.blocks.map { $0.sleepDuration / 60 },
+                sleepBlockStartDates: continuity.blocks.map(\.startDate),
+                sleepBlockEndDates: continuity.blocks.map(\.endDate)
             )
         }
     }

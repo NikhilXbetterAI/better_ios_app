@@ -13,6 +13,9 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     private var anchorsByTypeIdentifier: [String: Data?]
     private var manualBiologyEntriesByKind: [BiologyMetricKind: ManualBiologyEntry]
     private var contextEntriesByDateKey: [String: SleepContextEntry]
+    private var sleepModeSettings: SleepModeSettings?
+    private var sleepModeSchedule: SleepModeSchedule?
+    private var sleepModeSessionsByID: [UUID: SleepModeSession]
 
     init(
         sessions: [SleepSession] = [],
@@ -25,7 +28,10 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
         profile: UserProfile? = nil,
         anchors: [String: Data?] = [:],
         manualBiologyEntries: [ManualBiologyEntry] = [],
-        contextEntries: [SleepContextEntry] = []
+        contextEntries: [SleepContextEntry] = [],
+        sleepModeSettings: SleepModeSettings? = nil,
+        sleepModeSchedule: SleepModeSchedule? = nil,
+        sleepModeSessions: [SleepModeSession] = []
     ) {
         self.sessionsBySleepDateKey = Dictionary(sessions.map { ($0.sleepDateKey, $0) }, uniquingKeysWith: { _, new in new })
         self.summariesBySessionID = Dictionary(summaries.map { ($0.sleepSessionID, $0) }, uniquingKeysWith: { _, new in new })
@@ -38,6 +44,9 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
         self.anchorsByTypeIdentifier = anchors
         self.manualBiologyEntriesByKind = Dictionary(uniqueKeysWithValues: manualBiologyEntries.map { ($0.kind, $0) })
         self.contextEntriesByDateKey = Dictionary(uniqueKeysWithValues: contextEntries.map { ($0.sleepDateKey, $0) })
+        self.sleepModeSettings = sleepModeSettings
+        self.sleepModeSchedule = sleepModeSchedule
+        self.sleepModeSessionsByID = Dictionary(uniqueKeysWithValues: sleepModeSessions.map { ($0.id, $0) })
     }
 
     func saveSessions(_ sessions: [SleepSession]) async throws {
@@ -210,6 +219,40 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
         manualBiologyEntriesByKind = manualBiologyEntriesByKind.filter { $0.value.id != id }
     }
 
+    // MARK: - Sleep Mode
+
+    func saveSleepModeSettings(_ settings: SleepModeSettings) async throws {
+        sleepModeSettings = settings
+    }
+
+    func fetchSleepModeSettings() async throws -> SleepModeSettings? {
+        sleepModeSettings
+    }
+
+    func saveSleepModeSchedule(_ schedule: SleepModeSchedule) async throws {
+        sleepModeSchedule = schedule
+    }
+
+    func fetchSleepModeSchedule() async throws -> SleepModeSchedule? {
+        sleepModeSchedule
+    }
+
+    func saveSleepModeSession(_ session: SleepModeSession) async throws {
+        sleepModeSessionsByID[session.id] = session
+    }
+
+    func fetchSleepModeSessions(from: Date, to: Date) async throws -> [SleepModeSession] {
+        sleepModeSessionsByID.values
+            .filter { ($0.endedAt ?? $0.startedAt) > from && $0.startedAt < to }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
+
+    func deleteAllSleepModeData() async throws {
+        sleepModeSettings = nil
+        sleepModeSchedule = nil
+        sleepModeSessionsByID.removeAll()
+    }
+
     // MARK: - Context entries
 
     func saveContextEntry(_ entry: SleepContextEntry) async throws {
@@ -251,6 +294,7 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
         manualBiologyEntriesByKind.removeAll()
         contextEntriesByDateKey.removeAll()
         anchorsByTypeIdentifier.removeAll()
+        sleepModeSessionsByID.removeAll()
         if var current = profile {
             current.hasCompletedOnboarding = false
             current.sleepAssessmentAnswers = []
@@ -265,6 +309,7 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
     func fetchDataInventory() async throws -> LocalDataInventory {
         let sortedSessions = sessionsBySleepDateKey.values.sorted { $0.startDate < $1.startDate }
         let lastContextDate = contextEntriesByDateKey.values.max { $0.updatedAt < $1.updatedAt }?.updatedAt
+        let lastSleepModeSessionDate = sleepModeSessionsByID.values.max { $0.startedAt < $1.startedAt }?.startedAt
         return LocalDataInventory(
             sleepSessionCount: sessionsBySleepDateKey.count,
             baselineCount: baselines.count,
@@ -272,8 +317,12 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
             protocolAdherenceCount: adherenceByKey.count,
             activityLogCount: activityStatusLogsByDateKey.count,
             manualBiologyEntryCount: manualBiologyEntriesByKind.count,
+            sleepModeSettingsCount: sleepModeSettings == nil ? 0 : 1,
+            sleepModeScheduleCount: sleepModeSchedule == nil ? 0 : 1,
+            sleepModeSessionCount: sleepModeSessionsByID.count,
             contextEntryCount: contextEntriesByDateKey.count,
             lastContextEntryDate: lastContextDate,
+            lastSleepModeSessionDate: lastSleepModeSessionDate,
             oldestSessionDate: sortedSessions.first?.startDate,
             newestSessionDate: sortedSessions.last?.startDate
         )

@@ -30,6 +30,7 @@ nonisolated struct AlertGenerationSettings: Sendable, Hashable {
         protocolMissCutoffHour: 22,
         localNotificationsEnabled: false,
         notificationEnabledKinds: [
+            .analysisReady,
             .sleepDurationBelowBaseline,
             .sleepDurationAboveBaseline,
             .sleepEfficiencyDrop,
@@ -50,6 +51,8 @@ nonisolated enum LocalNotificationAuthorizationState: Sendable, Hashable {
 nonisolated protocol LocalNotificationScheduling: Sendable {
     func authorizationState() async -> LocalNotificationAuthorizationState
     func scheduleNotification(identifier: String, title: String, body: String) async throws
+    func isAlreadyDelivered(identifier: String) async -> Bool
+    func cancelPending(identifier: String) async
 }
 
 actor UserNotificationScheduler: LocalNotificationScheduling {
@@ -81,6 +84,15 @@ actor UserNotificationScheduler: LocalNotificationScheduling {
 
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         try await center.add(request)
+    }
+
+    func isAlreadyDelivered(identifier: String) async -> Bool {
+        let delivered = await center.deliveredNotifications()
+        return delivered.contains { $0.request.identifier == identifier }
+    }
+
+    func cancelPending(identifier: String) async {
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
     }
 }
 
@@ -138,7 +150,8 @@ actor AlertGenerationService {
         try await scheduleNotificationIfAllowed(
             for: alerts,
             decisions: notificationDecisions,
-            settings: settings
+            settings: settings,
+            latestSession: latestSession
         )
         return alerts
     }
@@ -461,39 +474,71 @@ private extension AlertGenerationService {
     func scheduleNotificationIfAllowed(
         for alerts: [SleepAlert],
         decisions: [NotificationDecision]? = nil,
-        settings: AlertGenerationSettings
+        settings: AlertGenerationSettings,
+        latestSession: SleepSession? = nil
     ) async throws {
         guard settings.localNotificationsEnabled, let notificationScheduler else { return }
+        guard await notificationScheduler.authorizationState() == .authorized else { return }
 
+        // Build a stable daily identifier so iOS never re-fires the same day's notification.
+        let dateKey = latestSession?.sleepDateKey ?? SleepDateKey.calendarDateKey(for: Date())
+        let dailyIdentifier = "better.morningDigest.\(dateKey)"
+
+        // One notification per day — skip if already delivered.
+        if await notificationScheduler.isAlreadyDelivered(identifier: dailyIdentifier) { return }
+
+        // Cancel any stale pending version (e.g. from an earlier sync that hasn't fired yet)
+        // so the updated content replaces it rather than stacking.
+        await notificationScheduler.cancelPending(identifier: dailyIdentifier)
+
+        // Prefer a smart decision notification when one is available.
         if let decision = decisions?
             .filter(\.shouldNotify)
             .first(where: { settings.notificationEnabledKinds.contains($0.notificationType.alertKind) }) {
-            guard await notificationScheduler.authorizationState() == .authorized else { return }
             try await notificationScheduler.scheduleNotification(
-                identifier: "notification|\(decision.notificationType.rawValue)|\(Int(decision.createdAt.timeIntervalSince1970))",
+                identifier: dailyIdentifier,
                 title: decision.title,
                 body: decision.body
             )
             return
         }
 
+        // Fall back to a rich morning digest using the actual sleep score.
         let notifiableAlerts = alerts.filter { settings.notificationEnabledKinds.contains($0.kind) }
         guard !notifiableAlerts.isEmpty else { return }
-        guard await notificationScheduler.authorizationState() == .authorized else { return }
 
-        if notifiableAlerts.count > 1, let analysisAlert = alerts.first(where: { $0.kind == .analysisReady }) {
-            try await notificationScheduler.scheduleNotification(
-                identifier: "notification|\(analysisAlert.id.uuidString)",
-                title: "Sleep analysis ready",
-                body: "\(notifiableAlerts.count) sleep insights are ready to review."
-            )
-        } else if let alert = notifiableAlerts.first {
-            try await notificationScheduler.scheduleNotification(
-                identifier: "notification|\(alert.id.uuidString)",
-                title: alert.title,
-                body: alert.body
-            )
+        let (title, body) = morningDigestContent(session: latestSession, alertCount: notifiableAlerts.count)
+        try await notificationScheduler.scheduleNotification(
+            identifier: dailyIdentifier,
+            title: title,
+            body: body
+        )
+    }
+
+    func morningDigestContent(session: SleepSession?, alertCount: Int) -> (title: String, body: String) {
+        guard let session else {
+            return ("Sleep analysis ready", "Open Better to see your sleep insights.")
         }
+
+        let score = Int(session.qualityScore.overall.rounded())
+        let durationStr = formatDuration(session.totalSleepTime)
+
+        let scoreLabel: String
+        switch score {
+        case 85...: scoreLabel = "Great night"
+        case 70..<85: scoreLabel = "Good night"
+        case 55..<70: scoreLabel = "Fair night"
+        default: scoreLabel = "Rough night"
+        }
+
+        let title = "\(scoreLabel) — score \(score)"
+        let body: String
+        if alertCount > 1 {
+            body = "You slept \(durationStr). \(alertCount) insights are ready."
+        } else {
+            body = "You slept \(durationStr). Tap to see your analysis."
+        }
+        return (title, body)
     }
 
     func formatDuration(_ duration: TimeInterval) -> String {

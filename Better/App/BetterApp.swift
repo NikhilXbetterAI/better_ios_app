@@ -27,6 +27,10 @@ struct BetterApp: App {
         #endif
 
         environment.backgroundTaskService.registerLaunchHandlers()
+        let sleepModeNotificationService = environment.sleepModeNotificationService
+        Task {
+            await sleepModeNotificationService.registerCategories()
+        }
     }
 
     var body: some Scene {
@@ -37,13 +41,18 @@ struct BetterApp: App {
                     // Run storage migration before starting observers so that
                     // all write paths use the new encrypted format from the start.
                     await environment.migrationService.migrateIfNeeded()
+                    await environment.sleepModeScheduleService.loadSchedule()
+                    await environment.sleepModeScheduleService.rescheduleRemindersIfNeeded()
                     await environment.backgroundTaskService.startHealthKitObservers()
+                    environment.sleepModeScheduleService.evaluateForegroundActivation()
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     guard newPhase == .active else { return }
                     Task { @MainActor in
                         await environment.backgroundTaskService.startHealthKitObservers()
                         environment.backgroundTaskService.scheduleNextSleepRefresh()
+                        await environment.sleepModeScheduleService.loadSchedule()
+                        environment.sleepModeScheduleService.evaluateForegroundActivation()
                     }
                 }
         }

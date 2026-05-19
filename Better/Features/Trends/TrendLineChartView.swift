@@ -160,6 +160,9 @@ struct TrendLineChartView: View {
             if metric == .totalSleep {
                 tooltipRow("In bed", formatDuration(point.details.timeInBed))
                 tooltipRow("Efficiency", String(format: "%.0f%%", point.details.efficiency * 100))
+            } else if metric == .longestRestorativeBlock {
+                tooltipRow("Continuity", "Longest stretch")
+                tooltipRow("Total sleep", formatDuration(point.details.totalSleep))
             } else if metric == .score {
                 tooltipRow("Duration", "\(Int(point.details.score.durationScore))")
                 tooltipRow("Efficiency", "\(Int(point.details.score.efficiencyScore))")
@@ -200,6 +203,8 @@ struct TrendLineChartView: View {
         switch metric {
         case .totalSleep:
             return formatDuration(point.details.totalSleep)
+        case .longestRestorativeBlock:
+            return formatDuration(point.value * 3_600)
         case .score:
             return "\(Int(point.value.rounded())) / 100"
         case .deepSleep, .remSleep:

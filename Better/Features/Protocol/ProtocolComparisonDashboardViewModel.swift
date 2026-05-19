@@ -85,52 +85,59 @@ final class ProtocolComparisonDashboardViewModel {
     func loadData(now: Date = Date(), preferDefaultWindow: Bool = false) async {
         isLoading = true
         errorMessage = nil
-        
+
         let comparisonService = self.comparisonService
         let insightService = self.insightService
-        let localRepository = self.localRepository
         let processor = self.processor
         let calendar = self.calendar
         let currentSelectedWindow = self.selectedWindow
 
         do {
-            let state = try await Task.detached(priority: .userInitiated) {
-                let profile = try await localRepository.fetchProfile()
-                let sixtyDaysAgo = calendar.date(byAdding: .day, value: -60, to: now)
-                    ?? now.addingTimeInterval(-60 * 86_400)
-                let startDate = max(profile.createdAt, sixtyDaysAgo)
-                let sessions = try await localRepository.fetchCachedSessions(from: startDate, to: now)
-                let adherence = try await localRepository.fetchAdherence(from: startDate, to: now)
+            // Repo fetches must stay on MainActor (LocalDataRepository is MainActor-bound).
+            let profile = try await localRepository.fetchProfile()
+            let sixtyDaysAgo = calendar.date(byAdding: .day, value: -60, to: now)
+                ?? now.addingTimeInterval(-60 * 86_400)
+            let startDate = max(profile.createdAt, sixtyDaysAgo)
+
+            async let sessionsTask = localRepository.fetchCachedSessions(from: startDate, to: now)
+            async let adherenceTask = localRepository.fetchAdherence(from: startDate, to: now)
+            let sessions = try await sessionsTask
+            let adherence = try await adherenceTask
+
+            // Pure compute hops off main onto a detached task — services + result types are Sendable.
+            let state = await Task.detached(priority: .userInitiated) {
                 let baselineSelection = BaselineEngine(processor: processor, calendar: calendar).selectBaseline(
                     from: sessions,
                     generatedAt: now
                 )
 
-                var windowToUse = currentSelectedWindow
-                if preferDefaultWindow {
-                    let thirtyDayResult = comparisonService.compare(
-                        sessions: sessions,
-                        adherence: adherence,
-                        window: .last30Days,
-                        endingAt: now
-                    )
-                    windowToUse = thirtyDayResult.confidence == .unavailable ? .all : .last30Days
-                }
-
-                let result = comparisonService.compare(
+                let primaryResult = comparisonService.compare(
                     sessions: sessions,
                     adherence: adherence,
-                    window: windowToUse,
+                    window: preferDefaultWindow ? .last30Days : currentSelectedWindow,
                     endingAt: now
                 )
-                
+
+                // Only run a second compare if the 30-day default came back empty AND we asked for default.
+                let result: ProtocolComparisonResult
+                if preferDefaultWindow, primaryResult.confidence == .unavailable {
+                    result = comparisonService.compare(
+                        sessions: sessions,
+                        adherence: adherence,
+                        window: .all,
+                        endingAt: now
+                    )
+                } else {
+                    result = primaryResult
+                }
+
                 return Self.makeState(
                     result: result,
                     insights: insightService.insights(from: result),
                     baselineSelection: baselineSelection
                 )
             }.value
-            
+
             self.state = state
             self.selectedWindow = state.selectedWindow
         } catch {

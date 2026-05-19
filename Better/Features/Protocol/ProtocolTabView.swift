@@ -64,7 +64,7 @@ struct ProtocolTabView: View {
             }
         }
         .refreshable {
-            await viewModel.onAppear()
+            await viewModel.onAppear(force: true)
             await comparisonViewModel.loadData(preferDefaultWindow: false)
         }
     }
@@ -322,7 +322,7 @@ struct ProtocolTabView: View {
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                    LazyHStack(spacing: 6) {
                         ForEach(Array(timelineDays.enumerated()), id: \.offset) { _, date in
                             TimelineDayDot(
                                 date: date,
@@ -384,7 +384,7 @@ struct ProtocolTabView: View {
         if dayStart < protocolStart { return .beforeProtocol }
 
         let key = ProtocolViewModel.dateKey(for: date)
-        let hasTaken = viewModel.adherenceHistory.contains { $0.dateKey == key && $0.taken }
+        let hasTaken = viewModel.takenDateKeys.contains(key)
 
         if calendar.isDateInToday(date) {
             return hasTaken ? .taken : .today
@@ -1048,16 +1048,24 @@ struct TimelineDayDot: View {
     let status: TimelineDayStatus
     let isToday: Bool
 
-    private var dayNumber: String {
+    private static let dayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "d"
-        return f.string(from: date)
+        return f
+    }()
+
+    private static let weekdayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        return f
+    }()
+
+    private var dayNumber: String {
+        Self.dayFormatter.string(from: date)
     }
 
     private var weekday: String {
-        let f = DateFormatter()
-        f.dateFormat = "EEE"
-        return String(f.string(from: date).prefix(1))
+        String(Self.weekdayFormatter.string(from: date).prefix(1))
     }
 
     private var dotColor: Color {

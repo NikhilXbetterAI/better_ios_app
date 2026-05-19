@@ -155,6 +155,82 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertEqual(emptyContextEntryCount, 0)
     }
 
+    func testLocalRepositoryPersistsSleepModeSettingsScheduleAndSessions() async throws {
+        let repository = try await makeRepository()
+        let settings = SleepModeSettings(
+            breathingRounds: 5,
+            blackoutAfterBreathing: true,
+            dimScreenDuringBlackout: false,
+            playAudioDuringBlackout: true,
+            createdAt: Self.date("2026-05-04T10:00:00Z"),
+            updatedAt: Self.date("2026-05-04T10:00:00Z")
+        )
+        let schedule = SleepModeSchedule(
+            isEnabled: true,
+            startHour: 22,
+            startMinute: 15,
+            endHour: 6,
+            endMinute: 30,
+            activeWeekdays: [2, 3, 4, 5, 6],
+            reminderLeadMinutes: 20,
+            autoEnterWhenForeground: true,
+            useFocusChecklist: true,
+            useScreenTimeShields: false,
+            createdAt: Self.date("2026-05-04T10:00:00Z"),
+            updatedAt: Self.date("2026-05-04T10:00:00Z")
+        )
+        let session = SleepModeSession(
+            startedAt: Self.date("2026-05-04T22:15:00Z"),
+            endedAt: Self.date("2026-05-05T06:30:00Z"),
+            startReason: .scheduledForeground,
+            breathingRoundsCompleted: 5,
+            blackoutStartedAt: Self.date("2026-05-04T22:20:00Z"),
+            blackoutEndedAt: Self.date("2026-05-05T06:25:00Z"),
+            screenTimeShieldsEnabled: false,
+            createdAt: Self.date("2026-05-04T22:15:00Z"),
+            updatedAt: Self.date("2026-05-05T06:30:00Z"),
+            calendar: Self.utcCalendar
+        )
+
+        try await repository.saveSleepModeSettings(settings)
+        try await repository.saveSleepModeSchedule(schedule)
+        try await repository.saveSleepModeSession(session)
+
+        let fetchedSettings = try await repository.fetchSleepModeSettings()
+        let fetchedSchedule = try await repository.fetchSleepModeSchedule()
+        let fetchedSessions = try await repository.fetchSleepModeSessions(
+            from: Self.date("2026-05-04T00:00:00Z"),
+            to: Self.date("2026-05-06T00:00:00Z")
+        )
+        let inventory = try await repository.fetchDataInventory()
+
+        XCTAssertEqual(fetchedSettings, settings)
+        XCTAssertEqual(fetchedSchedule, schedule)
+        XCTAssertEqual(fetchedSessions, [session])
+        XCTAssertEqual(inventory.sleepModeSettingsCount, 1)
+        XCTAssertEqual(inventory.sleepModeScheduleCount, 1)
+        XCTAssertEqual(inventory.sleepModeSessionCount, 1)
+        XCTAssertEqual(inventory.lastSleepModeSessionDate, session.startedAt)
+    }
+
+    func testLocalRepositoryDeletesSleepModeData() async throws {
+        let repository = try await makeRepository()
+        try await repository.saveSleepModeSettings(SleepModeSettings())
+        try await repository.saveSleepModeSchedule(SleepModeSchedule(isEnabled: true))
+        try await repository.saveSleepModeSession(
+            SleepModeSession(startedAt: Self.date("2026-05-04T22:00:00Z"), calendar: Self.utcCalendar)
+        )
+
+        try await repository.deleteAllSleepModeData()
+
+        let inventory = try await repository.fetchDataInventory()
+        let fetchedSettings = try await repository.fetchSleepModeSettings()
+        let fetchedSchedule = try await repository.fetchSleepModeSchedule()
+        XCTAssertNil(fetchedSettings)
+        XCTAssertNil(fetchedSchedule)
+        XCTAssertEqual(inventory.sleepModeSessionCount, 0)
+    }
+
     func testLocalRepositoryPrunesOldData() async throws {
         let repository = try await makeRepository()
         let now = Date()
@@ -450,6 +526,37 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertEqual(viewModel.comparisonSummary?.percentChange ?? 0, 1.0, accuracy: 0.0001)
     }
 
+    @MainActor
+    func testTrendsLoadsChronotypeFromWearableSessions() async throws {
+        let sessions = Self.chronotypeSessions()
+        let repository = MockLocalDataRepository(sessions: sessions)
+        let viewModel = TrendsViewModel(localRepository: repository, calendar: Self.utcCalendar)
+
+        await viewModel.loadData(now: Self.date("2026-05-01T00:00:00Z"))
+
+        XCTAssertEqual(viewModel.chronotypeResult?.status, .estimated)
+        XCTAssertEqual(viewModel.chronotypeResult?.validNightCount, 14)
+        XCTAssertEqual(viewModel.chronotypeResult?.workdayNightCount, 10)
+        XCTAssertEqual(viewModel.chronotypeResult?.freeDayNightCount, 4)
+        XCTAssertEqual(viewModel.chronotypeResult?.estimate?.bucket, .intermediate)
+    }
+
+    @MainActor
+    func testTrendsChronotypeShowsInsufficientDataWhenRequirementsAreMissing() async throws {
+        let sessions = [
+            Self.session(key: "2026-04-06", start: Self.date("2026-04-06T00:30:00Z"), end: Self.date("2026-04-06T07:30:00Z")),
+            Self.session(key: "2026-04-07", start: Self.date("2026-04-07T00:30:00Z"), end: Self.date("2026-04-07T07:30:00Z"))
+        ]
+        let repository = MockLocalDataRepository(sessions: sessions)
+        let viewModel = TrendsViewModel(localRepository: repository, calendar: Self.utcCalendar)
+
+        await viewModel.loadData(now: Self.date("2026-05-01T00:00:00Z"))
+
+        XCTAssertEqual(viewModel.chronotypeResult?.status, .insufficientData)
+        XCTAssertTrue(viewModel.chronotypeResult?.missingRequirements.contains(.totalNights) == true)
+        XCTAssertTrue(viewModel.chronotypeResult?.missingRequirements.contains(.freeDayNights) == true)
+    }
+
     func testActivityStatusLogPersistsAndOverwritesSameDate() async throws {
         let repository = try await makeRepository()
         let first = ActivityStatusLog(
@@ -640,6 +747,25 @@ private extension LocalDataRepositoryTests {
             ),
             biometrics: biometrics
         )
+    }
+
+    static func chronotypeSessions() -> [SleepSession] {
+        [
+            session(key: "2026-04-05", start: date("2026-04-05T00:30:00Z"), end: date("2026-04-05T07:30:00Z")),
+            session(key: "2026-04-06", start: date("2026-04-06T00:30:00Z"), end: date("2026-04-06T07:30:00Z")),
+            session(key: "2026-04-07", start: date("2026-04-07T00:30:00Z"), end: date("2026-04-07T07:30:00Z")),
+            session(key: "2026-04-08", start: date("2026-04-08T00:30:00Z"), end: date("2026-04-08T07:30:00Z")),
+            session(key: "2026-04-09", start: date("2026-04-09T00:30:00Z"), end: date("2026-04-09T07:30:00Z")),
+            session(key: "2026-04-12", start: date("2026-04-12T00:30:00Z"), end: date("2026-04-12T07:30:00Z")),
+            session(key: "2026-04-13", start: date("2026-04-13T00:30:00Z"), end: date("2026-04-13T07:30:00Z")),
+            session(key: "2026-04-14", start: date("2026-04-14T00:30:00Z"), end: date("2026-04-14T07:30:00Z")),
+            session(key: "2026-04-15", start: date("2026-04-15T00:30:00Z"), end: date("2026-04-15T07:30:00Z")),
+            session(key: "2026-04-16", start: date("2026-04-16T00:30:00Z"), end: date("2026-04-16T07:30:00Z")),
+            session(key: "2026-04-10", start: date("2026-04-10T01:00:00Z"), end: date("2026-04-10T09:00:00Z")),
+            session(key: "2026-04-11", start: date("2026-04-11T01:00:00Z"), end: date("2026-04-11T09:00:00Z")),
+            session(key: "2026-04-17", start: date("2026-04-17T01:00:00Z"), end: date("2026-04-17T09:00:00Z")),
+            session(key: "2026-04-18", start: date("2026-04-18T01:00:00Z"), end: date("2026-04-18T09:00:00Z"))
+        ]
     }
 
     static func sample(_ value: HKCategoryValueSleepAnalysis, start: String, end: String) -> HKCategorySample {

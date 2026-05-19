@@ -163,6 +163,17 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
     var contextNotesPresent:     Bool?   // true/false; nil = no entry
     var contextCompletionStatus: String? // notFilled / partial / complete / nil
 
+    // MARK: - Sleep continuity fields (schema v2 — appended for backward compatibility)
+    var restorativeSleepHours: Double?
+    var longestRestorativeBlockHours: Double?
+    var longestRestorativeBlockMinutes: Double?
+    var sleepContinuityCategory: String?
+    var sleepBlockCount: Int?
+    var meaningfulAwakeCount: Int?
+    var sleepBlockDurationsMinutes: [Double]?
+    var sleepBlockStartDates: [Date]?
+    var sleepBlockEndDates: [Date]?
+
     init(
         sleepDateKey: String,
         sleepStart: Date,
@@ -230,7 +241,16 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         perceivedSleepQuality:   String? = nil,
         morningEnergy:           String? = nil,
         contextNotesPresent:     Bool? = nil,
-        contextCompletionStatus: String? = nil
+        contextCompletionStatus: String? = nil,
+        restorativeSleepHours: Double? = nil,
+        longestRestorativeBlockHours: Double? = nil,
+        longestRestorativeBlockMinutes: Double? = nil,
+        sleepContinuityCategory: String? = nil,
+        sleepBlockCount: Int? = nil,
+        meaningfulAwakeCount: Int? = nil,
+        sleepBlockDurationsMinutes: [Double]? = nil,
+        sleepBlockStartDates: [Date]? = nil,
+        sleepBlockEndDates: [Date]? = nil
     ) {
         self.sleepDateKey = sleepDateKey
         self.sleepStart = sleepStart
@@ -300,6 +320,15 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         self.morningEnergy           = morningEnergy
         self.contextNotesPresent     = contextNotesPresent
         self.contextCompletionStatus = contextCompletionStatus
+        self.restorativeSleepHours = restorativeSleepHours
+        self.longestRestorativeBlockHours = longestRestorativeBlockHours
+        self.longestRestorativeBlockMinutes = longestRestorativeBlockMinutes
+        self.sleepContinuityCategory = sleepContinuityCategory
+        self.sleepBlockCount = sleepBlockCount
+        self.meaningfulAwakeCount = meaningfulAwakeCount
+        self.sleepBlockDurationsMinutes = sleepBlockDurationsMinutes
+        self.sleepBlockStartDates = sleepBlockStartDates
+        self.sleepBlockEndDates = sleepBlockEndDates
     }
 }
 
@@ -335,7 +364,7 @@ nonisolated struct ResearchInsightSummary: Codable, Hashable, Sendable {
 }
 
 nonisolated struct ResearchExportPackage: Codable, Hashable, Sendable {
-    static let schemaVersion = "1"
+    static let schemaVersion = "2"
 
     var generatedAt: Date
     var rangeStart: Date
@@ -346,4 +375,5 @@ nonisolated struct ResearchExportPackage: Codable, Hashable, Sendable {
     var nightlyRows: [NightlyResearchRow]
     var protocolSummaries: [ProtocolEffectSummary]
     var insightSummary: ResearchInsightSummary
+    var chronotypeResult: ChronotypeCalculationResult? = nil
 }

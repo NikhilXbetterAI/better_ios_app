@@ -133,14 +133,23 @@ final class SleepDashboardViewModel {
     }
 
     func loadSelectedDate() async {
+        let loadKey = selectedSleepDateKey
         do {
-            selectedSession = try await localRepository.fetchSession(forSleepDateKey: selectedSleepDateKey)
+            let loadedSession = try await localRepository.fetchSession(forSleepDateKey: loadKey)
             let profile = try await localRepository.fetchProfile()
+            let loadedBaseline = try await baseline(asOfSleepDateKey: loadKey, windowDays: profile.baselineWindowDays)
+            let loadedRecentSessions = try await loadRecentSessions(endingAt: loadKey, selectedSession: loadedSession)
+            guard selectedSleepDateKey == loadKey else { return }
+
+            selectedSession = loadedSession
             sleepGoalHours = profile.sleepGoalHours
             displayName = profile.displayName
-            selectedBaseline = try await baseline(asOfSleepDateKey: selectedSleepDateKey, windowDays: profile.baselineWindowDays)
-            recentSessions = try await loadRecentSessions(endingAt: selectedSleepDateKey, selectedSession: selectedSession)
-            sleepInsights = try await buildSleepInsights()
+            selectedBaseline = loadedBaseline
+            recentSessions = loadedRecentSessions
+            let loadedSleepInsights = try await buildSleepInsights()
+            guard selectedSleepDateKey == loadKey else { return }
+
+            sleepInsights = loadedSleepInsights
             dataQuality = selectedSession?.dataQuality ?? .noData
             authorizationState = syncCoordinator.authorizationState
             lastSyncedAt = syncCoordinator.lastSyncedAt

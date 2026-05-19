@@ -152,7 +152,7 @@ The same `sortOrder` property almost certainly exists in `ProtocolComparisonServ
 
 ## 3. Info.plist — Wrong or Unnecessary Entries
 
-### PLIST-1 · `UIBackgroundModes` has `fetch` but is missing `healthkit`
+### PLIST-1 · Keep `UIBackgroundModes` limited to valid iOS values
 
 **File:** `Better/Info.plist:44–47`
 
@@ -163,9 +163,9 @@ The same `sortOrder` property almost certainly exists in `ProtocolComparisonServ
 </array>
 ```
 
-`fetch` is for `BGAppRefreshTask`. The app also calls `enableBackgroundDelivery(for:frequency:)` on HealthKit, which requires the `healthkit` background mode to wake the app when new samples arrive. Without it, background delivery callbacks will be silently dropped on-device (not in simulator).
+`fetch` is for `BGAppRefreshTask`. Do not add `healthkit` here: it is not a valid iOS `UIBackgroundModes` value and causes App Store validation to fail. HealthKit observer delivery belongs to the `com.apple.developer.healthkit.background-delivery` entitlement in `Better.entitlements`.
 
-**Action:** Add `healthkit` to the array. (Also documented in `SECURITY_ANALYSIS.md` as BLOCKER-3.)
+**Action:** Keep `fetch`, keep `healthkit` out of this array, and rely on `AppleHealthReviewComplianceTests` to prevent regression.
 
 ---
 

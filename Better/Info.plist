@@ -30,6 +30,8 @@
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Better reads sleep, heart rate, HRV, blood oxygen, respiratory rate, body composition (weight, body fat, temperature), fitness (VO2 Max), and daily activity (steps, calories, exercise, stand hours) from Apple Health to power sleep insights and research tracking. All data is processed and stored locally on your device. Nothing is uploaded to any server.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Better does not save data to Apple Health. Health write access is not requested by this version of the app; all sleep and biomarker insights are stored locally on your device.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -42,7 +44,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
-		<string>healthkit</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

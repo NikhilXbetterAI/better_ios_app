@@ -46,32 +46,30 @@ This path typically qualifies for self-classification under EAR, requires no ERN
 
 ---
 
-### BLOCKER-2 · `NSHealthUpdateUsageDescription` claims HealthKit writes — none are implemented
+### RESOLVED · Health update purpose string must stay present while authorization remains read-only
 
-**File:** `Better/Info.plist:33–34`
+**File:** `Better/Info.plist`
 
 ```xml
 <key>NSHealthUpdateUsageDescription</key>
-<string>Better asks before saving any sleep or wellness entries you choose to add to Apple Health.</string>
+<string>Better does not save data to Apple Health. Health write access is not requested by this version of the app; all sleep and biomarker insights are stored locally on your device.</string>
 ```
 
-**File:** `Better/Core/Repositories/HealthKitRepository.swift:41`
+**File:** `Better/Core/Repositories/HealthKitRepository.swift`
 
 ```swift
 healthStore.requestAuthorization(toShare: [], read: readTypes)
 ```
 
-The write authorization request passes an **empty set** for `toShare`. The app never requests HealthKit write permissions, yet the usage description promises users it will. Apple's review team checks that usage descriptions accurately describe actual system usage. A mismatch here is grounds for rejection under the Privacy guideline (5.1.1).
+The app remains read-only at runtime, but App Store validation requires `NSHealthUpdateUsageDescription` when the HealthKit capability is present. Keep the string explicit that Better does not save data to Apple Health unless write support is intentionally implemented later.
 
-**Fix (choose one):**
-- **Option A (recommended):** Remove `NSHealthUpdateUsageDescription` entirely from Info.plist if no writes are planned for launch.
-- **Option B:** If manual health entry writing to HealthKit is planned, add the write types to `toShare:` in `requestAuthorization()` and update the string to list the exact types that will be written.
+**Guardrail:** `BetterTests/AppleHealthReviewComplianceTests.swift` asserts the purpose string exists and HealthKit authorization still uses `toShare: []`.
 
 ---
 
-### BLOCKER-3 · HealthKit background delivery needs `healthkit` in `UIBackgroundModes`
+### RESOLVED · Do not add `healthkit` to `UIBackgroundModes`
 
-**File:** `Better/Info.plist:44–47`
+**File:** `Better/Info.plist`
 
 ```xml
 <key>UIBackgroundModes</key>
@@ -80,23 +78,15 @@ The write authorization request passes an **empty set** for `toShare`. The app n
 </array>
 ```
 
-**File:** `Better/Core/Repositories/HealthKitRepository.swift:177`
+**File:** `Better/Core/Repositories/HealthKitRepository.swift`
 
 ```swift
 healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { _, _ in }
 ```
 
-The app calls `enableBackgroundDelivery` with `.immediate` frequency. Apple's HealthKit documentation requires that apps using background delivery declare the `healthkit` background mode in `UIBackgroundModes`. The `com.apple.developer.healthkit.background-delivery` entitlement (which you have) controls the capability, but `UIBackgroundModes` controls whether the OS will wake the process for that delivery. Without `healthkit` in the array, background delivery wakeups may silently fail on-device even though they appear to work in the simulator.
+`healthkit` is not a valid iOS `UIBackgroundModes` value and causes App Store validation to fail. Keep `fetch` for `BGAppRefreshTask`. HealthKit observer delivery is controlled by the `com.apple.developer.healthkit.background-delivery` entitlement in `Better.entitlements`.
 
-**Fix:** Add `healthkit` to `UIBackgroundModes`:
-
-```xml
-<key>UIBackgroundModes</key>
-<array>
-    <string>fetch</string>
-    <string>healthkit</string>
-</array>
-```
+**Guardrail:** `BetterTests/AppleHealthReviewComplianceTests.swift` asserts `fetch` is present and `healthkit` is absent from `UIBackgroundModes`.
 
 ---
 

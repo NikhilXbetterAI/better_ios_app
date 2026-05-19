@@ -63,6 +63,7 @@ final class ProtocolViewModel {
 
     var todayContextEntry: SleepContextEntry? = nil
     var chartPoints: [ProtocolChartPoint] = []
+    var takenDateKeys: Set<String> = []
     var isExporting = false
     var exportURL: URL?
     var exportError: String?
@@ -86,13 +87,115 @@ final class ProtocolViewModel {
         protocolStartDate = UserDefaults.standard.object(forKey: Keys.protocolStartDate) as? Date
     }
 
-    func onAppear() async {
-        await loadTodayAdherence()
-        await loadTodayContext()
-        await updateChartPoints()
-        if protocolStartDate != nil {
-            await updateBeforeAfterSummary()
+    private var lastLoadAt: Date?
+    private static let refreshDebounceInterval: TimeInterval = 15
+
+    func onAppear(force: Bool = false) async {
+        if !force, let last = lastLoadAt, Date().timeIntervalSince(last) < Self.refreshDebounceInterval {
+            return
         }
+        await loadAll()
+        lastLoadAt = Date()
+    }
+
+    /// Single batched load: one fetch per data type, all derived state computed off-main.
+    private func loadAll() async {
+        isLoading = true
+        errorMessage = nil
+
+        let now = Date()
+        let calendar = Calendar.current
+        let lookbackStart = calendar.date(byAdding: .day, value: -90, to: now)
+            ?? now.addingTimeInterval(-90 * 86_400)
+        let todayKey = Self.dateKey(for: now)
+        let startDate = protocolStartDate
+
+        do {
+            async let sessionsTask = localRepository.fetchCachedSessions(from: lookbackStart, to: now)
+            async let adherenceTask = localRepository.fetchAdherence(from: lookbackStart, to: now)
+            async let contextTask: SleepContextEntry? = try? localRepository.fetchContextEntry(forSleepDateKey: todayKey)
+
+            let sessions = try await sessionsTask
+            let adherence = try await adherenceTask
+            let contextEntry = await contextTask
+
+            let derived = await Self.derive(
+                sessions: sessions,
+                adherence: adherence,
+                todayKey: todayKey,
+                protocolStartDate: startDate
+            )
+
+            self.adherenceHistory = adherence
+            self.todayAdherence = derived.todayAdherence
+            self.adherenceStreak = derived.streak
+            self.takenDateKeys = derived.takenDateKeys
+            self.chartPoints = derived.chartPoints
+            self.beforeProtocolSummary = derived.beforeSummary
+            self.afterProtocolSummary = derived.afterSummary
+            self.todayContextEntry = contextEntry
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+
+    /// Derive all view state off the MainActor on `Sendable` inputs.
+    private nonisolated static func derive(
+        sessions: [SleepSession],
+        adherence: [ProtocolAdherence],
+        todayKey: String,
+        protocolStartDate: Date?
+    ) async -> DerivedState {
+        let todayAdherence = adherence.filter { $0.dateKey == todayKey }
+        let takenKeys = Set(adherence.filter(\.taken).map(\.dateKey))
+        let streak = Self.computeStreak(takenKeys: takenKeys)
+
+        let adherenceByDate = Dictionary(grouping: adherence, by: \.dateKey)
+        let chartPoints: [ProtocolChartPoint] = sessions
+            .filter { BaselineEngine.isValidNight($0) }
+            .sorted { $0.sleepDateKey < $1.sleepDateKey }
+            .compactMap { session in
+                guard let date = SleepDateKey.date(from: session.sleepDateKey) else { return nil }
+                let hasDetailedStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
+                return ProtocolChartPoint(
+                    dateKey: session.sleepDateKey,
+                    date: date,
+                    sleepScore: session.qualityScore.overall,
+                    sleepDuration: session.totalSleepTime,
+                    deepSleep: hasDetailedStages && session.deepDuration > 0 ? session.deepDuration : nil,
+                    remSleep: hasDetailedStages && session.remDuration > 0 ? session.remDuration : nil,
+                    status: ProtocolNightStatus(ProtocolComparisonService.status(for: adherenceByDate[session.sleepDateKey]))
+                )
+            }
+
+        var beforeSummary: SleepPeriodSummary?
+        var afterSummary: SleepPeriodSummary?
+        if let startDate = protocolStartDate {
+            let beforeSessions = sessions.filter { $0.endDate <= startDate }
+            let afterSessions = sessions.filter { $0.startDate >= startDate }
+            beforeSummary = periodSummary(from: beforeSessions)
+            afterSummary = periodSummary(from: afterSessions)
+        }
+
+        return DerivedState(
+            todayAdherence: todayAdherence,
+            streak: streak,
+            takenDateKeys: takenKeys,
+            chartPoints: chartPoints,
+            beforeSummary: beforeSummary,
+            afterSummary: afterSummary
+        )
+    }
+
+    private nonisolated struct DerivedState: Sendable {
+        let todayAdherence: [ProtocolAdherence]
+        let streak: Int
+        let takenDateKeys: Set<String>
+        let chartPoints: [ProtocolChartPoint]
+        let beforeSummary: SleepPeriodSummary?
+        let afterSummary: SleepPeriodSummary?
     }
 
     func toggleEnabled() {
@@ -104,7 +207,7 @@ final class ProtocolViewModel {
         protocolStartDate = date
         UserDefaults.standard.set(date, forKey: Keys.protocolStartDate)
         await autoMarkPastDays(from: date)
-        await updateBeforeAfterSummary()
+        await onAppear(force: true)
     }
 
     func clearStartDate() {
@@ -124,35 +227,14 @@ final class ProtocolViewModel {
         )
         do {
             try await localRepository.saveAdherence(adherence)
-            await loadTodayAdherence()
-            await updateChartPoints()
+            await onAppear(force: true)
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-
-    func loadTodayAdherence() async {
-        isLoading = true
-        errorMessage = nil
-        do {
-            let now = Date()
-            let start = Calendar.current.startOfDay(for: now)
-            let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? now
-            todayAdherence = try await localRepository.fetchAdherence(from: start, to: end)
-            await updateAdherenceStreak()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
     }
 
     func isTakenToday(_ item: ProtocolItem) -> Bool {
         todayAdherence.contains { $0.protocolID == item.id.uuidString && $0.taken }
-    }
-
-    func loadTodayContext() async {
-        let key = Self.dateKey(for: Date())
-        todayContextEntry = try? await localRepository.fetchContextEntry(forSleepDateKey: key)
     }
 
     func saveContextEntry(_ entry: SleepContextEntry) async {
@@ -201,7 +283,7 @@ final class ProtocolViewModel {
 
     // MARK: - Date key (internal — used by ProtocolTabView for timeline)
 
-    static func dateKey(for date: Date) -> String {
+    nonisolated static func dateKey(for date: Date) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
         let c = calendar.dateComponents([.year, .month, .day], from: date)
@@ -210,82 +292,23 @@ final class ProtocolViewModel {
 }
 
 private extension ProtocolViewModel {
-    func updateAdherenceStreak() async {
-        do {
-            let now = Date()
-            let lookbackStart = Calendar.current.date(byAdding: .day, value: -90, to: now)
-                ?? now.addingTimeInterval(-90 * 86_400)
-            let allAdherence = try await localRepository.fetchAdherence(from: lookbackStart, to: now)
-            adherenceHistory = allAdherence
-            adherenceStreak = Self.computeStreak(from: allAdherence)
-        } catch {
-            adherenceStreak = 0
-        }
-    }
-
-    func updateChartPoints() async {
-        do {
-            let now = Date()
-            let lookbackStart = Calendar.current.date(byAdding: .day, value: -60, to: now)
-                ?? now.addingTimeInterval(-60 * 86_400)
-            let sessions = try await localRepository.fetchCachedSessions(from: lookbackStart, to: now)
-            let adherence = try await localRepository.fetchAdherence(from: lookbackStart, to: now)
-            let adherenceByDate = Dictionary(grouping: adherence, by: \.dateKey)
-            chartPoints = sessions
-                .filter { BaselineEngine.isValidNight($0) }
-                .sorted { $0.sleepDateKey < $1.sleepDateKey }
-                .compactMap { session in
-                    guard let date = SleepDateKey.date(from: session.sleepDateKey) else { return nil }
-                    let hasDetailedStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
-                    return ProtocolChartPoint(
-                        dateKey: session.sleepDateKey,
-                        date: date,
-                        sleepScore: session.qualityScore.overall,
-                        sleepDuration: session.totalSleepTime,
-                        deepSleep: hasDetailedStages && session.deepDuration > 0 ? session.deepDuration : nil,
-                        remSleep: hasDetailedStages && session.remDuration > 0 ? session.remDuration : nil,
-                        status: ProtocolNightStatus(ProtocolComparisonService.status(for: adherenceByDate[session.sleepDateKey]))
-                    )
-                }
-        } catch {
-            chartPoints = []
-        }
-    }
-
-    func updateBeforeAfterSummary() async {
-        guard let startDate = protocolStartDate else {
-            beforeProtocolSummary = nil
-            afterProtocolSummary = nil
-            return
-        }
-        do {
-            let now = Date()
-            let lookbackStart = Calendar.current.date(byAdding: .day, value: -90, to: startDate)
-                ?? startDate.addingTimeInterval(-90 * 86_400)
-            let sessions = try await localRepository.fetchCachedSessions(from: lookbackStart, to: now)
-            let beforeSessions = sessions.filter { $0.endDate <= startDate }
-            let afterSessions = sessions.filter { $0.startDate >= startDate }
-            beforeProtocolSummary = Self.periodSummary(from: beforeSessions)
-            afterProtocolSummary = Self.periodSummary(from: afterSessions)
-            await updateChartPoints()
-        } catch {
-            beforeProtocolSummary = nil
-            afterProtocolSummary = nil
-        }
-    }
-
     func autoMarkPastDays(from startDate: Date) async {
         guard let item = items.first else { return }
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
+        let rangeEnd = today
+
+        // Fetch the full range once instead of per-day round-trips.
+        let existing = (try? await localRepository.fetchAdherence(
+            from: calendar.startOfDay(for: startDate),
+            to: rangeEnd
+        )) ?? []
+        let takenKeys = Set(existing.filter(\.taken).map(\.dateKey))
+
         var current = calendar.startOfDay(for: startDate)
-
         while current < today {
-            let key = Self.dateKey(for: current)
-            let dayEnd = calendar.date(byAdding: .day, value: 1, to: current) ?? current
-            let existing = (try? await localRepository.fetchAdherence(from: current, to: dayEnd)) ?? []
-
-            if !existing.contains(where: { $0.taken }) {
+            let key = ProtocolViewModel.dateKey(for: current)
+            if !takenKeys.contains(key) {
                 let adherence = ProtocolAdherence(
                     protocolID: item.id.uuidString,
                     dateKey: key,
@@ -296,10 +319,9 @@ private extension ProtocolViewModel {
             }
             current = calendar.date(byAdding: .day, value: 1, to: current) ?? current
         }
-        await loadTodayAdherence()
     }
 
-    static func periodSummary(from sessions: [SleepSession]) -> SleepPeriodSummary {
+    nonisolated static func periodSummary(from sessions: [SleepSession]) -> SleepPeriodSummary {
         let detailedSessions = sessions.filter { $0.dataQuality == .detailedStages }
         return SleepPeriodSummary(
             nightCount: sessions.count,
@@ -310,8 +332,7 @@ private extension ProtocolViewModel {
         )
     }
 
-    static func computeStreak(from adherence: [ProtocolAdherence]) -> Int {
-        let takenKeys = Set(adherence.filter(\.taken).map(\.dateKey))
+    nonisolated static func computeStreak(takenKeys: Set<String>) -> Int {
         var streak = 0
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
@@ -330,7 +351,7 @@ private extension ProtocolViewModel {
         ProtocolCatalog.load()
     }
 
-    static func average(_ values: [Double]) -> Double? {
+    nonisolated static func average(_ values: [Double]) -> Double? {
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
     }

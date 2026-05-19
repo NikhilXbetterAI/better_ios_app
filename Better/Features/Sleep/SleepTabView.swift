@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SleepTabView: View {
     @Bindable var viewModel: SleepDashboardViewModel
+    @Bindable var sleepModeViewModel: SleepModeViewModel
     var onOpenProfile: () -> Void = {}
 
     @State private var isHistoryPresented = false
@@ -12,6 +13,8 @@ struct SleepTabView: View {
     @State private var isSwipeNavigating = false
     @State private var showWhatChanged = false
     @State private var showSchedule = false
+    @State private var showSleepMode = false
+    @State private var showSleepModeSchedule = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -23,6 +26,9 @@ struct SleepTabView: View {
         .task { await viewModel.onAppear() }
         .refreshable { await viewModel.refresh() }
         .navigationBarHidden(true)
+        .task {
+            await sleepModeViewModel.reloadSchedule()
+        }
         .sheet(isPresented: $isHistoryPresented) {
             SleepHistoryCalendarSheet(
                 selectedMonth: viewModel.selectedMonth,
@@ -40,6 +46,36 @@ struct SleepTabView: View {
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showSleepModeSchedule) {
+            NavigationStack {
+                ZStack {
+                    BetterColors.background.ignoresSafeArea()
+                    ScrollView {
+                        SleepModeScheduleView(
+                            viewModel: sleepModeViewModel,
+                            onSaveSuccess: { showSleepModeSchedule = false }
+                        )
+                        .padding(BetterSpacing.screen)
+                    }
+                }
+                .navigationTitle("Sleep Mode")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") {
+                            showSleepModeSchedule = false
+                        }
+                        .font(BetterTypography.subheadline.bold())
+                        .foregroundStyle(BetterColors.brand)
+                    }
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $showSleepMode) {
+            SleepModeView(viewModel: sleepModeViewModel)
         }
     }
 
@@ -87,6 +123,11 @@ struct SleepTabView: View {
 
                 VStack(spacing: BetterSpacing.medium) {
                     stagesCard(session: session)
+
+                    SleepContinuityCardView(
+                        summary: session.continuitySummary,
+                        restorativeSleepDuration: session.restorativeSleepDuration
+                    )
 
                     if session.sleepLatency > 0 {
                         latencyCard(session: session)
@@ -173,6 +214,12 @@ struct SleepTabView: View {
             topBar(session: session)
             scoreRingHero(session: session, score: score)
             quickStatsStrip(session: session)
+            SleepModeEntryCard(
+                subtitle: sleepModeViewModel.entrySubtitle,
+                notificationStatus: sleepModeViewModel.notificationStatus,
+                onStart: { showSleepMode = true },
+                onSchedule: { showSleepModeSchedule = true }
+            )
         }
         .padding(.horizontal, BetterSpacing.screen)
         .padding(.top, 52)
@@ -1845,7 +1892,13 @@ private func formatDuration(_ interval: TimeInterval) -> String {
     }()
 
     NavigationStack {
-        SleepTabView(viewModel: vm)
+        SleepTabView(
+            viewModel: vm,
+            sleepModeViewModel: SleepModeViewModel(
+                scheduleService: env.sleepModeScheduleService,
+                localRepository: env.localRepository
+            )
+        )
     }
     .preferredColorScheme(.dark)
 }
@@ -1859,7 +1912,13 @@ private func formatDuration(_ interval: TimeInterval) -> String {
     let _ = { vm.authorizationState = .notRequested }()
 
     NavigationStack {
-        SleepTabView(viewModel: vm)
+        SleepTabView(
+            viewModel: vm,
+            sleepModeViewModel: SleepModeViewModel(
+                scheduleService: env.sleepModeScheduleService,
+                localRepository: env.localRepository
+            )
+        )
     }
     .preferredColorScheme(.dark)
 }

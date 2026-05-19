@@ -16,11 +16,12 @@ nonisolated struct ResearchCSVExporter: Sendable {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: directory) }
 
-        let files: [(name: String, data: Data)] = [
+        var files: [(name: String, data: Data)] = [
             ("nightly_research_rows.csv", Data(nightlyRowsCSV(package.nightlyRows).utf8)),
             ("protocol_effect_summary.csv", Data(protocolSummaryCSV(package.protocolSummaries).utf8)),
             ("export_metadata.csv", Data(metadataCSV(package).utf8))
         ]
+        files += chronotypeFiles(for: package)
 
         let zipURL = fileManager.temporaryDirectory
             .appendingPathComponent("\(Self.filenameStem(base: "BetterSleep", displayName: displayName))_\(startStamp)_to_\(endStamp).zip")
@@ -101,7 +102,17 @@ nonisolated struct ResearchCSVExporter: Sendable {
             "perceived_sleep_quality",
             "morning_energy",
             "context_notes_present",
-            "context_completion_status"
+            "context_completion_status",
+            // Sleep continuity fields (schema v2) — appended at end for backward compatibility
+            "restorative_sleep_hrs",
+            "longest_restorative_block_hrs",
+            "longest_restorative_block_min",
+            "sleep_continuity_category",
+            "sleep_block_count",
+            "meaningful_awake_count",
+            "sleep_block_durations_min",
+            "sleep_block_start_iso",
+            "sleep_block_end_iso"
         ]
 
         let body = rows.map { row in
@@ -172,7 +183,17 @@ nonisolated struct ResearchCSVExporter: Sendable {
                 row.perceivedSleepQuality ?? "",
                 row.morningEnergy ?? "",
                 row.contextNotesPresent.map { $0 ? "true" : "false" } ?? "",
-                row.contextCompletionStatus ?? ""
+                row.contextCompletionStatus ?? "",
+                // Sleep continuity fields
+                Self.number(row.restorativeSleepHours),
+                Self.number(row.longestRestorativeBlockHours),
+                Self.number(row.longestRestorativeBlockMinutes),
+                row.sleepContinuityCategory ?? "",
+                row.sleepBlockCount.map(String.init) ?? "0",
+                row.meaningfulAwakeCount.map(String.init) ?? "0",
+                row.sleepBlockDurationsMinutes?.map { Self.number($0, fractionDigits: 0) }.joined(separator: "|") ?? "",
+                row.sleepBlockStartDates?.map(Self.iso).joined(separator: "|") ?? "",
+                row.sleepBlockEndDates?.map(Self.iso).joined(separator: "|") ?? ""
             ])
         }
 
@@ -223,6 +244,68 @@ nonisolated struct ResearchCSVExporter: Sendable {
         return ([csvRow(header)] + body).joined(separator: "\n")
     }
 
+    func chronotypeSummaryCSV(_ result: ChronotypeCalculationResult) -> String {
+        let header = [
+            "status",
+            "bucket",
+            "corrected_midpoint_min",
+            "workday_midpoint_min",
+            "free_day_midpoint_min",
+            "workday_median_sleep_hrs",
+            "free_day_median_sleep_hrs",
+            "weekly_average_sleep_hrs",
+            "valid_nights",
+            "workday_nights",
+            "free_day_nights",
+            "excluded_nights",
+            "excluded_too_short",
+            "excluded_too_long",
+            "excluded_poor_data_quality",
+            "excluded_travel_or_jetlag",
+            "excluded_invalid_timing",
+            "confidence",
+            "optimal_window_start_min",
+            "optimal_window_end_min",
+            "optimal_window_duration_hrs",
+            "missing_requirements",
+            "window_days",
+            "window_start_iso",
+            "window_end_iso"
+        ]
+
+        let estimate = result.estimate
+        let excluded = result.excludedCountsByReason
+        let body = csvRow([
+            result.status.rawValue,
+            estimate?.bucket.rawValue ?? "",
+            estimate.map { String($0.correctedMidpointMinute) } ?? "",
+            estimate.map { String($0.workdayMidpointMinute) } ?? "",
+            estimate.map { String($0.freeDayMidpointMinute) } ?? "",
+            estimate.map { Self.number($0.workdayMedianDuration / 3_600) } ?? "",
+            estimate.map { Self.number($0.freeDayMedianDuration / 3_600) } ?? "",
+            estimate.map { Self.number($0.weeklyAverageDuration / 3_600) } ?? "",
+            String(result.validNightCount),
+            String(result.workdayNightCount),
+            String(result.freeDayNightCount),
+            String(excluded.values.reduce(0, +)),
+            String(excluded[.tooShort] ?? 0),
+            String(excluded[.tooLong] ?? 0),
+            String(excluded[.poorDataQuality] ?? 0),
+            String(excluded[.travelOrJetLag] ?? 0),
+            String(excluded[.invalidTiming] ?? 0),
+            estimate?.confidence.rawValue ?? ComparisonConfidence.unavailable.rawValue,
+            estimate.map { String($0.optimalSleepWindow.startMinute) } ?? "",
+            estimate.map { String($0.optimalSleepWindow.endMinute) } ?? "",
+            estimate.map { Self.number($0.optimalSleepWindow.duration / 3_600) } ?? "",
+            result.missingRequirements.map(\.rawValue).joined(separator: "|"),
+            String(result.windowDays),
+            Self.iso(result.windowStart),
+            Self.iso(result.windowEnd)
+        ])
+
+        return [csvRow(header), body].joined(separator: "\n")
+    }
+
     func metadataCSV(_ package: ResearchExportPackage) -> String {
         let rows = [
             ["key", "value"],
@@ -234,6 +317,8 @@ nonisolated struct ResearchCSVExporter: Sendable {
             ["baseline_valid_nights", String(package.baselineValidNights)],
             ["is_research_mode", package.isResearchMode ? "true" : "false"],
             ["nightly_row_count", String(package.nightlyRows.count)],
+            ["chronotype_status", package.chronotypeResult?.status.rawValue ?? ""],
+            ["chronotype_valid_nights", package.chronotypeResult.map { String($0.validNightCount) } ?? "0"],
             ["insight_summary", package.insightSummary.summary],
             ["insight_confidence", package.insightSummary.confidence.rawValue],
             ["insight_best_protocol", package.insightSummary.bestProtocolName ?? ""],
@@ -321,6 +406,11 @@ nonisolated private extension ResearchCSVExporter {
 
         let normalized = components.joined(separator: "-")
         return normalized.isEmpty ? base : "\(base)_\(normalized)"
+    }
+
+    func chronotypeFiles(for package: ResearchExportPackage) -> [(name: String, data: Data)] {
+        guard let chronotypeResult = package.chronotypeResult else { return [] }
+        return [("chronotype_summary.csv", Data(chronotypeSummaryCSV(chronotypeResult).utf8))]
     }
 }
 

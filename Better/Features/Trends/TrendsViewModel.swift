@@ -20,6 +20,7 @@ enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
 
 enum TrendMetric: String, CaseIterable, Identifiable, Sendable {
     case totalSleep
+    case longestRestorativeBlock
     case score
     case deepSleep
     case remSleep
@@ -34,6 +35,7 @@ enum TrendMetric: String, CaseIterable, Identifiable, Sendable {
     var displayName: String {
         switch self {
         case .totalSleep: "Total Sleep"
+        case .longestRestorativeBlock: "Longest Block"
         case .score: "Sleep Score"
         case .deepSleep: "Deep Sleep"
         case .remSleep: "REM Sleep"
@@ -47,7 +49,7 @@ enum TrendMetric: String, CaseIterable, Identifiable, Sendable {
 
     var unitLabel: String {
         switch self {
-        case .totalSleep, .deepSleep, .remSleep: "hrs"
+        case .totalSleep, .longestRestorativeBlock, .deepSleep, .remSleep: "hrs"
         case .score: "pts"
         case .hrv: "ms"
         case .waso, .latency: "min"
@@ -139,6 +141,7 @@ struct TrendComparisonSummary: Sendable, Hashable {
 @Observable
 final class TrendsViewModel {
     private let localRepository: LocalDataRepositoryProtocol
+    private let chronotypeService: ChronotypeCalculationService
     private let calendar: Calendar
     private var comparisonSessions: [SleepSession] = []
     private enum UserDefaultsKeys {
@@ -157,6 +160,7 @@ final class TrendsViewModel {
     var isLoading = false
     var errorMessage: String?
     var latestSessionInsights: [SleepInsight] = []
+    var chronotypeResult: ChronotypeCalculationResult?
     var sleepGoalHours: Double = 8.0
 
     var weekOverWeekChange: Double? {
@@ -214,8 +218,13 @@ final class TrendsViewModel {
         sessions.filter { !calendar.isDateInWeekend($0.startDate) }.count
     }
 
-    init(localRepository: LocalDataRepositoryProtocol, calendar: Calendar = .current) {
+    init(
+        localRepository: LocalDataRepositoryProtocol,
+        chronotypeService: ChronotypeCalculationService = ChronotypeCalculationService(),
+        calendar: Calendar = .current
+    ) {
         self.localRepository = localRepository
+        self.chronotypeService = chronotypeService
         self.calendar = calendar
     }
 
@@ -242,13 +251,26 @@ final class TrendsViewModel {
             let startDate = calendar.date(byAdding: .day, value: -selectedWindow.days, to: now)
                 ?? now.addingTimeInterval(Double(-selectedWindow.days) * 86_400)
             let comparisonStart = comparisonWindows(endingAt: now).previous.start
-            let fetchedSessions = try await localRepository.fetchCachedSessions(from: comparisonStart, to: now)
+            let chronotypeStart = calendar.date(byAdding: .day, value: -91, to: now)
+                ?? now.addingTimeInterval(-91 * 86_400)
+            let fetchStart = min(comparisonStart, chronotypeStart)
+            let fetchedSessions = try await localRepository.fetchCachedSessions(from: fetchStart, to: now)
             comparisonSessions = fetchedSessions
             sessions = fetchedSessions.filter { $0.endDate > startDate && $0.startDate < now }
             let profile = try await localRepository.fetchProfile()
             sleepGoalHours = profile.sleepGoalHours
             baseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
             let adherence = try await localRepository.fetchAdherence(from: startDate, to: now)
+            let chronotypeStartKey = SleepDateKey.calendarDateKey(for: chronotypeStart, calendar: calendar)
+            let chronotypeEndKey = SleepDateKey.calendarDateKey(for: now, calendar: calendar)
+            let contextEntries = try await localRepository.fetchContextEntries(from: chronotypeStartKey, to: chronotypeEndKey)
+            let activityLogs = try await localRepository.fetchActivityStatusLogs(from: chronotypeStartKey, to: chronotypeEndKey)
+            chronotypeResult = await calculateChronotype(
+                sessions: fetchedSessions,
+                contextEntries: contextEntries,
+                activityLogs: activityLogs,
+                endingAt: now
+            )
             var byKey: [String: Bool] = [:]
             for record in adherence {
                 byKey[record.dateKey] = byKey[record.dateKey] == true || record.taken
@@ -266,6 +288,27 @@ final class TrendsViewModel {
 }
 
 private extension TrendsViewModel {
+    func calculateChronotype(
+        sessions: [SleepSession],
+        contextEntries: [SleepContextEntry],
+        activityLogs: [ActivityStatusLog],
+        endingAt: Date
+    ) async -> ChronotypeCalculationResult {
+        let service = chronotypeService
+        let calendar = calendar
+
+        return await Task.detached {
+            service.estimate(
+                sessions: sessions,
+                contextEntries: contextEntries,
+                activityLogs: activityLogs,
+                windowDays: 90,
+                endingAt: endingAt,
+                calendar: calendar
+            )
+        }.value
+    }
+
     func updateChartPoints() {
         chartPoints = sessions.compactMap { session in
             guard let value = metricValue(for: session) else { return nil }
@@ -403,6 +446,10 @@ private extension TrendsViewModel {
         switch selectedMetric {
         case .totalSleep:
             return session.totalSleepTime / 3_600
+        case .longestRestorativeBlock:
+            let summary = session.continuitySummary
+            guard !summary.blocks.isEmpty else { return nil }
+            return summary.longestBlockDuration / 3_600
         case .score:
             return session.qualityScore.overall
         case .deepSleep:

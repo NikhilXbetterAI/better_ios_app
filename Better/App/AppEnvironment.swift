@@ -10,6 +10,9 @@ final class AppEnvironment {
     let healthRepository: HealthKitRepositoryProtocol
     let migrationService: DataMigrationService
     let privacyDataService: PrivacyDataService
+    let sleepModeNotificationService: SleepModeNotificationService
+    let sleepModeScheduleService: SleepModeScheduleService
+    let sleepModeCoordinator: SleepModeCoordinator
 
     init(
         modelContainer: ModelContainer,
@@ -18,7 +21,10 @@ final class AppEnvironment {
         localRepository: LocalDataRepositoryProtocol,
         healthRepository: HealthKitRepositoryProtocol,
         migrationService: DataMigrationService,
-        privacyDataService: PrivacyDataService
+        privacyDataService: PrivacyDataService,
+        sleepModeNotificationService: SleepModeNotificationService,
+        sleepModeScheduleService: SleepModeScheduleService,
+        sleepModeCoordinator: SleepModeCoordinator
     ) {
         self.modelContainer = modelContainer
         self.syncCoordinator = syncCoordinator
@@ -27,6 +33,9 @@ final class AppEnvironment {
         self.healthRepository = healthRepository
         self.migrationService = migrationService
         self.privacyDataService = privacyDataService
+        self.sleepModeNotificationService = sleepModeNotificationService
+        self.sleepModeScheduleService = sleepModeScheduleService
+        self.sleepModeCoordinator = sleepModeCoordinator
     }
 
     static func live() throws -> AppEnvironment {
@@ -37,6 +46,15 @@ final class AppEnvironment {
         let backgroundTaskService = BackgroundTaskService(syncCoordinator: coordinator)
         let migrationService = DataMigrationService(repository: localRepo)
         let privacyService = PrivacyDataService(localRepository: localRepo, syncCoordinator: coordinator)
+        let sleepModeNotificationService = SleepModeNotificationService()
+        let sleepModeScheduleService = SleepModeScheduleService(
+            repository: localRepo,
+            notificationService: sleepModeNotificationService
+        )
+        let sleepModeCoordinator = SleepModeCoordinator()
+        sleepModeScheduleService.onForegroundActivation = { [sleepModeCoordinator] presentation in
+            sleepModeCoordinator.activePresentation = presentation
+        }
         return AppEnvironment(
             modelContainer: container,
             syncCoordinator: coordinator,
@@ -44,7 +62,10 @@ final class AppEnvironment {
             localRepository: localRepo,
             healthRepository: healthRepo,
             migrationService: migrationService,
-            privacyDataService: privacyService
+            privacyDataService: privacyService,
+            sleepModeNotificationService: sleepModeNotificationService,
+            sleepModeScheduleService: sleepModeScheduleService,
+            sleepModeCoordinator: sleepModeCoordinator
         )
     }
 
@@ -76,6 +97,15 @@ private extension AppEnvironment {
         let backgroundTaskService = BackgroundTaskService(syncCoordinator: coordinator, isEnabled: false)
         let migrationService = DataMigrationService(repository: localRepo)
         let privacyService = PrivacyDataService(localRepository: localRepo, syncCoordinator: coordinator)
+        let sleepModeNotificationService = SleepModeNotificationService()
+        let sleepModeScheduleService = SleepModeScheduleService(
+            repository: localRepo,
+            notificationService: sleepModeNotificationService
+        )
+        let sleepModeCoordinator = SleepModeCoordinator()
+        sleepModeScheduleService.onForegroundActivation = { [sleepModeCoordinator] presentation in
+            sleepModeCoordinator.activePresentation = presentation
+        }
         return AppEnvironment(
             modelContainer: container,
             syncCoordinator: coordinator,
@@ -83,7 +113,10 @@ private extension AppEnvironment {
             localRepository: localRepo,
             healthRepository: healthRepo,
             migrationService: migrationService,
-            privacyDataService: privacyService
+            privacyDataService: privacyService,
+            sleepModeNotificationService: sleepModeNotificationService,
+            sleepModeScheduleService: sleepModeScheduleService,
+            sleepModeCoordinator: sleepModeCoordinator
         )
     }
 }

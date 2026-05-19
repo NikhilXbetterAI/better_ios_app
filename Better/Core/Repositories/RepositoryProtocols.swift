@@ -44,6 +44,16 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
     /// Prunes all health-derived data older than the specified number of days.
     func pruneDataOlderThan(days: Int) async throws
 
+    // MARK: - Sleep Mode
+
+    func saveSleepModeSettings(_ settings: SleepModeSettings) async throws
+    func fetchSleepModeSettings() async throws -> SleepModeSettings?
+    func saveSleepModeSchedule(_ schedule: SleepModeSchedule) async throws
+    func fetchSleepModeSchedule() async throws -> SleepModeSchedule?
+    func saveSleepModeSession(_ session: SleepModeSession) async throws
+    func fetchSleepModeSessions(from: Date, to: Date) async throws -> [SleepModeSession]
+    func deleteAllSleepModeData() async throws
+
 
     // MARK: - Context entries
 
@@ -84,10 +94,46 @@ nonisolated struct LocalDataInventory: Sendable {
     var protocolAdherenceCount: Int
     var activityLogCount: Int
     var manualBiologyEntryCount: Int
+    var sleepModeSettingsCount: Int
+    var sleepModeScheduleCount: Int
+    var sleepModeSessionCount: Int
     var contextEntryCount: Int
     var lastContextEntryDate: Date?
+    var lastSleepModeSessionDate: Date?
     var oldestSessionDate: Date?
     var newestSessionDate: Date?
+
+    init(
+        sleepSessionCount: Int,
+        baselineCount: Int,
+        alertCount: Int,
+        protocolAdherenceCount: Int,
+        activityLogCount: Int,
+        manualBiologyEntryCount: Int,
+        sleepModeSettingsCount: Int = 0,
+        sleepModeScheduleCount: Int = 0,
+        sleepModeSessionCount: Int = 0,
+        contextEntryCount: Int,
+        lastContextEntryDate: Date? = nil,
+        lastSleepModeSessionDate: Date? = nil,
+        oldestSessionDate: Date? = nil,
+        newestSessionDate: Date? = nil
+    ) {
+        self.sleepSessionCount = sleepSessionCount
+        self.baselineCount = baselineCount
+        self.alertCount = alertCount
+        self.protocolAdherenceCount = protocolAdherenceCount
+        self.activityLogCount = activityLogCount
+        self.manualBiologyEntryCount = manualBiologyEntryCount
+        self.sleepModeSettingsCount = sleepModeSettingsCount
+        self.sleepModeScheduleCount = sleepModeScheduleCount
+        self.sleepModeSessionCount = sleepModeSessionCount
+        self.contextEntryCount = contextEntryCount
+        self.lastContextEntryDate = lastContextEntryDate
+        self.lastSleepModeSessionDate = lastSleepModeSessionDate
+        self.oldestSessionDate = oldestSessionDate
+        self.newestSessionDate = newestSessionDate
+    }
 }
 
 // MARK: - HealthKit fallback states
@@ -107,6 +153,14 @@ extension LocalDataRepositoryProtocol {
     func fetchAlerts(unreadOnly: Bool) async throws -> [SleepAlert] {
         try await fetchAlerts(unreadOnly: unreadOnly, fromSleepDateKey: nil, limit: nil)
     }
+
+    func saveSleepModeSettings(_ settings: SleepModeSettings) async throws {}
+    func fetchSleepModeSettings() async throws -> SleepModeSettings? { nil }
+    func saveSleepModeSchedule(_ schedule: SleepModeSchedule) async throws {}
+    func fetchSleepModeSchedule() async throws -> SleepModeSchedule? { nil }
+    func saveSleepModeSession(_ session: SleepModeSession) async throws {}
+    func fetchSleepModeSessions(from: Date, to: Date) async throws -> [SleepModeSession] { [] }
+    func deleteAllSleepModeData() async throws {}
 }
 
 

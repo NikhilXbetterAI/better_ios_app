@@ -5,17 +5,35 @@ final class AppleHealthReviewComplianceTests: XCTestCase {
     func testHealthKitPlistMatchesReadOnlyRepositoryBehavior() throws {
         let plist = try Self.infoPlist()
 
-        XCTAssertNotNil(plist["NSHealthShareUsageDescription"])
-        XCTAssertNil(
-            plist["NSHealthUpdateUsageDescription"],
-            "HealthKitRepository requests no share/write types, so the app must not declare a Health update usage description."
+        let sharePurpose = try XCTUnwrap(plist["NSHealthShareUsageDescription"] as? String)
+        let updatePurpose = try XCTUnwrap(
+            plist["NSHealthUpdateUsageDescription"] as? String,
+            "App Store validation requires the Health update purpose string when HealthKit capability is present, even though Better requests no write types."
         )
+        XCTAssertFalse(sharePurpose.isEmpty)
+        XCTAssertTrue(updatePurpose.contains("does not save data to Apple Health"))
 
         let backgroundModes = try XCTUnwrap(plist["UIBackgroundModes"] as? [String])
+        let validIOSBackgroundModes: Set<String> = [
+            "audio",
+            "bluetooth-central",
+            "bluetooth-peripheral",
+            "external-accessory",
+            "fetch",
+            "location",
+            "nearby-interaction",
+            "network-authentication",
+            "newsstand-content",
+            "processing",
+            "push-to-talk",
+            "remote-notification",
+            "voip"
+        ]
         XCTAssertTrue(backgroundModes.contains("fetch"))
-        XCTAssertTrue(
+        XCTAssertTrue(Set(backgroundModes).isSubset(of: validIOSBackgroundModes))
+        XCTAssertFalse(
             backgroundModes.contains("healthkit"),
-            "The app enables HealthKit background delivery and has the entitlement, so UIBackgroundModes must include healthkit."
+            "healthkit is not a valid iOS UIBackgroundModes value; HealthKit observer delivery is controlled by the HealthKit background-delivery entitlement."
         )
     }
 

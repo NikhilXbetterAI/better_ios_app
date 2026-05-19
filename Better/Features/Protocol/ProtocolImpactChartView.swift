@@ -625,9 +625,15 @@ struct ProtocolNightHistoryStrip: View {
         .background(BetterColors.cardSecondary.opacity(0.38), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "d"
+        return f
+    }()
+
     private var nightStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .center, spacing: 9) {
+            LazyHStack(alignment: .center, spacing: 9) {
                 ForEach(visiblePoints, id: \.point.id) { item in
                     Button {
                         withAnimation(.spring(response: 0.24, dampingFraction: 0.8)) {
@@ -731,9 +737,7 @@ struct ProtocolNightHistoryStrip: View {
     }
 
     private func dayLabel(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "d"
-        return formatter.string(from: date)
+        Self.dayFormatter.string(from: date)
     }
 }
 

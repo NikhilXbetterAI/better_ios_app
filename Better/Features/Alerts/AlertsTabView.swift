@@ -69,10 +69,10 @@ struct AlertsTabView: View {
                 .background(BetterColors.success.opacity(0.18))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
-                Text("Analysis ready alerts stay in-app")
+                Text("Alert notifications are controlled here")
                     .font(BetterTypography.subheadline)
                     .foregroundStyle(BetterColors.text)
-                Text("Notification permission is only requested after an explicit opt-in.")
+                Text("Notifications are delivered after you allow iOS permission and enable the switches below.")
                     .font(BetterTypography.caption)
                     .foregroundStyle(BetterColors.subtext)
             }

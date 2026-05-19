@@ -25,6 +25,7 @@ final class SyncCoordinator {
     private let localRepository: LocalDataRepositoryProtocol
     private let processor: SleepDataProcessor
     private let alertService: AlertGenerationService
+    private let notificationPreferencesStore: AlertNotificationPreferencesStoring
     private let calendar: Calendar
     private let logger = Logger(subsystem: "Better", category: "SyncCoordinator")
     private var observationTask: Task<Void, Never>?
@@ -43,12 +44,14 @@ final class SyncCoordinator {
         localRepository: LocalDataRepositoryProtocol,
         processor: SleepDataProcessor = SleepDataProcessor(),
         alertService: AlertGenerationService = AlertGenerationService(),
+        notificationPreferencesStore: AlertNotificationPreferencesStoring = UserDefaultsAlertNotificationPreferencesStore(),
         calendar: Calendar = .current
     ) {
         self.healthRepository = healthRepository
         self.localRepository = localRepository
         self.processor = processor
         self.alertService = alertService
+        self.notificationPreferencesStore = notificationPreferencesStore
         self.calendar = calendar
     }
 
@@ -275,6 +278,7 @@ private extension SyncCoordinator {
         let alertEligibleSessions = hydratedSessions.filter { $0.sleepDateKey >= appStartKey }
 
         if let activeBaseline {
+            let alertSettings = notificationPreferencesStore.load().alertGenerationSettings
             let previousAlerts = try await localRepository.fetchAlerts(
                 unreadOnly: false,
                 fromSleepDateKey: appStartKey,
@@ -292,6 +296,7 @@ private extension SyncCoordinator {
                 baseline: activeBaseline,
                 profile: profile,
                 adherence: adherence,
+                settings: alertSettings,
                 protocolComparison: protocolComparison,
                 previousAlerts: previousAlerts,
                 createdAt: endDate

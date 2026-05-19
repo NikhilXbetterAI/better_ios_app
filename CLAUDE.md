@@ -418,7 +418,7 @@ Key test files:
 
 6. **Background sync** — `BackgroundTaskService` schedules sleep refreshes every 6 hours. Changes to sync frequency require updating the `BGTaskSchedulerPermittedIdentifiers` entry in `Info.plist`.
 
-7. **HealthKit permissions** — `Info.plist` declares Health read usage only. Permissions are requested during onboarding via `HealthKitRepository.requestAuthorization()`, with `toShare: []` and the required read types.
+7. **HealthKit permissions** — `Info.plist` declares Health read and update purpose strings for App Store validation, but the app requests read-only authorization via `HealthKitRepository.requestAuthorization()` with `toShare: []` and the required read types. Do not add `healthkit` to `UIBackgroundModes`; iOS does not accept it there. HealthKit observer delivery is controlled by the `com.apple.developer.healthkit.background-delivery` entitlement.
 
 8. **Encryption & storage protection** — All sensitive data (sleep sessions, baselines, onboarding answers, protocol adherence) is encrypted via `EncryptionService` (AES-256-GCM). The encryption key is stored in iOS Keychain with device-level protection. SQLite files get `FileProtectionType.complete`. Non-sensitive settings (theme, notification flags) remain unencrypted for faster access.
 

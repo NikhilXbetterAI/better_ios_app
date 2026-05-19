@@ -3,6 +3,7 @@ import UIKit
 
 struct SettingsTabView: View {
     @Bindable var viewModel: SettingsViewModel
+    @Bindable var sleepModeViewModel: SleepModeViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var exportDocument: ResearchExportDocument?
     @State private var showExportError = false
@@ -28,6 +29,7 @@ struct SettingsTabView: View {
                     ProfileSettingsView(profile: $viewModel.profile) {
                         Task { await viewModel.saveProfile() }
                     }
+                    SleepModeScheduleView(viewModel: sleepModeViewModel)
                     PrivacyControlsView(
                         service: viewModel.privacyService,
                         healthAuthState: viewModel.healthAuthorizationState,
@@ -55,7 +57,10 @@ struct SettingsTabView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await viewModel.onAppear() }
+        .task {
+            await sleepModeViewModel.reloadSchedule()
+            await viewModel.onAppear()
+        }
         .refreshable { await viewModel.loadSettings() }
         .sheet(item: $exportDocument) { document in
             ResearchExportDocumentPicker(url: document.url)
@@ -215,11 +220,17 @@ private struct ResearchExportDocumentPicker: UIViewControllerRepresentable {
 #if DEBUG
 #Preview("Settings") {
     let env = AppEnvironment.preview()
-    SettingsTabView(viewModel: SettingsViewModel(
-        localRepository: env.localRepository,
-        healthRepository: env.healthRepository,
-        syncCoordinator: env.syncCoordinator,
-        privacyService: env.privacyDataService
-    ))
+    SettingsTabView(
+        viewModel: SettingsViewModel(
+            localRepository: env.localRepository,
+            healthRepository: env.healthRepository,
+            syncCoordinator: env.syncCoordinator,
+            privacyService: env.privacyDataService
+        ),
+        sleepModeViewModel: SleepModeViewModel(
+            scheduleService: env.sleepModeScheduleService,
+            localRepository: env.localRepository
+        )
+    )
 }
 #endif
