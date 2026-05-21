@@ -1,0 +1,510 @@
+import SwiftUI
+
+// MARK: - Version chip
+
+struct VersionChip: View {
+    let version: ProtocolFormulaVersion
+    var size: ChipSize = .medium
+    var addinsText: String? = nil
+
+    enum ChipSize {
+        case xs, small, medium
+
+        var fontSize: CGFloat {
+            switch self { case .xs: 10; case .small: 11; case .medium: 13 }
+        }
+        var dotSize: CGFloat {
+            switch self { case .xs: 5; case .small: 6; case .medium: 8 }
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(ProtocolPalette.versionColor(hex: version.colorHex))
+                .frame(width: size.dotSize, height: size.dotSize)
+            Text(version.resolvedLabel)
+                .font(.system(size: size.fontSize, weight: .bold))
+                .foregroundStyle(BetterColors.text)
+            if let addinsText, !addinsText.isEmpty {
+                Text(addinsText)
+                    .font(.system(size: size.fontSize, weight: .bold))
+                    .foregroundStyle(ProtocolPalette.addinColor)
+            }
+        }
+        .padding(.horizontal, size == .xs ? 6 : 10)
+        .padding(.vertical, size == .xs ? 3 : 5)
+        .background(
+            Capsule().fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            Capsule().stroke(Color.white.opacity(0.09), lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Delta badge
+
+struct DeltaBadge: View {
+    /// Signed delta. `nil` renders as "—".
+    let value: Double?
+    /// Suffix shown after the number ("min", "%", etc.). No unit prefix is added.
+    let unit: String
+    /// If `true`, *lower* is good (e.g. latency).
+    var lowerIsBetter: Bool = false
+
+    var body: some View {
+        if let value {
+            valueText(for: value)
+        } else {
+            Text("—")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(ProtocolPalette.dimText)
+        }
+    }
+
+    private func valueText(for value: Double) -> some View {
+        let sign = value > 0 ? "+" : ""
+        let isGood = (value > 0) != lowerIsBetter && value != 0
+        let color: Color = value == 0 ? ProtocolPalette.mutedText
+            : (isGood ? ProtocolPalette.goodColor : ProtocolPalette.badColor)
+        return Text("\(sign)\(value, format: .number.precision(.fractionLength(value.magnitude < 10 ? 1 : 0)))\(unit)")
+            .font(.system(size: 13, weight: .bold).monospacedDigit())
+            .foregroundStyle(color)
+    }
+}
+
+// MARK: - Metric comparison strip
+
+struct ProtocolMetricComparisonStrip: View {
+    let metric: ProtocolFormulaMetric
+    let yourValue: Double?
+    let baselineValue: Double?
+    var compact: Bool = false
+
+    private var color: Color { ProtocolPalette.versionColor(hex: metric.colorHex) }
+    private var delta: Double? {
+        guard let yourValue, let baselineValue else { return nil }
+        return yourValue - baselineValue
+    }
+
+    private var scaleMax: Double {
+        max(yourValue ?? 0, baselineValue ?? 0, 1) * 1.15
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: compact ? 5 : 6, height: compact ? 5 : 6)
+                Text(metric.fullLabel)
+                    .font(.system(size: compact ? 11 : 12, weight: .bold))
+                    .foregroundStyle(BetterColors.text)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                if let delta {
+                    DeltaBadge(value: delta, unit: metric.unit, lowerIsBetter: metric.betterIsLower)
+                        .font(.system(size: compact ? 10 : 11, weight: .bold))
+                }
+            }
+
+            metricComparisonRow(
+                label: "You",
+                value: yourValue,
+                color: color,
+                compact: compact
+            )
+            metricComparisonRow(
+                label: "Base",
+                value: baselineValue,
+                color: Color.white.opacity(0.34),
+                compact: compact
+            )
+
+            if baselineValue == nil || yourValue == nil {
+                Text(baselineValue == nil ? "Baseline pending" : "No value yet")
+                    .font(.system(size: compact ? 9 : 10, weight: .semibold))
+                    .foregroundStyle(ProtocolPalette.dimText)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(compact ? 10 : 12)
+        .background(Color.white.opacity(0.02))
+        .clipShape(RoundedRectangle(cornerRadius: compact ? 10 : 12))
+        .overlay(RoundedRectangle(cornerRadius: compact ? 10 : 12).stroke(ProtocolPalette.borderColor, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func metricComparisonRow(label: String, value: Double?, color: Color, compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: compact ? 9 : 10, weight: .bold))
+                .foregroundStyle(ProtocolPalette.dimText)
+                .frame(width: compact ? 30 : 34, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.05))
+                    Capsule()
+                        .fill(color)
+                        .frame(width: max(4, geo.size.width * CGFloat((value ?? 0) / scaleMax)))
+                }
+            }
+            .frame(height: compact ? 5 : 6)
+            Text(formatted(value))
+                .font(.system(size: compact ? 9 : 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(value == nil ? ProtocolPalette.dimText : BetterColors.text)
+                .frame(width: compact ? 56 : 60, alignment: .trailing)
+        }
+    }
+
+    private func formatted(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        switch metric.unit {
+        case "%":
+            return "\(String(format: "%.1f", value))%"
+        case "pts":
+            return "\(Int(value.rounded()))pts"
+        default:
+            let hours = Int(value) / 60
+            let minutes = Int(value) % 60
+            return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
+        }
+    }
+}
+
+// MARK: - Caveat caption
+
+struct ObservedNotCausalCaption: View {
+    var body: some View {
+        Text(ProtocolImpactSummary.causalityCaveat)
+            .font(.system(size: 11, weight: .regular))
+            .foregroundStyle(ProtocolPalette.dimText)
+            .multilineTextAlignment(.leading)
+    }
+}
+
+// MARK: - Low-data banner
+
+struct LowDataBanner: View {
+    let nightCount: Int
+    let label: String
+    var minimum: Int = 3
+
+    var body: some View {
+        let remaining = max(0, minimum - nightCount)
+        HStack(spacing: 8) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 13, weight: .medium))
+            Text("Need \(remaining) more \(label) \(remaining == 1 ? "night" : "nights")")
+                .font(.system(size: 13, weight: .medium))
+        }
+        .foregroundStyle(ProtocolPalette.mutedText)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            Capsule().fill(Color.white.opacity(0.04))
+        )
+    }
+}
+
+// MARK: - Continuity badge
+
+struct ContinuityBadge: View {
+    let category: SleepContinuityCategory?
+
+    var body: some View {
+        Text(category?.displayName ?? "—")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(category == nil ? ProtocolPalette.dimText : BetterColors.text)
+    }
+}
+
+// MARK: - Edit affordance
+
+struct EditAffordance: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "pencil")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(8)
+                .background(Circle().fill(Color.white.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(BetterColors.text)
+        .accessibilityLabel("Edit night")
+    }
+}
+
+// MARK: - Restore Ring
+
+struct RestoreRing: View {
+    let pct: Double
+    let color: Color
+    var size: CGFloat = 80
+    var restorativeMin: Double? = nil
+    var totalInBedMin: Double? = nil
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.06), lineWidth: size * 0.08)
+            Circle()
+                .trim(from: 0.0, to: CGFloat(min(max(pct, 0) / 100.0, 1.0)))
+                .stroke(
+                    AngularGradient(
+                        colors: [color.opacity(0.7), color],
+                        center: .center
+                    ),
+                    style: StrokeStyle(lineWidth: size * 0.08, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+            
+            VStack(spacing: 1) {
+                Text("\(Int(pct.rounded()))%")
+                    .font(.system(size: size * 0.22, weight: .black).monospacedDigit())
+                    .foregroundStyle(BetterColors.text)
+                if let rest = restorativeMin, let tib = totalInBedMin {
+                    let restHr = Int(rest) / 60
+                    let restMin = Int(rest) % 60
+                    let tibHr = Int(tib) / 60
+                    let tibMin = Int(tib) % 60
+                    Text("\(restHr)h\(restMin)m / \(tibHr)h\(tibMin)m")
+                        .font(.system(size: size * 0.09, weight: .medium).monospacedDigit())
+                        .foregroundStyle(ProtocolPalette.dimText)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+// MARK: - Stage Bar
+
+struct StageBar: View {
+    let deepMin: Double
+    let remMin: Double
+    let awakeMin: Double
+    let totalSleepMin: Double
+    var height: CGFloat = 16
+    var color: Color
+    var showLabels: Bool = true
+
+    private var lightMin: Double { max(0, totalSleepMin - deepMin - remMin) }
+    private var totalMin: Double { deepMin + remMin + lightMin + awakeMin }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if totalMin > 0 {
+                GeometryReader { geo in
+                    stageBarHStack(totalWidth: geo.size.width)
+                }
+                .frame(height: height)
+            } else {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.white.opacity(0.06))
+                    .frame(height: height)
+            }
+
+            if showLabels {
+                HStack(spacing: 12) {
+                    legendItem(label: "Deep", value: formatMin(deepMin), dotColor: color)
+                    legendItem(label: "REM", value: formatMin(remMin), dotColor: Self.remColor)
+                    legendItem(label: "Light", value: formatMin(lightMin), dotColor: Self.lightColor.opacity(0.7))
+                    legendItem(label: "Awake", value: formatMin(awakeMin), dotColor: ProtocolPalette.badColor.opacity(0.8))
+                }
+            }
+        }
+    }
+
+    private static let remColor = Color(hex: "#4ADE80")
+    private static let lightColor = Color(hex: "#60A5FA")
+
+    @ViewBuilder
+    private func stageBarHStack(totalWidth: CGFloat) -> some View {
+        let wDeep  = totalWidth * CGFloat(deepMin  / totalMin)
+        let wRem   = totalWidth * CGFloat(remMin   / totalMin)
+        let wLight = totalWidth * CGFloat(lightMin / totalMin)
+        let wAwake = totalWidth * CGFloat(awakeMin / totalMin)
+        HStack(spacing: 2) {
+            if deepMin > 0 {
+                RoundedRectangle(cornerRadius: 3).fill(color)
+                    .frame(width: max(2, wDeep - 2))
+            }
+            if remMin > 0 {
+                RoundedRectangle(cornerRadius: 3).fill(Self.remColor)
+                    .frame(width: max(2, wRem - 2))
+            }
+            if lightMin > 0 {
+                RoundedRectangle(cornerRadius: 3).fill(Self.lightColor.opacity(0.5))
+                    .frame(width: max(2, wLight - 2))
+            }
+            if awakeMin > 0 {
+                RoundedRectangle(cornerRadius: 3).fill(ProtocolPalette.badColor.opacity(0.8))
+                    .frame(width: max(2, wAwake - 2))
+            }
+        }
+    }
+
+    private func legendItem(label: String, value: String, dotColor: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(dotColor).frame(width: 6, height: 6)
+            Text("\(label) \(value)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ProtocolPalette.dimText)
+        }
+    }
+
+    private func formatMin(_ mins: Double) -> String {
+        let h = Int(mins) / 60
+        let m = Int(mins) % 60
+        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    }
+}
+
+// MARK: - Pv Phase Ribbon
+
+struct PvPhaseRibbon: View {
+    struct Segment: Identifiable {
+        var id: UUID
+        var label: String
+        var colorHex: String
+        var nights: Int
+    }
+    let segments: [Segment]
+
+    private var total: Int { segments.map { $0.nights }.reduce(0, +) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if total > 0 {
+                GeometryReader { geo in
+                    HStack(spacing: 3) {
+                        ForEach(segments) { seg in
+                            ribbonSegmentBar(seg: seg, availableWidth: geo.size.width)
+                        }
+                    }
+                }
+                .frame(height: 8)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(segments) { seg in
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(ProtocolPalette.versionColor(hex: seg.colorHex))
+                                .frame(width: 6, height: 6)
+                            Text("\(seg.label) (\(seg.nights)n)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(ProtocolPalette.mutedText)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func ribbonSegmentBar(seg: Segment, availableWidth: CGFloat) -> some View {
+        let fraction = CGFloat(seg.nights) / CGFloat(max(1, total))
+        return RoundedRectangle(cornerRadius: 3)
+            .fill(ProtocolPalette.versionColor(hex: seg.colorHex))
+            .frame(width: max(4, availableWidth * fraction - 3), height: 8)
+    }
+}
+
+// MARK: - Pv Restore Sparkline
+
+struct PvRestoreSpark: View {
+    struct SparkPoint: Identifiable {
+        var id: String { dateKey }
+        var dateKey: String
+        var value: Double
+        var color: Color
+    }
+
+    let points: [SparkPoint]
+    let baseline: Double?
+
+    private var values: [Double] { points.map { $0.value } }
+    private var minVal: Double { (values.min() ?? 0) * 0.95 }
+    private var maxVal: Double { (values.max() ?? 100) * 1.05 }
+    private var range: Double { max(1.0, maxVal - minVal) }
+    private var count: Int { points.count }
+
+    var body: some View {
+        GeometryReader { geo in
+            Group {
+                if count > 1 {
+                    ZStack {
+                        // Mid grid line
+                        Path { path in
+                            path.move(to: CGPoint(x: 0, y: geo.size.height / 2))
+                            path.addLine(to: CGPoint(x: geo.size.width, y: geo.size.height / 2))
+                        }
+                        .stroke(Color.white.opacity(0.04), lineWidth: 1)
+
+                        // Baseline dashed line
+                        if let baseline {
+                            baselinePath(baseline: baseline, w: geo.size.width, h: geo.size.height)
+                        }
+
+                        // Segment lines coloured by version
+                        ForEach(0..<count - 1, id: \.self) { i in
+                            segmentLine(i: i, w: geo.size.width, h: geo.size.height)
+                        }
+
+                        // End dot
+                        if let lastVal = values.last {
+                            Circle()
+                                .fill(points.last?.color ?? Color.white)
+                                .frame(width: 6, height: 6)
+                                .position(x: xPos(count - 1, w: geo.size.width), y: yPos(lastVal, h: geo.size.height))
+                        }
+                    }
+                } else {
+                    Text("Need at least 2 logged nights to render trend.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ProtocolPalette.dimText)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                }
+            }
+        }
+    }
+
+    private func xPos(_ i: Int, w: CGFloat) -> CGFloat {
+        count > 1 ? CGFloat(i) * (w / CGFloat(count - 1)) : w / 2
+    }
+
+    private func yPos(_ v: Double, h: CGFloat) -> CGFloat {
+        h - CGFloat((v - minVal) / range) * (h - 8) - 4
+    }
+
+    private func baselinePath(baseline: Double, w: CGFloat, h: CGFloat) -> some View {
+        let by = yPos(baseline, h: h)
+        return Path { path in
+            var x: CGFloat = 0
+            while x < w {
+                path.move(to: CGPoint(x: x, y: by))
+                path.addLine(to: CGPoint(x: x + 4, y: by))
+                x += 8
+            }
+        }
+        .stroke(Color.white.opacity(0.25), lineWidth: 1.5)
+    }
+
+    private func segmentLine(i: Int, w: CGFloat, h: CGFloat) -> some View {
+        let p0 = CGPoint(x: xPos(i, w: w),     y: yPos(points[i].value, h: h))
+        let p1 = CGPoint(x: xPos(i + 1, w: w), y: yPos(points[i + 1].value, h: h))
+        return Path { path in
+            path.move(to: p0)
+            path.addLine(to: p1)
+        }
+        .stroke(points[i + 1].color,
+                style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+    }
+}

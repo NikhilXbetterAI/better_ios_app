@@ -68,6 +68,32 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
     /// Deletes all context entries. Called as part of the full local-data delete flow.
     func deleteAllContextEntries() async throws
 
+    // MARK: - Protocol Formula Tracking
+
+    /// Save (insert or update) a formula version. Enforces:
+    ///   - `isActive` singleton (clears the flag on any other row when this one is active),
+    ///   - immutability of `formulaText` / `components` once any `ProtocolNightLog`
+    ///     references this version (except for `isImportedPlaceholder` rows whose first
+    ///     non-empty save atomically clears the placeholder flag).
+    /// Throws `ProtocolFormulaRepositoryError.formulaTextLocked` if the immutability rule fires.
+    func saveFormulaVersion(_ version: ProtocolFormulaVersion) async throws
+    func fetchAllFormulaVersions() async throws -> [ProtocolFormulaVersion]
+    func fetchActiveFormulaVersion() async throws -> ProtocolFormulaVersion?
+    func fetchFormulaVersion(id: UUID) async throws -> ProtocolFormulaVersion?
+    func archiveFormulaVersion(id: UUID) async throws
+    func deleteFormulaVersion(id: UUID) async throws
+
+    func saveNightLog(_ log: ProtocolNightLog) async throws
+    func fetchNightLog(forSleepDateKey key: String) async throws -> ProtocolNightLog?
+    func fetchNightLogs(from startKey: String, to endKey: String) async throws -> [ProtocolNightLog]
+    func deleteNightLog(forSleepDateKey key: String) async throws
+
+    func saveLogEdit(_ edit: ProtocolLogEdit) async throws
+    func fetchLogEdits(forSleepDateKey key: String) async throws -> [ProtocolLogEdit]
+
+    func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws
+    func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot?
+
     // MARK: - Privacy & migration
 
     /// Deletes all health-derived records.  User preferences (sleep goal, baseline
@@ -102,6 +128,10 @@ nonisolated struct LocalDataInventory: Sendable {
     var lastSleepModeSessionDate: Date?
     var oldestSessionDate: Date?
     var newestSessionDate: Date?
+    var protocolFormulaVersionCount: Int
+    var protocolNightLogCount: Int
+    var protocolLogEditCount: Int
+    var protocolBaselineSnapshotCount: Int
 
     init(
         sleepSessionCount: Int,
@@ -117,7 +147,11 @@ nonisolated struct LocalDataInventory: Sendable {
         lastContextEntryDate: Date? = nil,
         lastSleepModeSessionDate: Date? = nil,
         oldestSessionDate: Date? = nil,
-        newestSessionDate: Date? = nil
+        newestSessionDate: Date? = nil,
+        protocolFormulaVersionCount: Int = 0,
+        protocolNightLogCount: Int = 0,
+        protocolLogEditCount: Int = 0,
+        protocolBaselineSnapshotCount: Int = 0
     ) {
         self.sleepSessionCount = sleepSessionCount
         self.baselineCount = baselineCount
@@ -133,7 +167,21 @@ nonisolated struct LocalDataInventory: Sendable {
         self.lastSleepModeSessionDate = lastSleepModeSessionDate
         self.oldestSessionDate = oldestSessionDate
         self.newestSessionDate = newestSessionDate
+        self.protocolFormulaVersionCount = protocolFormulaVersionCount
+        self.protocolNightLogCount = protocolNightLogCount
+        self.protocolLogEditCount = protocolLogEditCount
+        self.protocolBaselineSnapshotCount = protocolBaselineSnapshotCount
     }
+}
+
+nonisolated enum ProtocolFormulaRepositoryError: Error, Equatable, Sendable {
+    /// Raised when a save would edit `formulaText` or `components` of a version that
+    /// already has at least one ProtocolNightLog referencing it (and is not an
+    /// imported-placeholder still awaiting backfill).
+    case formulaTextLocked(versionID: UUID)
+    /// Raised by `saveBaselineSnapshot` when the snapshot would be persisted with
+    /// zero valid nights — explicitly disallowed.
+    case baselineSnapshotEmpty
 }
 
 // MARK: - HealthKit fallback states
@@ -161,6 +209,24 @@ extension LocalDataRepositoryProtocol {
     func saveSleepModeSession(_ session: SleepModeSession) async throws {}
     func fetchSleepModeSessions(from: Date, to: Date) async throws -> [SleepModeSession] { [] }
     func deleteAllSleepModeData() async throws {}
+
+    // Default no-op implementations so mocks (e.g. MockLocalDataRepository) don't have
+    // to grow new in-memory state for every consumer that doesn't exercise Protocol
+    // Formula Tracking. Live `LocalDataRepository` overrides all of these.
+    func saveFormulaVersion(_ version: ProtocolFormulaVersion) async throws {}
+    func fetchAllFormulaVersions() async throws -> [ProtocolFormulaVersion] { [] }
+    func fetchActiveFormulaVersion() async throws -> ProtocolFormulaVersion? { nil }
+    func fetchFormulaVersion(id: UUID) async throws -> ProtocolFormulaVersion? { nil }
+    func archiveFormulaVersion(id: UUID) async throws {}
+    func deleteFormulaVersion(id: UUID) async throws {}
+    func saveNightLog(_ log: ProtocolNightLog) async throws {}
+    func fetchNightLog(forSleepDateKey key: String) async throws -> ProtocolNightLog? { nil }
+    func fetchNightLogs(from startKey: String, to endKey: String) async throws -> [ProtocolNightLog] { [] }
+    func deleteNightLog(forSleepDateKey key: String) async throws {}
+    func saveLogEdit(_ edit: ProtocolLogEdit) async throws {}
+    func fetchLogEdits(forSleepDateKey key: String) async throws -> [ProtocolLogEdit] { [] }
+    func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws {}
+    func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot? { nil }
 }
 
 

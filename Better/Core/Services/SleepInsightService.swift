@@ -8,8 +8,8 @@ nonisolated enum SleepInsightCategory: String, Codable, CaseIterable, Hashable, 
     case sleepStages
     case missingData
     case baselineBuilding
-    case protocolComparison
     case contextComparison
+    case protocolComparison
 
     var id: String { rawValue }
 }
@@ -38,17 +38,12 @@ nonisolated struct SleepInsight: Codable, Hashable, Sendable, Identifiable {
 }
 
 nonisolated struct SleepInsightService: Sendable {
-    private let protocolInsightService: ProtocolInsightService
-
-    init(protocolInsightService: ProtocolInsightService = ProtocolInsightService()) {
-        self.protocolInsightService = protocolInsightService
-    }
+    init() {}
 
     func insights(
         session: SleepSession?,
         baseline: SleepBaseline?,
-        recentSessions: [SleepSession],
-        protocolComparison: ProtocolComparisonResult? = nil
+        recentSessions: [SleepSession]
     ) -> [SleepInsight] {
         var insights: [SleepInsight] = []
 
@@ -101,10 +96,6 @@ nonisolated struct SleepInsightService: Sendable {
 
         if let recovery = recoveryInsight(session: session, recentSessions: recentSessions) {
             insights.append(recovery)
-        }
-
-        if let protocolComparison {
-            insights.append(contentsOf: protocolInsightService.insights(from: protocolComparison))
         }
 
         return insights.sorted {

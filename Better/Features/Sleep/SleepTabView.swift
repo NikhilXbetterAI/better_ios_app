@@ -5,6 +5,7 @@ import SwiftUI
 struct SleepTabView: View {
     @Bindable var viewModel: SleepDashboardViewModel
     @Bindable var sleepModeViewModel: SleepModeViewModel
+    var redLightFilterService: RedLightFilterService? = nil
     var onOpenProfile: () -> Void = {}
 
     @State private var isHistoryPresented = false
@@ -75,7 +76,7 @@ struct SleepTabView: View {
             .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: $showSleepMode) {
-            SleepModeView(viewModel: sleepModeViewModel)
+            SleepModeView(viewModel: sleepModeViewModel, redLightService: redLightFilterService)
         }
     }
 
@@ -84,7 +85,7 @@ struct SleepTabView: View {
     @ViewBuilder
     private func backgroundLayer(screenHeight: CGFloat) -> some View {
         ZStack {
-            BetterColors.background
+            ProtocolPalette.backgroundColor
             if let session = viewModel.selectedSession {
                 let color = scoreColor(healthSleepScore(for: session).overall)
                 RadialGradient(
@@ -458,19 +459,22 @@ struct SleepTabView: View {
     // MARK: - Stages Card
 
     private func stagesCard(session: SleepSession) -> some View {
-        BetterHealthCard {
-            VStack(spacing: BetterSpacing.large) {
-                sectionLabel("Sleep Stages", icon: "moon.stars.fill", color: BetterColors.stageDeep)
+        VStack(alignment: .leading, spacing: BetterSpacing.large) {
+            sectionLabel("Sleep Stages", icon: "moon.stars.fill", color: BetterColors.stageDeep)
 
-                SleepHypnogramView(
-                    stages: session.stages.filter { $0.type != .inBed },
-                    sessionStart: session.startDate,
-                    sessionEnd: session.endDate
-                )
+            SleepHypnogramView(
+                stages: session.stages.filter { $0.type != .inBed },
+                sessionStart: session.startDate,
+                sessionEnd: session.endDate
+            )
 
-                SleepStageGridView(session: session, baseline: viewModel.selectedBaseline)
-            }
+            SleepStageGridView(session: session, baseline: viewModel.selectedBaseline)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(ProtocolPalette.surfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
     }
 
     private func stageRingsRow(session: SleepSession) -> some View {
@@ -520,122 +524,134 @@ struct SleepTabView: View {
 
     private func latencyCard(session: SleepSession) -> some View {
         let rating = SleepLatencyRating(session.sleepLatency)
-        return BetterHealthCard {
-            VStack(spacing: BetterSpacing.large) {
-                HStack {
-                    sectionLabel("Time to Fall Asleep", icon: "timer", color: rating.color)
-                    Spacer()
-                    Text(rating.label)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(rating.color)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(rating.color.opacity(0.14), in: Capsule())
-                }
-                SleepLatencyGaugeView(latency: session.sleepLatency)
+        return VStack(alignment: .leading, spacing: BetterSpacing.large) {
+            HStack {
+                sectionLabel("Time to Fall Asleep", icon: "timer", color: rating.color)
+                Spacer()
+                Text(rating.label)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(rating.color)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(rating.color.opacity(0.14), in: Capsule())
             }
+            SleepLatencyGaugeView(latency: session.sleepLatency)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(ProtocolPalette.surfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
     }
 
     // MARK: - Baseline Cards
 
     private func baselineCard(session: SleepSession, baseline: SleepBaseline) -> some View {
-        BetterHealthCard {
-            VStack(spacing: BetterSpacing.large) {
-                HStack {
-                    sectionLabel("vs Your Baseline", icon: "chart.line.uptrend.xyaxis", color: baselineIconColor(session: session, baseline: baseline))
-                    Spacer()
-                    baselineSummaryBadge(session: session, baseline: baseline)
-                }
-                SleepVsBaselineView(session: session, baseline: baseline)
-                if let confidence = viewModel.baselineConfidenceLabel {
-                    HStack(spacing: 4) {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 11))
-                            .foregroundStyle(BetterColors.subtext)
-                        Text("Baseline confidence: \(confidence)")
-                            .font(BetterTypography.caption)
-                            .foregroundStyle(BetterColors.subtext)
-                    }
+        VStack(alignment: .leading, spacing: BetterSpacing.large) {
+            HStack {
+                sectionLabel("vs Your Baseline", icon: "chart.line.uptrend.xyaxis", color: baselineIconColor(session: session, baseline: baseline))
+                Spacer()
+                baselineSummaryBadge(session: session, baseline: baseline)
+            }
+            SleepVsBaselineView(session: session, baseline: baseline)
+            if let confidence = viewModel.baselineConfidenceLabel {
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ProtocolPalette.dimText)
+                    Text("Baseline confidence: \(confidence)")
+                        .font(BetterTypography.caption)
+                        .foregroundStyle(ProtocolPalette.dimText)
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(ProtocolPalette.surfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
     }
 
     private func viewMoreCard(session: SleepSession, baseline: SleepBaseline) -> some View {
-        BetterHealthCard {
-            VStack(spacing: 0) {
-                Button {
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                        showWhatChanged.toggle()
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(BetterColors.subtext)
-                        Text("View More")
-                            .font(BetterTypography.subheadline)
-                            .foregroundStyle(BetterColors.text)
-                        Spacer()
-                        Image(systemName: showWhatChanged ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(BetterColors.subtext)
-                    }
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    showWhatChanged.toggle()
                 }
-                .buttonStyle(.plain)
-
-                if showWhatChanged {
-                    VStack(spacing: BetterSpacing.large) {
-                        Divider()
-                            .background(BetterColors.border.opacity(0.5))
-                            .padding(.top, BetterSpacing.medium)
-
-                        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                            sectionLabel("What Changed Tonight", icon: "chart.bar.fill", color: BetterColors.brand)
-                            WhatChangedGridView(session: session, baseline: baseline)
-                        }
-
-                        Divider().background(BetterColors.border.opacity(0.5))
-
-                        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                            HStack {
-                                sectionLabel("Schedule Consistency", icon: "clock.fill", color: BetterColors.warning)
-                                Spacer()
-                                ScheduleConsistencySummary(baseline: baseline)
-                            }
-                            ScheduleConsistencyView(
-                                session: session,
-                                baseline: baseline,
-                                recentSessions: viewModel.recentSessions
-                            )
-                        }
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } label: {
+                HStack {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ProtocolPalette.dimText)
+                    Text("View More")
+                        .font(BetterTypography.subheadline)
+                        .foregroundStyle(BetterColors.text)
+                    Spacer()
+                    Image(systemName: showWhatChanged ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(ProtocolPalette.dimText)
                 }
             }
+            .buttonStyle(.plain)
+
+            if showWhatChanged {
+                VStack(spacing: BetterSpacing.large) {
+                    Divider()
+                        .background(ProtocolPalette.borderColor)
+                        .padding(.top, BetterSpacing.medium)
+
+                    VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+                        sectionLabel("What Changed Tonight", icon: "chart.bar.fill", color: BetterColors.brand)
+                        WhatChangedGridView(session: session, baseline: baseline)
+                    }
+
+                    Divider().background(ProtocolPalette.borderColor)
+
+                    VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+                        HStack {
+                            sectionLabel("Schedule Consistency", icon: "clock.fill", color: BetterColors.warning)
+                            Spacer()
+                            ScheduleConsistencySummary(baseline: baseline)
+                        }
+                        ScheduleConsistencyView(
+                            session: session,
+                            baseline: baseline,
+                            recentSessions: viewModel.recentSessions
+                        )
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(ProtocolPalette.surfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
     }
 
     private var baselineNotReadyCard: some View {
-        BetterHealthCard {
-            HStack(spacing: BetterSpacing.medium) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 20))
-                    .foregroundStyle(BetterColors.brand)
-                    .frame(width: 42, height: 42)
-                    .background(BetterColors.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Baseline Building")
-                        .font(BetterTypography.subheadline)
-                        .foregroundStyle(BetterColors.text)
-                    Text("Need at least 5 nights of sleep data to build your personal baseline.")
-                        .font(BetterTypography.footnote)
-                        .foregroundStyle(BetterColors.subtext)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        HStack(spacing: BetterSpacing.medium) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 20))
+                .foregroundStyle(BetterColors.brand)
+                .frame(width: 42, height: 42)
+                .background(BetterColors.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Baseline Building")
+                    .font(BetterTypography.subheadline)
+                    .foregroundStyle(BetterColors.text)
+                Text("Need at least 5 nights of sleep data to build your personal baseline.")
+                    .font(BetterTypography.footnote)
+                    .foregroundStyle(ProtocolPalette.mutedText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(ProtocolPalette.surfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
     }
 
     // MARK: - Biometrics Card
@@ -652,16 +668,10 @@ struct SleepTabView: View {
     // MARK: - Shared UI Helpers
 
     private func sectionLabel(_ title: String, icon: String, color: Color) -> some View {
-        HStack(spacing: BetterSpacing.small) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(color, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            Text(title)
-                .font(BetterTypography.subheadline)
-                .foregroundStyle(BetterColors.text)
-        }
+        Text(title)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(ProtocolPalette.dimText)
+            .textCase(.uppercase)
     }
 
     private func baselineIconColor(session: SleepSession, baseline: SleepBaseline) -> Color {
@@ -1065,7 +1075,7 @@ private struct SleepStageGridView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var restorativeSleepRow: some View {
@@ -1142,7 +1152,7 @@ private struct StageRangeBar: View {
             ZStack(alignment: .leading) {
                 // Track
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(BetterColors.cardTertiary)
+                    .fill(Color.white.opacity(0.05))
                     .frame(height: 10)
 
                 // Current value fill
@@ -1235,7 +1245,7 @@ private struct SleepLatencyGaugeView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(BetterColors.cardSecondary)
+                        .fill(Color.white.opacity(0.05))
                         .frame(height: 6)
                     Capsule()
                         .fill(
@@ -1446,29 +1456,32 @@ private struct SleepBiometricFocusCard: View {
     @Namespace private var pillNS
 
     var body: some View {
-        BetterHealthCard {
-            VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                headerRow
-                pillRow
-                valueRow
-                educationPanel
-                SleepBiometricZoneChart(
-                    points: points,
-                    selectedPointKey: selectedPointKey,
-                    zones: selected.zones,
-                    chartMin: selected.chartMin,
-                    chartMax: selected.chartMax,
-                    color: selected.color,
-                    onSelect: { point in
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                            selectedPointKey = point.dateKey
-                        }
+        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+            headerRow
+            pillRow
+            valueRow
+            educationPanel
+            SleepBiometricZoneChart(
+                points: points,
+                selectedPointKey: selectedPointKey,
+                zones: selected.zones,
+                chartMin: selected.chartMin,
+                chartMax: selected.chartMax,
+                color: selected.color,
+                onSelect: { point in
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        selectedPointKey = point.dateKey
                     }
-                )
-                selectedDayCallout
-                footerGrid
-            }
+                }
+            )
+            selectedDayCallout
+            footerGrid
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(ProtocolPalette.surfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
         .onAppear(perform: resetSelection)
         .onChange(of: selected) { _, _ in resetSelection() }
         .onChange(of: timeline) { _, _ in resetSelection() }
@@ -1552,7 +1565,7 @@ private struct SleepBiometricFocusCard: View {
             }
         }
         .padding(4)
-        .background(BetterColors.cardSecondary, in: Capsule())
+        .background(Color.white.opacity(0.04), in: Capsule())
     }
 
     private var timelinePicker: some View {
@@ -1575,7 +1588,7 @@ private struct SleepBiometricFocusCard: View {
             }
         }
         .padding(3)
-        .background(BetterColors.cardSecondary, in: Capsule())
+        .background(Color.white.opacity(0.04), in: Capsule())
     }
 
     private var valueRow: some View {
@@ -1650,7 +1663,7 @@ private struct SleepBiometricFocusCard: View {
                 Spacer()
             }
             .padding(BetterSpacing.small)
-            .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
@@ -1695,7 +1708,7 @@ private struct SleepBiometricFocusCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 9)
         .padding(.vertical, 8)
-        .background(BetterColors.cardSecondary.opacity(0.75), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func resetSelection() {

@@ -1,0 +1,41 @@
+# Xcode build artefacts
+build/
+DerivedData/
+*.xcuserstate
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+xcuserdata/
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Local build / test logs (never commit)
+build.log
+test_build.log
+test_run.log
+*.log
+
+# Stray design mockups / planning HTML (not part of the bundle)
+*.html
+# Keep the Protocol Formula spec HTML — it's the reference for formula metric definitions.
+!PROTOCOL_FORMULA_FUNCTIONS.html
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V8
+.Trashes
+
+# Instruments
+*.trace

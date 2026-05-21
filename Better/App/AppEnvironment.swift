@@ -13,6 +13,7 @@ final class AppEnvironment {
     let sleepModeNotificationService: SleepModeNotificationService
     let sleepModeScheduleService: SleepModeScheduleService
     let sleepModeCoordinator: SleepModeCoordinator
+    let redLightFilterService: RedLightFilterService
 
     init(
         modelContainer: ModelContainer,
@@ -24,7 +25,8 @@ final class AppEnvironment {
         privacyDataService: PrivacyDataService,
         sleepModeNotificationService: SleepModeNotificationService,
         sleepModeScheduleService: SleepModeScheduleService,
-        sleepModeCoordinator: SleepModeCoordinator
+        sleepModeCoordinator: SleepModeCoordinator,
+        redLightFilterService: RedLightFilterService
     ) {
         self.modelContainer = modelContainer
         self.syncCoordinator = syncCoordinator
@@ -36,6 +38,29 @@ final class AppEnvironment {
         self.sleepModeNotificationService = sleepModeNotificationService
         self.sleepModeScheduleService = sleepModeScheduleService
         self.sleepModeCoordinator = sleepModeCoordinator
+        self.redLightFilterService = redLightFilterService
+    }
+
+    /// Runs the one-shot legacy ProtocolAdherence → Protocol Formula migration if needed.
+    /// Idempotency lives in `ProtocolAdherenceMigrationService` via UserDefaults.
+    /// Safe to call on every launch.
+    func runProtocolFormulaMigrationIfNeeded() async {
+        let service = ProtocolAdherenceMigrationService(repository: localRepository)
+        _ = try? await service.runIfNeeded()
+        // Catalog rows are now created lazily — only when onboarding's seedHistory
+        // (or another explicit user action) actually paints a version. Eager
+        // creation at launch was fabricating fake shippedOn dates for every user.
+        await augmentProtocolBaselineExtendedMetricsIfNeeded()
+    }
+
+    /// Pass to fill in the full-sleep-stage baseline metrics (deep / REM / awake /
+    /// total sleep / latency / score) on baselines frozen before the P0-4 scope
+    /// expansion. The service is idempotent and only fills missing fields.
+    private func augmentProtocolBaselineExtendedMetricsIfNeeded() async {
+        let baselineService = ProtocolBaselineService(repository: localRepository)
+        guard (try? await baselineService.augmentBaselineWithExtendedMetricsIfNeeded()) == true else {
+            return
+        }
     }
 
     static func live() throws -> AppEnvironment {
@@ -65,7 +90,8 @@ final class AppEnvironment {
             privacyDataService: privacyService,
             sleepModeNotificationService: sleepModeNotificationService,
             sleepModeScheduleService: sleepModeScheduleService,
-            sleepModeCoordinator: sleepModeCoordinator
+            sleepModeCoordinator: sleepModeCoordinator,
+            redLightFilterService: RedLightFilterService()
         )
     }
 
@@ -116,7 +142,8 @@ private extension AppEnvironment {
             privacyDataService: privacyService,
             sleepModeNotificationService: sleepModeNotificationService,
             sleepModeScheduleService: sleepModeScheduleService,
-            sleepModeCoordinator: sleepModeCoordinator
+            sleepModeCoordinator: sleepModeCoordinator,
+            redLightFilterService: RedLightFilterService()
         )
     }
 }

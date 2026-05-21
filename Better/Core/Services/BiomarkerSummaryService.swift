@@ -477,7 +477,7 @@ private extension BiomarkerSummaryService {
     }
 }
 
-private extension BiometricType {
+nonisolated private extension BiometricType {
     static let diagnosticTypes: [BiometricType] = [
         .heartRate,
         .heartRateVariabilitySDNN,

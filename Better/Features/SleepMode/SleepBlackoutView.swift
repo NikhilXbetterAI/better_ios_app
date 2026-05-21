@@ -7,7 +7,7 @@ struct SleepBlackoutView: View {
 
     @State private var isPressing = false
     @State private var exitProgress: CGFloat = 0
-    @State private var originalBrightness = UIScreen.main.brightness
+    @State private var originalBrightness: CGFloat = 0.5
     @State private var controlsRevealed = false
     @State private var revealTask: Task<Void, Never>?
 
@@ -68,13 +68,23 @@ struct SleepBlackoutView: View {
             perform: onExit
         )
         .onAppear {
-            originalBrightness = UIScreen.main.brightness
+            // Read current brightness from the active window scene's screen,
+            // avoiding the iOS 26-deprecated UIScreen.main.
+            let screen = UIApplication.shared
+                .connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?.screen
+            originalBrightness = screen?.brightness ?? 0.5
             if dimsScreen {
-                UIScreen.main.brightness = min(originalBrightness, 0.08)
+                screen?.brightness = min(originalBrightness, 0.08)
             }
         }
         .onDisappear {
-            UIScreen.main.brightness = originalBrightness
+            let screen = UIApplication.shared
+                .connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?.screen
+            screen?.brightness = originalBrightness
         }
     }
 }

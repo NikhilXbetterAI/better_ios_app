@@ -520,6 +520,188 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.save()
     }
 
+    // MARK: - Protocol Formula Tracking
+
+    func saveFormulaVersion(_ version: ProtocolFormulaVersion) async throws {
+        let id = version.id
+        let descriptor = FetchDescriptor<StoredProtocolFormulaVersion>(
+            predicate: #Predicate { row in row.id == id }
+        )
+        let existing = try modelContext.fetch(descriptor).first
+
+        // Compute ordinal index — count of existing rows with an earlier `shippedOn`, or
+        // keep the existing index if the row already exists.
+        let ordinalIndex: Int
+        if let existing {
+            ordinalIndex = existing.ordinalIndex
+        } else {
+            let allDescriptor = FetchDescriptor<StoredProtocolFormulaVersion>(
+                sortBy: [SortDescriptor(\.shippedOn)]
+            )
+            let all = try modelContext.fetch(allDescriptor)
+            ordinalIndex = all.filter { $0.shippedOn <= version.shippedOn }.count + 1
+        }
+
+        // Immutability rule: if this version has any logs and `formulaText`/`components`
+        // changed, reject the write — UNLESS the existing row is still an imported
+        // placeholder with empty text and the incoming text is non-empty (the one
+        // permitted backfill, which atomically clears the placeholder flag).
+        var versionToWrite = version
+        if let existing {
+            let logCount = try modelContext.fetchCount(FetchDescriptor<StoredProtocolNightLog>(
+                predicate: #Predicate { log in log.versionIDString == id.uuidString }
+            ))
+            if logCount > 0 {
+                let existingDomain = try existing.toDomain(ordinalLabel: "")
+                let textChanged = existingDomain.formulaText != version.formulaText
+                let componentsChanged = existingDomain.components != version.components
+                let placeholderBackfill = existing.isImportedPlaceholder &&
+                    existingDomain.formulaText.isEmpty &&
+                    !version.formulaText.isEmpty
+                if (textChanged || componentsChanged) && !placeholderBackfill {
+                    throw ProtocolFormulaRepositoryError.formulaTextLocked(versionID: id)
+                }
+                if placeholderBackfill {
+                    versionToWrite.isImportedPlaceholder = false
+                }
+            }
+        }
+
+        // Active-singleton enforcement: clear `isActive` on any other row when this row is active.
+        if versionToWrite.isActive {
+            let othersDescriptor = FetchDescriptor<StoredProtocolFormulaVersion>(
+                predicate: #Predicate { row in row.id != id && row.isActive }
+            )
+            for other in try modelContext.fetch(othersDescriptor) {
+                other.isActive = false
+                other.updatedAt = Date()
+            }
+        }
+
+        if let existing {
+            modelContext.delete(existing)
+        }
+        let stored = try StoredProtocolFormulaVersion(domain: versionToWrite, ordinalIndex: ordinalIndex)
+        modelContext.insert(stored)
+        try modelContext.save()
+    }
+
+    func fetchAllFormulaVersions() async throws -> [ProtocolFormulaVersion] {
+        let descriptor = FetchDescriptor<StoredProtocolFormulaVersion>(
+            sortBy: [SortDescriptor(\.shippedOn), SortDescriptor(\.createdAt)]
+        )
+        let rows = try modelContext.fetch(descriptor)
+        return rows.enumerated().compactMap { idx, row in
+            try? row.toDomain(ordinalLabel: "V\(idx + 1)")
+        }
+    }
+
+    func fetchActiveFormulaVersion() async throws -> ProtocolFormulaVersion? {
+        // Resolve the ordinal label by reading all versions so the active row's label
+        // is correct relative to its peers.
+        let all = try await fetchAllFormulaVersions()
+        return all.first(where: { $0.isActive })
+    }
+
+    func fetchFormulaVersion(id: UUID) async throws -> ProtocolFormulaVersion? {
+        let all = try await fetchAllFormulaVersions()
+        return all.first(where: { $0.id == id })
+    }
+
+    func archiveFormulaVersion(id: UUID) async throws {
+        let descriptor = FetchDescriptor<StoredProtocolFormulaVersion>(
+            predicate: #Predicate { row in row.id == id }
+        )
+        for row in try modelContext.fetch(descriptor) {
+            row.archivedAt = Date()
+            row.isActive = false
+            row.updatedAt = Date()
+        }
+        try modelContext.save()
+    }
+
+    func deleteFormulaVersion(id: UUID) async throws {
+        let descriptor = FetchDescriptor<StoredProtocolFormulaVersion>(
+            predicate: #Predicate { row in row.id == id }
+        )
+        for row in try modelContext.fetch(descriptor) {
+            modelContext.delete(row)
+        }
+        try modelContext.save()
+    }
+
+    func saveNightLog(_ log: ProtocolNightLog) async throws {
+        let id = log.id
+        let sleepDateKey = log.sleepDateKey
+        let descriptor = FetchDescriptor<StoredProtocolNightLog>(
+            predicate: #Predicate { row in row.id == id || row.sleepDateKey == sleepDateKey }
+        )
+        for existing in try modelContext.fetch(descriptor) {
+            modelContext.delete(existing)
+        }
+        modelContext.insert(try StoredProtocolNightLog(domain: log))
+        try modelContext.save()
+    }
+
+    func fetchNightLog(forSleepDateKey key: String) async throws -> ProtocolNightLog? {
+        var descriptor = FetchDescriptor<StoredProtocolNightLog>(
+            predicate: #Predicate { row in row.sleepDateKey == key }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
+    }
+
+    func fetchNightLogs(from startKey: String, to endKey: String) async throws -> [ProtocolNightLog] {
+        let descriptor = FetchDescriptor<StoredProtocolNightLog>(
+            predicate: #Predicate { row in row.sleepDateKey >= startKey && row.sleepDateKey <= endKey },
+            sortBy: [SortDescriptor(\.sleepDateKey)]
+        )
+        return try modelContext.fetch(descriptor).compactMap { try? $0.toDomain() }
+    }
+
+    func deleteNightLog(forSleepDateKey key: String) async throws {
+        let descriptor = FetchDescriptor<StoredProtocolNightLog>(
+            predicate: #Predicate { row in row.sleepDateKey == key }
+        )
+        for row in try modelContext.fetch(descriptor) {
+            modelContext.delete(row)
+        }
+        try modelContext.save()
+    }
+
+    func saveLogEdit(_ edit: ProtocolLogEdit) async throws {
+        modelContext.insert(StoredProtocolLogEdit(domain: edit))
+        try modelContext.save()
+    }
+
+    func fetchLogEdits(forSleepDateKey key: String) async throws -> [ProtocolLogEdit] {
+        let descriptor = FetchDescriptor<StoredProtocolLogEdit>(
+            predicate: #Predicate { row in row.sleepDateKey == key },
+            sortBy: [SortDescriptor(\.editedAt)]
+        )
+        return try modelContext.fetch(descriptor).map { $0.toDomain() }
+    }
+
+    func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws {
+        guard snapshot.validNightCount > 0 else {
+            throw ProtocolFormulaRepositoryError.baselineSnapshotEmpty
+        }
+        // Only one baseline row is ever persisted — replace any existing.
+        for existing in try modelContext.fetch(FetchDescriptor<StoredProtocolBaselineSnapshot>()) {
+            modelContext.delete(existing)
+        }
+        modelContext.insert(try StoredProtocolBaselineSnapshot(domain: snapshot))
+        try modelContext.save()
+    }
+
+    func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot? {
+        var descriptor = FetchDescriptor<StoredProtocolBaselineSnapshot>(
+            sortBy: [SortDescriptor(\.frozenAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
+    }
+
     func pruneDataOlderThan(days: Int) async throws {
         let cutoff = Date.now.addingTimeInterval(Double(-days) * 86_400)
         let cutoffKey = Self.dateKey(for: cutoff)
@@ -547,6 +729,12 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.delete(model: StoredSleepContextEntry.self, where: #Predicate { entry in
             entry.sleepDateKey < cutoffKey
         })
+        try modelContext.delete(model: StoredProtocolNightLog.self, where: #Predicate { log in
+            log.sleepDateKey < cutoffKey
+        })
+        try modelContext.delete(model: StoredProtocolLogEdit.self, where: #Predicate { edit in
+            edit.sleepDateKey < cutoffKey
+        })
 
         // 4. Baselines
         try modelContext.delete(model: StoredBaseline.self, where: #Predicate { baseline in
@@ -570,6 +758,10 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.delete(model: StoredSyncAnchor.self)
         try modelContext.delete(model: StoredSleepContextEntry.self)
         try modelContext.delete(model: StoredSleepModeSession.self)
+        try modelContext.delete(model: StoredProtocolFormulaVersion.self)
+        try modelContext.delete(model: StoredProtocolNightLog.self)
+        try modelContext.delete(model: StoredProtocolLogEdit.self)
+        try modelContext.delete(model: StoredProtocolBaselineSnapshot.self)
 
         // Clear health-sensitive profile fields; keep non-sensitive preferences.
         for profile in try modelContext.fetch(FetchDescriptor<StoredUserProfile>()) {
@@ -625,6 +817,27 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             profile.sleepAssessmentAnswersData = try PersistenceJSON.encode(answers)
         }
 
+        // Protocol Formula blobs — re-encode through the convenience initializers so the
+        // bytes are routed through `PersistenceJSON.encode` (which now encrypts). The
+        // freshly-constructed @Model instances are never inserted into the context;
+        // they're only used as a transport for the re-encoded bodyData bytes.
+        for row in try modelContext.fetch(FetchDescriptor<StoredProtocolFormulaVersion>()) {
+            guard let domain = try? row.toDomain(ordinalLabel: "") else { continue }
+            let rewritten = try StoredProtocolFormulaVersion(domain: domain, ordinalIndex: row.ordinalIndex)
+            row.bodyData = rewritten.bodyData
+        }
+        for row in try modelContext.fetch(FetchDescriptor<StoredProtocolNightLog>()) {
+            await Task.yield()
+            guard let domain = try? row.toDomain() else { continue }
+            let rewritten = try StoredProtocolNightLog(domain: domain)
+            row.bodyData = rewritten.bodyData
+        }
+        for row in try modelContext.fetch(FetchDescriptor<StoredProtocolBaselineSnapshot>()) {
+            guard let domain = try? row.toDomain() else { continue }
+            let rewritten = try StoredProtocolBaselineSnapshot(domain: domain)
+            row.bodyData = rewritten.bodyData
+        }
+
         try modelContext.save()
     }
 
@@ -660,7 +873,11 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             lastContextEntryDate: latestContextEntry?.updatedAt,
             lastSleepModeSessionDate: latestSleepModeSession?.startedAt,
             oldestSessionDate: sessions.first?.startDate,
-            newestSessionDate: sessions.last?.startDate
+            newestSessionDate: sessions.last?.startDate,
+            protocolFormulaVersionCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolFormulaVersion>()),
+            protocolNightLogCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolNightLog>()),
+            protocolLogEditCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolLogEdit>()),
+            protocolBaselineSnapshotCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolBaselineSnapshot>())
         )
     }
 }

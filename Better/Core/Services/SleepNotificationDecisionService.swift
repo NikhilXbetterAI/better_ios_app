@@ -7,8 +7,6 @@ nonisolated enum SleepNotificationType: String, Codable, CaseIterable, Hashable,
     case poorSleepStreak
     case recovery
     case baselineAvailable
-    case protocolDurationPattern
-    case protocolEfficiencyPattern
 
     var id: String { rawValue }
 
@@ -26,8 +24,6 @@ nonisolated enum SleepNotificationType: String, Codable, CaseIterable, Hashable,
             .recoveryTrend
         case .baselineAvailable:
             .baselineAvailable
-        case .protocolDurationPattern, .protocolEfficiencyPattern:
-            .protocolPattern
         }
     }
 }
@@ -48,7 +44,6 @@ nonisolated struct SleepNotificationDecisionInput: Sendable {
     var latestSession: SleepSession
     var recentSessions: [SleepSession]
     var baseline: SleepBaseline
-    var protocolComparison: ProtocolComparisonResult?
     var previousAlerts: [SleepAlert]
     var createdAt: Date
 }
@@ -79,14 +74,6 @@ nonisolated struct SleepNotificationDecisionService: Sendable {
         candidates.append(contentsOf: efficiencyCandidates(input: input, confidence: baselineConfidence))
         candidates.append(contentsOf: streakCandidates(input: input, confidence: baselineConfidence))
         candidates.append(contentsOf: baselineAvailableCandidates(input: input, confidence: baselineConfidence))
-
-        if let protocolComparison = input.protocolComparison {
-            candidates.append(contentsOf: protocolCandidates(
-                result: protocolComparison,
-                previousAlerts: input.previousAlerts,
-                createdAt: input.createdAt
-            ))
-        }
 
         let notifiable = candidates
             .filter(\.shouldNotify)
@@ -243,67 +230,6 @@ nonisolated private extension SleepNotificationDecisionService {
         ]
     }
 
-    func protocolCandidates(result: ProtocolComparisonResult, previousAlerts: [SleepAlert], createdAt: Date) -> [NotificationDecision] {
-        guard result.confidence == .medium || result.confidence == .high else {
-            return [
-                suppressed(
-                    .protocolDurationPattern,
-                    title: "Protocol confidence unavailable",
-                    reason: "Protocol confidence must be medium or high.",
-                    confidence: result.confidence,
-                    createdAt: createdAt
-                )
-            ]
-        }
-        guard !isCoolingDown(.protocolPattern, previousAlerts: previousAlerts, createdAt: createdAt, days: 7) else {
-            return [suppressed(.protocolDurationPattern, title: "Protocol cooldown", reason: "Protocol notification weekly cooldown is active.", confidence: result.confidence, createdAt: createdAt, cooldown: true)]
-        }
-
-        if let delta = result.deltaTotalSleep, abs(delta) >= SleepAnalysisThresholds.meaningfulDurationDelta {
-            let minutes = Int((abs(delta) / 60).rounded())
-            let direction = delta > 0 ? "higher" : "lower"
-            return [
-                NotificationDecision(
-                    shouldNotify: true,
-                    notificationType: .protocolDurationPattern,
-                    title: "Protocol sleep pattern",
-                    body: "On protocol nights, sleep duration has averaged \(minutes) minutes \(direction) over the \(result.window.displayName.lowercased()).",
-                    reason: "Protocol duration delta is meaningful.",
-                    cooldownApplied: false,
-                    confidence: result.confidence,
-                    createdAt: createdAt
-                )
-            ]
-        }
-
-        if let delta = result.deltaEfficiency, abs(delta) >= SleepAnalysisThresholds.meaningfulEfficiencyDelta {
-            let points = Int((abs(delta) * 100).rounded())
-            let direction = delta > 0 ? "higher" : "lower"
-            return [
-                NotificationDecision(
-                    shouldNotify: true,
-                    notificationType: .protocolEfficiencyPattern,
-                    title: "Protocol sleep pattern",
-                    body: "On protocol nights, sleep efficiency has averaged \(points) percentage points \(direction) over the \(result.window.displayName.lowercased()).",
-                    reason: "Protocol efficiency delta is meaningful.",
-                    cooldownApplied: false,
-                    confidence: result.confidence,
-                    createdAt: createdAt
-                )
-            ]
-        }
-
-        return [
-            suppressed(
-                .protocolDurationPattern,
-                title: "No protocol notification",
-                reason: "Protocol signal is below meaningful thresholds.",
-                confidence: result.confidence,
-                createdAt: createdAt
-            )
-        ]
-    }
-
     func suppressed(
         _ type: SleepNotificationType,
         title: String,
@@ -339,8 +265,6 @@ nonisolated private extension SleepNotificationDecisionService {
             95
         case .poorSleepStreak:
             90
-        case .protocolDurationPattern, .protocolEfficiencyPattern:
-            80
         case .durationBelowBaseline, .durationAboveBaseline:
             70
         case .efficiencyDrop:

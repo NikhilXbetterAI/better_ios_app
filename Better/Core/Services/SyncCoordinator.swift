@@ -15,8 +15,8 @@ enum SyncCoordinatorPhase: Sendable, Hashable {
 @Observable
 final class SyncCoordinator {
     static let minimumBaselineWindowDays = 15
-    static let maximumBaselineWindowDays = 60
-    static let dataRetentionDays = 60
+    static let maximumBaselineWindowDays = 90
+    static let dataRetentionDays = 90
     private static let lastForegroundRefreshMetadataKey = "better.metadata.lastForegroundRefresh"
     private static let lastDailyProcessingMetadataKey = "better.metadata.lastDailyProcessing"
     private static let windowMetadataKey = "better.metadata.window"
@@ -76,6 +76,26 @@ final class SyncCoordinator {
         await syncHealthRange(from: startDate, to: endDate, forceDailyProcessing: true)
     }
 
+    /// Called on every cold launch. Runs the full historical sync only when the app
+    /// has no stored data (first install or after reset). For returning users it does
+    /// nothing — the Sleep tab's `refreshIfNeededForToday` handles the daily refresh.
+    func performLaunchSync(now: Date = Date()) async {
+        guard phase != .syncing else { return }
+        let lookback = calendar.date(byAdding: .day, value: -Self.maximumBaselineWindowDays, to: now)
+            ?? now.addingTimeInterval(Double(-Self.maximumBaselineWindowDays) * 86_400)
+        let hasPriorData: Bool
+        do {
+            let sessions = try await localRepository.fetchCachedSessions(from: lookback, to: now)
+            hasPriorData = !sessions.isEmpty
+        } catch {
+            hasPriorData = false
+        }
+        logger.debug("launch sync lookbackDays=\(Self.maximumBaselineWindowDays, privacy: .public) hasPriorData=\(hasPriorData, privacy: .public)")
+
+        guard !hasPriorData else { return }
+        await performInitialSync(now: now)
+    }
+
     func performForegroundRefresh(now: Date = Date()) async {
         let startDate = calendar.date(byAdding: .hour, value: -36, to: now) ?? now.addingTimeInterval(-36 * 3_600)
         await syncHealthRange(from: startDate, to: now)
@@ -130,7 +150,9 @@ final class SyncCoordinator {
             if result.deletedObjects.isEmpty, let range = Self.expandedRange(for: result.samples, fallbackEndDate: now) {
                 try await performSyncHealthRange(from: range.start, to: range.end, forceDailyProcessing: true)
             } else {
-                let startDate = calendar.date(byAdding: .day, value: -30, to: now) ?? now.addingTimeInterval(-30 * 86_400)
+                let startDate = calendar.date(byAdding: .day, value: -Self.maximumBaselineWindowDays, to: now)
+                    ?? now.addingTimeInterval(Double(-Self.maximumBaselineWindowDays) * 86_400)
+                logger.debug("incremental refresh fallbackDays=\(Self.maximumBaselineWindowDays, privacy: .public)")
                 try await performSyncHealthRange(from: startDate, to: now, forceDailyProcessing: true)
             }
 
@@ -230,7 +252,7 @@ private extension SyncCoordinator {
             return
         }
 
-        // Daily maintenance: Prune data older than 60 days
+        // Daily maintenance: keep enough cached sleep history for 90-day baselines.
         try await localRepository.pruneDataOlderThan(days: Self.dataRetentionDays)
 
         // Per-window baseline computation
@@ -273,7 +295,6 @@ private extension SyncCoordinator {
         let baselineStart = calendar.date(byAdding: .day, value: -baselineWindowDays, to: endDate)
             ?? endDate.addingTimeInterval(Double(-baselineWindowDays) * 86_400)
         let cachedSessions = try await localRepository.fetchCachedSessions(from: baselineStart, to: endDate)
-        let adherence = try await localRepository.fetchAdherence(from: baselineStart, to: endDate)
         let appStartKey = SleepDateKey.calendarDateKey(for: profile.createdAt, calendar: calendar)
         let alertEligibleSessions = hydratedSessions.filter { $0.sleepDateKey >= appStartKey }
 
@@ -284,20 +305,12 @@ private extension SyncCoordinator {
                 fromSleepDateKey: appStartKey,
                 limit: nil
             )
-            let protocolComparison = ProtocolComparisonService(calendar: calendar).compare(
-                sessions: cachedSessions,
-                adherence: adherence,
-                window: .last30Days,
-                endingAt: endDate
-            )
             let alerts = try await alertService.generateAlerts(
                 sessions: alertEligibleSessions,
                 recentSessions: cachedSessions,
                 baseline: activeBaseline,
                 profile: profile,
-                adherence: adherence,
                 settings: alertSettings,
-                protocolComparison: protocolComparison,
                 previousAlerts: previousAlerts,
                 createdAt: endDate
             )

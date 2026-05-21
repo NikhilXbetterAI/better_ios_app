@@ -1,43 +1,83 @@
 import Foundation
 import SwiftData
 
-nonisolated enum BetterPersistenceContainerFactory {
-    private static let schema = Schema([
-        StoredSleepSession.self,
-        StoredNightlyBiometricSummary.self,
-        StoredDailyActivitySummary.self,
-        StoredBaseline.self,
-        StoredProtocolAdherence.self,
-        StoredActivityStatusLog.self,
-        StoredAlert.self,
-        StoredUserProfile.self,
-        StoredSyncAnchor.self,
-        StoredManualBiologyEntry.self,
-        StoredSleepContextEntry.self,
-        StoredSleepModeSettings.self,
-        StoredSleepModeSchedule.self,
-        StoredSleepModeSession.self
-    ])
+// MARK: - Versioned schema chain
+//
+// Schema V1 is the original 14 models that shipped before Protocol Formula Tracking.
+// Schema V2 adds the four Protocol Formula models. V1 → V2 is purely additive (new
+// tables only — no field changes), so the migration is `.lightweight`.
+//
+// Whenever you add or modify a `@Model` class you MUST add a new versioned schema
+// here and append a stage to `BetterMigrationPlan`. Never mutate `BetterSchemaV1` /
+// `BetterSchemaV2` after they ship.
 
+nonisolated enum BetterSchemaV1: VersionedSchema {
+    nonisolated static var versionIdentifier: Schema.Version { .init(1, 0, 0) }
+    nonisolated static var models: [any PersistentModel.Type] {
+        [
+            StoredSleepSession.self,
+            StoredNightlyBiometricSummary.self,
+            StoredDailyActivitySummary.self,
+            StoredBaseline.self,
+            StoredProtocolAdherence.self,
+            StoredActivityStatusLog.self,
+            StoredAlert.self,
+            StoredUserProfile.self,
+            StoredSyncAnchor.self,
+            StoredManualBiologyEntry.self,
+            StoredSleepContextEntry.self,
+            StoredSleepModeSettings.self,
+            StoredSleepModeSchedule.self,
+            StoredSleepModeSession.self
+        ]
+    }
+}
+
+nonisolated enum BetterSchemaV2: VersionedSchema {
+    nonisolated static var versionIdentifier: Schema.Version { .init(2, 0, 0) }
+    nonisolated static var models: [any PersistentModel.Type] {
+        BetterSchemaV1.models + [
+            StoredProtocolFormulaVersion.self,
+            StoredProtocolNightLog.self,
+            StoredProtocolLogEdit.self,
+            StoredProtocolBaselineSnapshot.self
+        ]
+    }
+}
+
+nonisolated enum BetterMigrationPlan: SchemaMigrationPlan {
+    nonisolated static var schemas: [any VersionedSchema.Type] {
+        [BetterSchemaV1.self, BetterSchemaV2.self]
+    }
+    nonisolated static var stages: [MigrationStage] {
+        [.lightweight(fromVersion: BetterSchemaV1.self, toVersion: BetterSchemaV2.self)]
+    }
+}
+
+nonisolated enum BetterPersistenceContainerFactory {
+    private static var currentSchema: Schema { Schema(versionedSchema: BetterSchemaV2.self) }
+
+    /// Builds the live SwiftData container with `BetterMigrationPlan` wired in.
+    ///
+    /// Unlike the pre-V2 implementation, this no longer silently wipes the store on init
+    /// failure. User-entered Protocol Formula data isn't recoverable from HealthKit, so a
+    /// silent reset would destroy work. On migration failure the error propagates and the
+    /// app surfaces a non-destructive blocking recovery state on next launch (the user
+    /// must opt into "Reset all local data" from Settings).
     static func makeLiveContainer() throws -> ModelContainer {
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
-        let container: ModelContainer
-        do {
-            container = try ModelContainer(for: schema, configurations: config)
-        } catch {
-            // WAL corruption from a failed background write (e.g. device locked during BGTask)
-            // can leave the store unreadable. Delete the store files and recreate rather than
-            // leaving the app permanently broken.
-            try? deleteStoreFiles(at: config.url)
-            container = try ModelContainer(for: schema, configurations: config)
-        }
+        let container = try ModelContainer(
+            for: currentSchema,
+            migrationPlan: BetterMigrationPlan.self,
+            configurations: config
+        )
         applyFileProtection(to: container.configurations.first?.url)
         return container
     }
 
     static func makePreviewContainer() throws -> ModelContainer {
         try ModelContainer(
-            for: schema,
+            for: currentSchema,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
     }
@@ -67,13 +107,6 @@ nonisolated enum BetterPersistenceContainerFactory {
         }
     }
 
-    private static func deleteStoreFiles(at storeURL: URL) throws {
-        let fileManager = FileManager.default
-        let paths = [storeURL.path, storeURL.path + "-shm", storeURL.path + "-wal"]
-        for path in paths where fileManager.fileExists(atPath: path) {
-            try fileManager.removeItem(atPath: path)
-        }
-    }
 }
 
 enum PersistenceJSON {
@@ -758,4 +791,324 @@ final class StoredSleepModeSession {
     func toDomain() throws -> SleepModeSession {
         try PersistenceJSON.decode(SleepModeSession.self, from: sessionData)
     }
+}
+
+// MARK: - Protocol Formula Tracking (schema V2)
+
+@Model
+final class StoredProtocolFormulaVersion {
+    @Attribute(.unique) var id: UUID
+    var displayLabel: String
+    /// Always indexed (sortable) — derived ordinal value computed by the repository
+    /// on read. Stored so SQLite-side sorts remain cheap.
+    var ordinalIndex: Int
+    var shippedOn: Date
+    var colorHex: String
+    var isActive: Bool
+    var isImportedPlaceholder: Bool
+    var archivedAt: Date?
+    /// Encrypted JSON blob containing `formulaText` + `components` + timestamps.
+    var bodyData: Data
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID,
+        displayLabel: String,
+        ordinalIndex: Int,
+        shippedOn: Date,
+        colorHex: String,
+        isActive: Bool,
+        isImportedPlaceholder: Bool,
+        archivedAt: Date?,
+        bodyData: Data,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.displayLabel = displayLabel
+        self.ordinalIndex = ordinalIndex
+        self.shippedOn = shippedOn
+        self.colorHex = colorHex
+        self.isActive = isActive
+        self.isImportedPlaceholder = isImportedPlaceholder
+        self.archivedAt = archivedAt
+        self.bodyData = bodyData
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    convenience init(domain: ProtocolFormulaVersion, ordinalIndex: Int) throws {
+        // The blob stores the version-detail fields that may evolve over time so we don't
+        // need a schema migration every time we add an optional field to the domain type.
+        let body = ProtocolFormulaVersionBody(
+            formulaText: domain.formulaText,
+            components: domain.components
+        )
+        self.init(
+            id: domain.id,
+            displayLabel: domain.displayLabel,
+            ordinalIndex: ordinalIndex,
+            shippedOn: domain.shippedOn,
+            colorHex: domain.colorHex,
+            isActive: domain.isActive,
+            isImportedPlaceholder: domain.isImportedPlaceholder,
+            archivedAt: domain.archivedAt,
+            bodyData: try PersistenceJSON.encode(body),
+            createdAt: domain.createdAt,
+            updatedAt: domain.updatedAt
+        )
+    }
+
+    func toDomain(ordinalLabel: String) throws -> ProtocolFormulaVersion {
+        let body = try PersistenceJSON.decode(ProtocolFormulaVersionBody.self, from: bodyData)
+        return ProtocolFormulaVersion(
+            id: id,
+            displayLabel: displayLabel,
+            ordinalLabel: ordinalLabel,
+            formulaText: body.formulaText,
+            components: body.components,
+            shippedOn: shippedOn,
+            colorHex: colorHex,
+            isActive: isActive,
+            isImportedPlaceholder: isImportedPlaceholder,
+            archivedAt: archivedAt,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+}
+
+/// Encrypted blob layout for the parts of `ProtocolFormulaVersion` that don't need their
+/// own SQLite columns. Schema-stable — adding a field here is a JSON migration, not a
+/// SwiftData migration, thanks to `PersistenceJSON.decode`'s plain-JSON fallback.
+nonisolated private struct ProtocolFormulaVersionBody: Codable, Hashable, Sendable {
+    var formulaText: String
+    var components: [ProtocolFormulaComponent]
+}
+
+@Model
+final class StoredProtocolNightLog {
+    @Attribute(.unique) var id: UUID
+    @Attribute(.unique) var sleepDateKey: String
+    /// Stringified UUID — SwiftData predicates can't compare UUIDs across `@Model` boundaries
+    /// without a lot of friction, so we index the string form.
+    var versionIDString: String
+    var statusRawValue: String
+    var takenAt: Date?
+    var note: String?
+    var formulaSnapshotHash: String
+    /// Encrypted JSON blob containing `addins`.
+    var bodyData: Data
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID,
+        sleepDateKey: String,
+        versionIDString: String,
+        statusRawValue: String,
+        takenAt: Date?,
+        note: String?,
+        formulaSnapshotHash: String,
+        bodyData: Data,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.sleepDateKey = sleepDateKey
+        self.versionIDString = versionIDString
+        self.statusRawValue = statusRawValue
+        self.takenAt = takenAt
+        self.note = note
+        self.formulaSnapshotHash = formulaSnapshotHash
+        self.bodyData = bodyData
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    convenience init(domain: ProtocolNightLog) throws {
+        let body = ProtocolNightLogBody(addins: domain.addins)
+        self.init(
+            id: domain.id,
+            sleepDateKey: domain.sleepDateKey,
+            versionIDString: domain.versionID.uuidString,
+            statusRawValue: domain.status.rawValue,
+            takenAt: domain.takenAt,
+            note: domain.note,
+            formulaSnapshotHash: domain.formulaSnapshotHash,
+            bodyData: try PersistenceJSON.encode(body),
+            createdAt: domain.createdAt,
+            updatedAt: domain.updatedAt
+        )
+    }
+
+    func toDomain() throws -> ProtocolNightLog {
+        let body = try PersistenceJSON.decode(ProtocolNightLogBody.self, from: bodyData)
+        return ProtocolNightLog(
+            id: id,
+            sleepDateKey: sleepDateKey,
+            versionID: UUID(uuidString: versionIDString) ?? UUID(),
+            status: ProtocolFormulaNightStatus(rawValue: statusRawValue) ?? .unknown,
+            addins: body.addins,
+            takenAt: takenAt,
+            note: note,
+            formulaSnapshotHash: formulaSnapshotHash,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+}
+
+nonisolated private struct ProtocolNightLogBody: Codable, Hashable, Sendable {
+    var addins: [ProtocolFormulaComponent]
+}
+
+@Model
+final class StoredProtocolLogEdit {
+    @Attribute(.unique) var id: UUID
+    var nightLogID: UUID
+    var sleepDateKey: String
+    var beforeData: Data?
+    var afterData: Data
+    var editedAt: Date
+    var reason: String?
+
+    init(domain: ProtocolLogEdit) {
+        self.id = domain.id
+        self.nightLogID = domain.nightLogID
+        self.sleepDateKey = domain.sleepDateKey
+        self.beforeData = domain.beforeData
+        self.afterData = domain.afterData
+        self.editedAt = domain.editedAt
+        self.reason = domain.reason
+    }
+
+    func toDomain() -> ProtocolLogEdit {
+        ProtocolLogEdit(
+            id: id,
+            nightLogID: nightLogID,
+            sleepDateKey: sleepDateKey,
+            beforeData: beforeData,
+            afterData: afterData,
+            editedAt: editedAt,
+            reason: reason
+        )
+    }
+}
+
+@Model
+final class StoredProtocolBaselineSnapshot {
+    @Attribute(.unique) var id: UUID
+    var frozenAt: Date
+    var windowStart: Date
+    var windowEnd: Date
+    var validNightCount: Int
+    var isInsufficient: Bool
+    /// Encrypted JSON blob with the means, stds and continuity distribution.
+    var bodyData: Data
+
+    init(
+        id: UUID,
+        frozenAt: Date,
+        windowStart: Date,
+        windowEnd: Date,
+        validNightCount: Int,
+        isInsufficient: Bool,
+        bodyData: Data
+    ) {
+        self.id = id
+        self.frozenAt = frozenAt
+        self.windowStart = windowStart
+        self.windowEnd = windowEnd
+        self.validNightCount = validNightCount
+        self.isInsufficient = isInsufficient
+        self.bodyData = bodyData
+    }
+
+    convenience init(domain: ProtocolBaselineSnapshot) throws {
+        let body = ProtocolBaselineSnapshotBody(
+            meanRestorativeMin: domain.meanRestorativeMin,
+            stdRestorativeMin: domain.stdRestorativeMin,
+            meanRestorativePctOfInBed: domain.meanRestorativePctOfInBed,
+            stdRestorativePctOfInBed: domain.stdRestorativePctOfInBed,
+            meanLongestRestorativeBlockMin: domain.meanLongestRestorativeBlockMin,
+            stdLongestRestorativeBlockMin: domain.stdLongestRestorativeBlockMin,
+            continuityCategoryDistribution: domain.continuityCategoryDistribution,
+            meanDeepMin: domain.meanDeepMin,
+            stdDeepMin: domain.stdDeepMin,
+            meanRemMin: domain.meanRemMin,
+            stdRemMin: domain.stdRemMin,
+            meanAwakeMin: domain.meanAwakeMin,
+            stdAwakeMin: domain.stdAwakeMin,
+            meanTotalSleepMin: domain.meanTotalSleepMin,
+            stdTotalSleepMin: domain.stdTotalSleepMin,
+            meanLatencyMin: domain.meanLatencyMin,
+            stdLatencyMin: domain.stdLatencyMin,
+            meanSleepScore: domain.meanSleepScore,
+            stdSleepScore: domain.stdSleepScore
+        )
+        self.init(
+            id: domain.id,
+            frozenAt: domain.frozenAt,
+            windowStart: domain.windowStart,
+            windowEnd: domain.windowEnd,
+            validNightCount: domain.validNightCount,
+            isInsufficient: domain.isInsufficient,
+            bodyData: try PersistenceJSON.encode(body)
+        )
+    }
+
+    func toDomain() throws -> ProtocolBaselineSnapshot {
+        let body = try PersistenceJSON.decode(ProtocolBaselineSnapshotBody.self, from: bodyData)
+        return ProtocolBaselineSnapshot(
+            id: id,
+            frozenAt: frozenAt,
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            validNightCount: validNightCount,
+            meanRestorativeMin: body.meanRestorativeMin,
+            stdRestorativeMin: body.stdRestorativeMin,
+            meanRestorativePctOfInBed: body.meanRestorativePctOfInBed,
+            stdRestorativePctOfInBed: body.stdRestorativePctOfInBed,
+            meanLongestRestorativeBlockMin: body.meanLongestRestorativeBlockMin,
+            stdLongestRestorativeBlockMin: body.stdLongestRestorativeBlockMin,
+            continuityCategoryDistribution: body.continuityCategoryDistribution,
+            isInsufficient: isInsufficient,
+            meanDeepMin: body.meanDeepMin,
+            stdDeepMin: body.stdDeepMin,
+            meanRemMin: body.meanRemMin,
+            stdRemMin: body.stdRemMin,
+            meanAwakeMin: body.meanAwakeMin,
+            stdAwakeMin: body.stdAwakeMin,
+            meanTotalSleepMin: body.meanTotalSleepMin,
+            stdTotalSleepMin: body.stdTotalSleepMin,
+            meanLatencyMin: body.meanLatencyMin,
+            stdLatencyMin: body.stdLatencyMin,
+            meanSleepScore: body.meanSleepScore,
+            stdSleepScore: body.stdSleepScore
+        )
+    }
+}
+
+nonisolated private struct ProtocolBaselineSnapshotBody: Codable, Hashable, Sendable {
+    var meanRestorativeMin: Double?
+    var stdRestorativeMin: Double?
+    var meanRestorativePctOfInBed: Double?
+    var stdRestorativePctOfInBed: Double?
+    var meanLongestRestorativeBlockMin: Double?
+    var stdLongestRestorativeBlockMin: Double?
+    var continuityCategoryDistribution: [SleepContinuityCategory: Double]
+    var meanDeepMin: Double?
+    var stdDeepMin: Double?
+    var meanRemMin: Double?
+    var stdRemMin: Double?
+    var meanAwakeMin: Double?
+    var stdAwakeMin: Double?
+    var meanTotalSleepMin: Double?
+    var stdTotalSleepMin: Double?
+    var meanLatencyMin: Double?
+    var stdLatencyMin: Double?
+    var meanSleepScore: Double?
+    var stdSleepScore: Double?
 }

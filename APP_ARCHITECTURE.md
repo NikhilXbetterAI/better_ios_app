@@ -16,6 +16,7 @@
 8. [CSV Export — Deep Dive](#8-csv-export--deep-dive)
 9. [Security & Encryption](#9-security--encryption)
 10. [Component Directory](#10-component-directory)
+11. [Metric Calculation Reference](#11-metric-calculation-reference) — **how every UI number is computed**
 
 ---
 
@@ -134,7 +135,7 @@ The app is split into 4 clean layers. Data only flows **downward** through them.
        │    │  25%  — REM sleep %         │
        │    └─────────────────────────────┘
        │
-       │  • Step 4: Compute baseline (rolling 15 or 7-day window)
+       │  • Step 4: Compute baseline (rolling 14 or 7-day window; 30-day stable context kept separately)
        │    Uses circular statistics for bedtime/wake time
        │    (so midnight doesn't mess up the average)
        │
@@ -191,7 +192,7 @@ SwiftData Database
 │       └── Respiratory rate (avg)
 │
 ├── SleepBaseline (rolling window summary)
-│   ├── Which window (15-day primary or 7-day fallback)
+│   ├── Which window (14-day primary, 7-day fallback, 30-day stable context)
 │   ├── Valid night count + confidence level
 │   └── Averages + standard deviations for:
 │       total sleep, efficiency, deep sleep, REM, WASO, latency,
@@ -303,19 +304,20 @@ BaselineEngine.selectBaseline()
   • Data quality is not "in-bed only" or "no data"
         │
         ▼
-  Compute 3 windows simultaneously:
+  Compute 3 windows simultaneously (suffix of valid sessions sorted by date):
   ┌─────────────┬─────────────────────────────────┐
-  │ 30-day      │ Stable context (shown as grey)  │
-  │ 15-day      │ Primary active baseline         │
-  │ 7-day       │ Recent fallback                 │
+  │ 30-day      │ Stable context (computed if ≥1) │
+  │ 14-day      │ Primary active baseline (≥14)   │
+  │  7-day      │ Recent fallback (≥7)            │
   └─────────────┴─────────────────────────────────┘
         │
         ▼
-  Pick active baseline:
-  • 15+ valid nights in 15-day window? → use 15-day (HIGH confidence)
-  •  7–14 valid nights?                → use 7-day  (MEDIUM confidence)
-  •  3–6 valid nights?                 → use 7-day  (LOW confidence)
-  •  < 3 valid nights?                 → no baseline (UNAVAILABLE)
+  Active baseline = primary (14-day) ?? recent (7-day)
+  Confidence:
+  • ≥14 valid nights → HIGH
+  •  7–13            → MEDIUM
+  •  3–6             → LOW   (still uses 7-day if available)
+  •  < 3             → UNAVAILABLE
 ```
 
 ### HealthKit fallback states (when data is missing)
@@ -323,7 +325,7 @@ BaselineEngine.selectBaseline()
 | State | What's shown |
 |-------|-------------|
 | `permissionDenied` | Banner: "Grant HealthKit access in Settings" |
-| `baselineBuilding` | Banner: "Still building your baseline (N/15 nights)" |
+| `baselineBuilding` | Banner: "Still building your baseline (N/14 nights)" |
 | `noSleepStages` | Banner: "Only 'in bed' data found — wear your Watch to sleep" |
 | `noData` | Banner: "No sleep data for this date" |
 | Normal | Full dashboard |
@@ -458,12 +460,12 @@ ProtocolComparisonService.compare()
   • Average deep sleep on not-taken nights
   • Delta = taken − not-taken
 
-  Step 3: Assign confidence
+  Step 3: Assign confidence (based on min(taken, not-taken))
   ┌───────────────────────────────────────────────────┐
-  │  7+ nights taken AND 7+ not-taken   → HIGH        │
-  │  4+ nights taken AND 4+ not-taken   → MEDIUM      │
-  │  2+ nights taken AND 2+ not-taken   → LOW         │
-  │  Fewer nights                      → UNAVAILABLE  │
+  │  min ≥ 7   → HIGH                                 │
+  │  min 4–6   → MEDIUM                               │
+  │  min 2–3   → LOW                                  │
+  │  min < 2   → UNAVAILABLE                          │
   └───────────────────────────────────────────────────┘
 
   Output: ProtocolEffectSummary per protocol
@@ -484,6 +486,63 @@ Why? Because nil and false are VERY different:
 
 The analysis engine NEVER treats nil as false.
 ```
+
+---
+
+## 7b. Protocol Formula Tracking (V1) — Deep Dive
+
+Layered on top of the legacy Protocol tab, **Protocol Formula Tracking** reframes the domain around named formula versions (V1 → V2 …) with per-night logs and a frozen baseline of pre-protocol nights. The V1 surface is gated behind the `better.protocol.useFormulaTrackingUI` UserDefaults flag — legacy Protocol tab is the default.
+
+### Domain identity
+
+- **`ProtocolFormulaVersion`** — UUID identity. `displayLabel` (user-editable) + derived `ordinalLabel` ("V1", "V2"). `formulaText` is immutable after the first `ProtocolNightLog` references the version (one exception: `isImportedPlaceholder == true` versions allow exactly one backfill). Subsequent changes require "Make a new version".
+- **`ProtocolNightLog`** — `sleepDateKey` unique. `status ∈ {.taken, .skipped, .unknown}`. `.skipped` rows still record `versionID` so we can answer "how many V2 nights did the user skip?". Each log carries `formulaSnapshotHash` (SHA-256 of formula text + sorted components) captured at log time.
+- **`ProtocolLogEdit`** — append-only audit row written every time a night log is edited. Kept forever.
+- **`ProtocolBaselineSnapshot`** — singleton. Frozen once at protocol start using up to 30 most-recent qualifying nights (detailed/mixed stages) from the 90-day window before `firstVersion.shippedOn`. **Never recomputed** on HealthKit resync. `<7 valid nights → isInsufficient`; `0 valid nights → no snapshot stored`.
+
+### Reuse rules — no duplicate restorative math
+
+The analysis service composes one struct per night by reading existing `SleepSession` fields:
+
+| Snapshot field | Source |
+|----------------|--------|
+| `restorativeSleepMinutes` | `session.restorativeSleepDuration / 60` (only when `dataQuality ∈ {.detailedStages, .mixedSources}`) |
+| `restorativePctOfInBed` | `restorativeSleepDuration / totalInBedTime * 100` (same gating) |
+| `longestRestorativeBlockMinutes` | `session.continuitySummary.longestBlockDuration / 60` |
+| `continuityCategory` | `session.continuitySummary.continuityCategory` |
+
+`SleepContinuityCalculator` is **never** re-run inside Protocol Formula code.
+
+### Schema migration
+
+Persistence now uses `VersionedSchema`:
+
+- `BetterSchemaV1` — the original 14 models.
+- `BetterSchemaV2` — V1 + `StoredProtocolFormulaVersion`, `StoredProtocolNightLog`, `StoredProtocolLogEdit`, `StoredProtocolBaselineSnapshot`.
+- `BetterMigrationPlan` — single `.lightweight` stage (additive only).
+
+The container factory no longer silently wipes on init failure. WAL-corruption recovery is gated behind explicit user action ("Reset all local data" in Settings).
+
+### Legacy migration
+
+`ProtocolAdherenceMigrationService` is one-shot. When V2 schema is online and no `StoredProtocolFormulaVersion` rows exist but `StoredProtocolAdherence` rows do, it:
+
+1. Derives a start date: `UserDefaults better.protocol.startDate` → earliest `taken == true` row → otherwise defer to onboarding.
+2. Creates a single V1 version with `isImportedPlaceholder = true` (empty formula text — user is prompted to backfill).
+3. Collapses legacy `(protocolID, dateKey)` rows to one `ProtocolNightLog` per `sleepDateKey`: any `taken == true` → `.taken`; else any `taken == false` → `.skipped`; absent date → `.unknown` (no row).
+4. Attempts to freeze the baseline; if 0 qualifying nights exist, no snapshot is stored.
+
+The service sets a UserDefaults flag and never re-runs.
+
+### Files (V1)
+
+- `Core/Models/ProtocolFormulaModels.swift` — domain types.
+- `Core/Persistence/PersistenceModels.swift` — schema chain + 4 new `@Model` classes.
+- `Core/Repositories/LocalDataRepository.swift` — formula/log/edit/snapshot CRUD.
+- `Core/Services/ProtocolBaselineService.swift` — bounded-window freeze.
+- `Core/Services/ProtocolAdherenceMigrationService.swift` — one-shot legacy import.
+- `Core/Services/ProtocolFormulaAnalysisService.swift` — snapshot, rollup, impact summary.
+- `Features/ProtocolFormula/` — view + view-model layer, gated behind the flag.
 
 ---
 
@@ -727,12 +786,305 @@ Sleep Quality Score (0–100)
 Session split threshold:     > 30 minutes awake gap → new session
 Data retention:              60 days
 Background sync interval:    every 6 hours
-Baseline preference:         15-day window (fallback: 7-day)
-Baseline min nights:         15 for high confidence, 7 for medium, 3 for low
-Protocol confidence levels:  7+ taken and 7+ not-taken → high, 4+ and 4+ → medium, 2+ and 2+ → low
+Baseline preference:         14-day window (fallback: 7-day; 30-day = stable context)
+Baseline min nights:         14 → high, 7–13 → medium, 3–6 → low confidence
+Protocol confidence levels:  min(taken,notTaken) ≥7 → high, 4–6 → medium, 2–3 → low
 Encryption:                  AES-256-GCM, key in iOS Keychain
 ```
 
 ---
 
-*Generated: 2026-05-06 | Better iOS App*
+## 11. Metric Calculation Reference
+
+This section is the **authoritative map from each number you see in the UI back to the exact code that produces it**. Every formula is sourced from real files — paths and line numbers are included so you can jump in.
+
+---
+
+### 11.1 Sleep Quality Score (0–100)
+
+**Where it's shown:** Sleep tab ring, Trends "Sleep Score" line chart, Protocol Impact "Score" band, every nightly CSV row.
+
+**Code:** [`SleepDataProcessor.swift:206–246`](Better/Core/Processors/SleepDataProcessor.swift) — `computeQualityScore()`; helper `rangedScore` at lines 505–516.
+
+**Inputs:** `totalSleepTime`, `efficiency`, `remDuration`, `deepDuration`, `dataQuality`, plus `sleepGoalHours` from `UserProfile` (default 8h).
+
+**Sub-scores (each 0–100):**
+
+```
+durationScore   = clamp(totalSleepTime / (goalHours · 3600) · 100, 0, 100)
+                  linear ramp to goal, capped at 100
+
+efficiencyScore = clamp(efficiency / 0.92 · 100, 0, 100)
+                  target efficiency = 92%
+
+remScore        = rangedScore(remDuration / totalSleepTime, low=0.20, high=0.25)
+deepScore       = rangedScore(deepDuration / totalSleepTime, low=0.13, high=0.23)
+```
+
+**`rangedScore(ratio, low, high)`** — returns:
+- `100` if ratio is inside the [low, high] band
+- `ratio / low · 100` if below the band
+- `(1 − (ratio − high) / (high · 1.75)) · 100` if above the band, clamped to [0, 100]
+
+**Composite:**
+
+```
+detailedStages session:
+  overall = 0.30·duration + 0.20·efficiency + 0.25·rem + 0.25·deep
+
+unspecifiedSleepOnly session (no stage breakdown):
+  overall = 0.60·duration + 0.40·efficiency       (rem/deep forced to 0)
+  isPartial = true                                (UI shows a "partial" badge)
+```
+
+Edge cases: `totalSleepTime == 0` → rem/deep ratios = 0; final value always clamped 0–100.
+
+---
+
+### 11.2 Session Construction (raw HealthKit → SleepSession)
+
+**Code:** [`SleepDataProcessor.swift:259–402`](Better/Core/Processors/SleepDataProcessor.swift).
+
+**Pipeline:**
+
+1. **Parse raw samples** (`rawInterval`, L350–376). Each `HKCategorySample` gets a `sourceQuality` score:
+   - `manual entry` → 0
+   - Apple Watch + detailed stage → 4
+   - Any detailed stage → 3
+   - Apple Watch + unspecified → 2
+   - Else → 1
+
+2. **Overlap resolution** (`cleanedIntervals`, L273–312). Collects every start/end boundary, sorts them, and for each minimal sub-interval keeps the overlapping raw interval with highest
+   `resolutionPriority = stagePriority·10 + sourceQuality`
+   where stagePriority: deep/rem/core = 4, awake = 3, unspecified = 2, inBed = 1. Adjacent equal-stage+source segments are merged.
+
+3. **Session grouping** (`groupSessions`, L314–334). Sorted intervals start a **new session** when gap from previous end > **1800s (30 min)**.
+
+4. **Per-session metrics** (`makeSession`, L103–204). Requires `totalSleepTime ≥ 300s` (else discarded). Computes:
+   - `inBedDuration` = union of `.inBed` intervals clipped to session bounds (falls back to `end − start`)
+   - `sleepLatency` = `firstAsleepStart − inBedStart`, floored at 0
+   - `waso` = sum of `.awake` intervals strictly between first and final asleep moment
+   - `efficiency` = `min(1, totalSleep / totalInBed)`
+
+5. **`dataQuality` flag** (L378–402): `detailedStages` > `unspecifiedSleepOnly` > `mixedSources` (>1 source on sleep stages) > `inBedOnly` > `noData`.
+
+---
+
+### 11.3 Per-Night Biometric Summary
+
+**Where it's shown:** Sleep tab "Biometrics" row (HR / HRV / SpO2), Biology tab freshness, CSV columns.
+
+**Code:** [`SleepDataProcessor.swift:67–90`](Better/Core/Processors/SleepDataProcessor.swift); median helper L490–499.
+
+For each metric, samples filtered by HK type within the session window:
+
+| Metric | Aggregation |
+|---|---|
+| Heart Rate | average, min, max |
+| HRV (SDNN) | average + **median** (middle of sorted list, or mean of two middles) |
+| SpO2 | average, min (no max) |
+| Respiratory Rate | average only |
+
+All use `averageOrNil` (returns nil on empty input). **No outlier filtering** — raw HealthKit values are used.
+
+---
+
+### 11.4 Baseline (Rolling 7 / 14 / 30 Day)
+
+**Where it's shown:** "vs Baseline" cards on Sleep tab, dashed reference line on Trends charts, deltas in every CSV row.
+
+**Code:** [`BaselineEngine.swift:36–110`](Better/Core/Services/BaselineEngine.swift) for selection; [`SleepDataProcessor.swift:27–65`](Better/Core/Processors/SleepDataProcessor.swift) (`computeBaseline`) for the math.
+
+**Valid-night filter** (`isValidNight`, L85–108): valid `sleepDateKey`, `2h < totalSleepTime ≤ 14h`, `totalInBedTime ≥ totalSleepTime`, dataQuality ≠ `inBedOnly`/`noData`, all durations ≥ 0, efficiency ∈ [0,1], `startDate < endDate`.
+
+**Window selection:** valid sessions sorted ascending by `sleepDateKey`, then:
+- `stable` = `suffix(30)` if any exist
+- `primary` = `suffix(14)` only if there are ≥14
+- `recent` = `suffix(7)` only if there are ≥7
+- `activeBaseline = primary ?? recent` (30-day stays as a separate "stable context" column, never the active comparator)
+
+**Computation per window** (`computeBaseline`):
+- Further drops `inBedOnly`/`noData`/`totalSleepTime < 300s`
+- Stage averages (REM, Deep) computed **only over `detailedSessions`** — `unspecifiedSleepOnly` is excluded to avoid skewing
+- Mean + **population std dev** (variance ÷ N) for: totalSleep, REM, Deep, efficiency, WASO, latency, HRV avg, RR avg, SpO2 avg
+- **Circular statistics** for bedtime / wake (L464–488): minute-of-day → angle `θ = m · 2π/1440`, average sin & cos, `atan2` → mean angle → back to minutes. Std dev uses `circularMinuteDistance` = `min(|Δ|, 1440 − |Δ|)` so midnight crossings don't break the average.
+
+---
+
+### 11.5 "vs Baseline" Deltas (Sleep Tab)
+
+**Code:** [`SleepVsBaselineView.swift`](Better/Features/Sleep/SleepVsBaselineView.swift) (lines 10–62, 160–183, 218–234).
+
+| UI element | Formula |
+|---|---|
+| Total sleep diff | `(session.totalSleepTime − baseline.totalSleepAverage) / 60` minutes |
+| Deep / REM / Latency cards | same: `(session − baseline.{deep,rem,latency}Average) / 60` |
+| Efficiency diff | `(session.efficiency − baseline.efficiencyAverage) · 100` percentage points |
+| Bedtime / wake row | `diff = sessionMinutes − baselineMinuteAverage`, wrapped to ±720 min for midnight crossings; "earlier" if diff<0, "later" if diff>0 |
+
+Sign is mapped through each metric's `higherIsBetter` flag to color green (better) or red (worse).
+
+---
+
+### 11.6 Schedule Consistency Variance
+
+**Code:** baseline std devs from §11.4; UI in [`ScheduleConsistencyView.swift:203–238`](Better/Features/Sleep/ScheduleConsistencyView.swift).
+
+```
+displayedVariation = max(baseline.bedtimeMinuteStdDev,
+                         baseline.wakeMinuteStdDev)
+shown as "±N min variation"
+```
+
+Per-night chart points use a view-local `circularVariation` (RMS of `signedMinuteDistance` from the circular mean) — same circular math as the baseline.
+
+---
+
+### 11.7 Trends Line Chart
+
+**Code:** [`TrendsViewModel.swift:246–445`](Better/Features/Trends/TrendsViewModel.swift); render in [`TrendLineChartView.swift:12–129`](Better/Features/Trends/TrendLineChartView.swift).
+
+- **Load:** `LocalDataRepository.fetchCachedSessions(from: startDate, to: now)` over selected `TrendWindow` (7 / 30 / 60 days).
+- **Point value** (`metricValue(for:)` L445) — switches on `selectedMetric`:
+
+| Metric | Source |
+|---|---|
+| `totalSleep` / `deep` / `rem` / `longestRestorativeBlock` | seconds ÷ 3600 (hours) |
+| `score` | `session.qualityScore.overall` |
+| `hrv` / `respRate` / `oxygenSaturation` | `session.biometrics.*` |
+| `waso` / `latency` | seconds ÷ 60 (minutes) |
+
+Stage metrics require `dataQuality == .detailedStages`; sessions without stages are nil-dropped from the series.
+
+- **Y-axis scaling:** `min = values.min()`, `max = values.max()`, normalized as `(v − min) / max(0.1, max − min)`. No moving average — the chart connects raw points.
+- **Period-over-period summary** (`updateComparisonSummary` L363): averages current window vs equivalent prior window; `percentChange = (current − previous) / previous`. nil if either side empty or previous == 0.
+
+**Baseline overlay** (`BaselineComparisonChartView.swift` L13–42) is a **separate** card — horizontal bars comparing latest session vs `SleepBaseline` for totalSleep / deep / REM / HRV. Bar width = `value / max(current, baseline, 0.1) · 260`.
+
+**Stage composition** (L343): per-night percentages = `stageDuration / (deep + core + rem + awake)`; only emitted for `detailedStages` nights.
+
+---
+
+### 11.8 Protocol Impact (Taken vs Not-Taken)
+
+**Code:** [`ProtocolComparisonService.swift:63–116`](Better/Core/Services/ProtocolComparisonService.swift); UI in [`ProtocolImpactChartView.swift`](Better/Features/Protocol/ProtocolImpactChartView.swift).
+
+1. **Eligibility:** sessions pass `BaselineEngine.isValidNight` and lie in selected window (`last7Days` / `15` / `30` / `all`).
+2. **Per-night status** (`status(for:)` L111):
+   - no adherence row for that `sleepDateKey` → `.unknown`
+   - any taken=true → `.taken`
+   - else → `.notTaken`
+   - **Unknown nights are excluded entirely** from the averages.
+3. **Deltas** = `avg(taken) − avg(notTaken)` for `totalSleepTime`, `efficiency`, `awakeDuration`. For **deep/rem**, only sessions with `detailedStages` or `mixedSources` AND nonzero stage duration contribute (`stageAverage`).
+4. **Confidence** (based on `min(takenCount, notTakenCount)`):
+
+   | min | Level |
+   |---|---|
+   | ≥ 7 | HIGH |
+   | 4–6 | MEDIUM |
+   | 2–3 | LOW |
+   | < 2 | UNAVAILABLE |
+
+**ProtocolImpactChartView** renders a 3-bar band [Baseline | Protocol | Off-Protocol]. `baselineAverage` is a `SleepPeriodSummary` over pre-protocol nights. Requires ≥3 protocol nights and ≥2 off nights to render. `baselineDelta = protocolAverage − baselineAverage` — positive → green, negative → red.
+
+---
+
+### 11.9 Context Factor Insights (Journal Tristate)
+
+**Code:** [`ContextComparisonService.swift:134–277`](Better/Core/Services/ContextComparisonService.swift); UI driver [`ContextFactorDashboardViewModel.swift:56`](Better/Features/Protocol/ContextFactorDashboardViewModel.swift).
+
+- Each factor (`caffeineLate`, `alcohol`, `workout`, `lateMeal`, `highStress`, `screenTimeLate`, `nap`, `travel`, plus synthetic `.protocolTaken`) is a `Bool?` on `SleepContextEntry`. **`nil` is preserved as "unknown" and NOT coerced to false.**
+- Sessions grouped by `Bool?` → yes / no / unknown buckets. Unknown excluded from deltas.
+- Per-factor deltas: `durationDelta`, `efficiencyDelta`, `deepDelta` (stage-filtered), `remDelta`, `awakeDelta` = `avg(yes) − avg(no)`.
+- Reuses `ProtocolComparisonService.confidence` (same 7 / 4 / 2 thresholds).
+- `hasMeaningfulDifference` (L277): true when any |delta| ≥ a threshold in `SleepAnalysisThresholds`.
+- Dashboard probes `.last30Days` first; if no meaningful signal, falls back to `.all`. Shows top 3 meaningful factors.
+
+---
+
+### 11.10 Biology Tab Metrics
+
+**Code:** [`BiologyViewModel.swift:41–290`](Better/Features/Biology/BiologyViewModel.swift).
+
+- **Window:** last 30 days of HealthKit biometrics + cached sessions.
+- **Per-metric value** (`makeMetrics` L114):
+
+| Metric | Latest value source | History |
+|---|---|---|
+| VO2Max, Weight, LeanMass, BodyFat, BodyTemp, RHR | newest HealthKit sample by `endDate` | last 12 samples sorted |
+| HRV | `latestSession.biometrics.hrvAverage` → falls back to `baseline.hrvAverage` | last 12 sessions' `hrvAverage` |
+| Blood O2 (SpO2) | session → baseline fallback; if value ≤ 1, multiplied by 100 | same |
+| Respiratory rate | session → baseline fallback | same |
+
+- **Trend label** (`trendFromValues` L252): compares first vs last in 12-sample window — `last > first·1.02` → "Increasing", `last < first·0.98` → "Decreasing", else "Stable".
+- **Rating bands** (hard-coded L267–290):
+
+| Metric | Bands |
+|---|---|
+| VO2Max | <35 Low · <45 Fair · <55 Good · else Excellent |
+| HRV | ≥60 Strong · ≥40 Stabilizing · else Low |
+| RHR | ≤58 Good · ≤68 Fair · else Elevated |
+| SpO2 | ≥95 Good · else Watch |
+
+- **Manual entries** (`mergeManualEntries` L218): `ManualBiologyEntry` fills only when the HealthKit value is nil (HK takes precedence).
+
+---
+
+### 11.11 Alerts Generation
+
+**Code:** [`AlertGenerationService.swift:192`](Better/Core/Services/AlertGenerationService.swift) — `buildAlerts`. Defaults in `AlertGenerationSettings.default` (L19).
+
+| Alert kind | Rule |
+|---|---|
+| `analysisReady` | always (severity 0) |
+| `lowScore` | `qualityScore.overall < 70` |
+| `sleepDebt` | `goalSeconds − totalSleepTime > 1h` |
+| `lowDeepSleep` | detailedStages AND (deep < 60min OR deep < `baseline.deepAverage − deepStdDev`) |
+| `lowRemSleep` | detailedStages AND (rem < 75min OR rem < `remAvg − remStdDev`) |
+| `highWASO` | `waso > 45min` |
+| `lowHRV` | `hrvAvg < baseline.hrvAverage · 0.80` |
+| `lowOxygenSaturation` | `avgSpO2 < 0.94` OR `minSpO2 < 0.90` |
+| `irregularSchedule` | `bedtimeMinuteStdDev > 60` OR `wakeMinuteStdDev > 60` |
+| `improvementTrend` | over last 7 nights: score gained ≥5 OR deep gained ≥15min |
+| `missedProtocol` | after cutoff hour 22, no adherence row with `taken=true` for that date |
+
+Alert IDs are **deterministic** (`deterministicUUID("kind|sleepDateKey")`) so re-running the same date+kind dedupes. Local notifications are gated by `localNotificationsEnabled` + authorization, with one digest per `sleepDateKey`.
+
+---
+
+### 11.12 Activity Tab
+
+**Code:** [`ActivityViewModel.swift:64–91`](Better/Features/Activity/ActivityViewModel.swift).
+
+- **Daily activity** (`fetchActivitySummary`): HealthKit sums over `[startOfDay, +1d)` for `stepCount`, `activeEnergyBurned`, `appleExerciseTime`, `appleStandTime` (÷60 → hours), `flightsClimbed`, `distanceWalkingRunning`. Persisted to `DailyActivitySummary`.
+- **Status logging** (`saveStatus`): writes `ActivityStatusLog(dateKey, status, note)` with `UserActivityStatus` (sick / injured / traveling / jetLagged / normal).
+- **Influence on analysis:** `ResearchAnalysisService` attaches status to each nightly row; nights are flagged `isTravelConfounded` (jetLagged/traveling) and `isConfounded` (those + sick/injured). Confounded nights are NOT removed from the primary delta — they're excluded only from `jetLagAdjustedSleepDifferenceHours` and they **reduce confidence**.
+
+---
+
+### 11.13 Research Analysis — Nightly Rows & Effect Summary
+
+**Code:** [`ResearchAnalysisService.swift`](Better/Core/Services/ResearchAnalysisService.swift).
+
+- **`buildExportPackage` (L20):** capped at 60 days. Fetches sessions, baseline (`BaselineEngine.selectBaseline` with stored fallback), adherence, status logs, daily activity, context entries.
+- **`buildNightlyRows` (L89):** joins by `sleepDateKey` → one row with:
+  - Raw session metrics (totalSleep h, in-bed h, efficiency %, stage hours, WASO min, latency min, score sub-components, biometrics)
+  - **Baseline deltas (L167–173):** `(session.totalSleepTime − baseline.totalSleepAverage)/3600`, efficiency delta in pp, WASO/latency in min, HRV delta
+  - **Protocol timing (L117):** `minutesFromProtocolToSleep = (sleepStart − adherence.takenAt) / 60` per taken protocol
+  - Activity, status flags, full context tristate fields
+- **`effectSummary` (L235):** per protocol — `taken` rows where `protocolIDsTaken.contains(id)`, `notTaken` symmetric. Delta = `avg(taken) − avg(missed)` for sleep h, score, efficiency pp, WASO min, latency min, HRV. The **jet-lag-adjusted** delta uses only `!isConfounded` rows.
+- **`timingBuckets` (L282):** minutes from dose to sleep → `>180` early, `60–180` optimal, `<60` late. Only emitted when bucket size ≥5 AND missed ≥5.
+- **`confidence` (L436):** requires ≥5 taken AND ≥5 missed (else `insufficient`).
+
+  | Tier | Requirement |
+  |---|---|
+  | **Strong** | ≥20 taken AND ≥20 missed AND confounderFraction < 0.15 AND ≤1 caveat |
+  | **Moderate** | ≥10/10 AND confounderFraction < 0.30 |
+  | **Low** | otherwise |
+
+- **`caveats` (L406):** appends strings for low sample (<5), travel/jet-lag presence, sick/injured, missing protocol timing, missing biometrics, non-detailed-stage nights, mixed/in-bed-only nights.
+- **`buildInsightSummary` (L302):** ranks protocols where `confidence ≠ insufficient` and `sleepDifferenceHours > 0`, sorted desc — drives Settings "research insight" card.
+
+---
+
+*Generated: 2026-05-06 · Last refresh: 2026-05-19 (§11 added) | Better iOS App*

@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Protocol Formula Functions</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080808;
+      --surface: #151515;
+      --surface-2: #1d1d22;
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --dim: #71717a;
+      --border: #2b2b31;
+      --brand: #7c5cff;
+      --good: #35d07f;
+      --warn: #f4c542;
+      --bad: #ff5d6c;
+      --code: #d6ccff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(1040px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    header {
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 28px;
+    }
+
+    h1, h2, h3 { line-height: 1.12; margin: 0; }
+    h1 { font-size: clamp(32px, 5vw, 56px); letter-spacing: 0; }
+    h2 { font-size: 24px; margin-top: 40px; margin-bottom: 14px; }
+    h3 { font-size: 17px; margin-top: 22px; margin-bottom: 8px; }
+    p { margin: 0 0 12px; color: var(--muted); }
+    a { color: var(--code); }
+    code {
+      color: var(--code);
+      background: rgba(124, 92, 255, 0.12);
+      border: 1px solid rgba(124, 92, 255, 0.2);
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 0.92em;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .label {
+      color: var(--dim);
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+
+    .value {
+      color: var(--text);
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    ul {
+      margin: 0 0 14px;
+      padding-left: 20px;
+      color: var(--muted);
+    }
+
+    li { margin: 6px 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 18px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      color: var(--text);
+      background: var(--surface-2);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    td { color: var(--muted); }
+    tr:last-child td { border-bottom: 0; }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--good);
+      font-weight: 800;
+    }
+
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+
+    .note {
+      margin-top: 16px;
+      padding: 14px 16px;
+      background: rgba(124, 92, 255, 0.09);
+      border: 1px solid rgba(124, 92, 255, 0.22);
+      border-radius: 8px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 760px) {
+      main { width: min(100% - 24px, 1040px); padding-top: 32px; }
+      .summary { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="label">Better iOS</div>
+      <h1>Protocol Formula Functions</h1>
+      <p>
+        Current production implementation reference for Protocol Formula Tracking.
+        This document mirrors the SwiftUI/services state after the May 21, 2026 fixes
+        and the UI unification pass of May 21, 2026.
+      </p>
+      <div class="summary">
+        <div class="card">
+          <div class="label">Baseline</div>
+          <div class="value">90-day window</div>
+          <p>Frozen once from up to 30 qualifying pre-protocol nights.</p>
+        </div>
+        <div class="card">
+          <div class="label">Impact</div>
+          <div class="value">User vs own baseline</div>
+          <p>No cohort comparison. Every delta keeps the non-causal caveat.</p>
+        </div>
+        <div class="card">
+          <div class="label">Logging</div>
+          <div class="value">Taken / skipped / unknown</div>
+          <p>Unknown nights are excluded from impact calculations.</p>
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <h2>Implemented Fixes</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Issue</th>
+            <th>Implemented behavior</th>
+            <th>Primary files</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Tonight buttons gave no visible save confirmation.</td>
+            <td>
+              <span class="status">Fixed</span>.
+              <code>Mark taken</code> and <code>Didn't take</code> now show immediate saving state,
+              saved confirmation, and error retry. Refresh/re-entry derives saved status from the stored
+              tonight log.
+            </td>
+            <td>
+              <code>ProtocolFormulaHomeViewModel.swift</code><br>
+              <code>ProtocolFormulaHomeView.swift</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Baseline existed but deep/REM/awake/sleep/latency comparisons showed dashes.</td>
+            <td>
+              <span class="status">Fixed</span>.
+              Extended baseline fields are now persisted and decoded:
+              deep, REM, awake, total sleep, latency, sleep score, and standard deviations.
+            </td>
+            <td>
+              <code>PersistenceModels.swift</code><br>
+              <code>ProtocolBaselineService.swift</code><br>
+              <code>AppEnvironment.swift</code>
+            </td>
+          </tr>
+          <tr>
+            <td>All Metrics chart was not useful for detail inspection.</td>
+            <td>
+              <span class="status">Fixed</span>.
+              The chart keeps tap/drag interaction and tooltip details: date, version, value,
+              baseline, and delta. Baseline is included in chart scaling.
+            </td>
+            <td>
+              <code>ProtocolAllMetricsView.swift</code><br>
+              <code>ProtocolAllMetricsViewModel.swift</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Impact vs Baseline was hard to understand.</td>
+            <td>
+              <span class="status">Fixed</span>.
+              Impact metrics are tappable cards. Tapping opens a detail sheet with your average,
+              baseline average, delta, night count, metric meaning, and caveat.
+            </td>
+            <td>
+              <code>ProtocolFormulaHomeView.swift</code><br>
+              <code>ImpactMetricDetailSheet.swift</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Timeline could appear empty when sleep data had not matched logs.</td>
+            <td>
+              <span class="status">Fixed</span>.
+              Timeline builds from protocol logs first, then attaches session rollups when available.
+              Log-only cards show <code>Sleep data not matched yet</code>.
+            </td>
+            <td>
+              <code>ProtocolTimelineViewModel.swift</code><br>
+              <code>ProtocolTimelineView.swift</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Main cached history limit was too short for higher-confidence baselines.</td>
+            <td>
+              <span class="status">Fixed</span>.
+              Shared sync retention and maximum baseline window are now 90 days.
+            </td>
+            <td><code>SyncCoordinator.swift</code></td>
+          </tr>
+          <tr>
+            <td>Restorative % could exceed 100% when HealthKit stage data extended beyond the in-bed window.</td>
+            <td>
+              <span class="status">Fixed</span>.
+              All three calculation sites now clamp the result to <code>min(…, 100.0)</code>.
+              Corrupt nights (e.g. V2 showing 219.4%) correct themselves after pull-to-refresh.
+            </td>
+            <td>
+              <code>ProtocolFormulaAnalysisService.swift</code><br>
+              <code>ProtocolBaselineService.swift</code><br>
+              <code>ResearchAnalysisService.swift</code>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>UI Design</h2>
+      <p>Changes shipped in the May 21, 2026 UI unification pass.</p>
+
+      <h3>Protocol Home — Last Night layout</h3>
+      <ul>
+        <li>
+          <strong>Removed duplicate metric grid.</strong>
+          The standalone 4-tile grid (Deep / REM / Awake / Sleep for the single last night) that
+          appeared between the hero card and the Impact vs Baseline section has been removed.
+          The hero card's stage bar already shows the nightly breakdown visually; the second grid
+          was identical in shape and created visual noise.
+        </li>
+        <li>
+          <strong>Impact vs Baseline expanded to 5 metrics.</strong>
+          Awake time has been added alongside Restorative %, Deep, REM, and Total Sleep so the
+          unified section covers everything the removed grid carried.
+          Metric order: <code>restorativePct → deep → rem → awake → duration</code>.
+        </li>
+      </ul>
+
+      <h3>Stage Bar colors</h3>
+      <p>
+        Previously Deep and REM both derived their color from the active version's color hex
+        (e.g. purple for V3), making them visually indistinguishable. Colors are now:
+      </p>
+      <table>
+        <thead>
+          <tr><th>Stage</th><th>Color</th><th>Rationale</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Deep</td>
+            <td>Version color (e.g. <code>#C084FC</code> for V3)</td>
+            <td>Anchors the bar to the active formula's identity color.</td>
+          </tr>
+          <tr>
+            <td>REM</td>
+            <td><code>#4ADE80</code> — fixed light green</td>
+            <td>Distinct from Deep; green reads as restorative/positive.</td>
+          </tr>
+          <tr>
+            <td>Light</td>
+            <td><code>#60A5FA</code> at 50% opacity — fixed light blue</td>
+            <td>Neutral-cool tone; clearly separate from Deep and REM.</td>
+          </tr>
+          <tr>
+            <td>Awake</td>
+            <td><code>badColor</code> (<code>#F87171</code>) at 80% opacity</td>
+            <td>Unchanged — red conveys interruption.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Legend dots in <code>StageBar</code> use the same color tokens.
+        Both colors are defined as static constants on <code>StageBar</code>
+        (<code>remColor</code>, <code>lightColor</code>) in
+        <code>ProtocolFormulaAtoms.swift</code>.
+      </p>
+
+      <div class="note">
+        <strong>Design tokens used:</strong>
+        <code>ProtocolPalette.versionColor(hex:)</code> for Deep,
+        <code>#4ADE80</code> for REM (same as <code>ProtocolPalette.goodColor</code>),
+        <code>#60A5FA</code> for Light (same as <code>ProtocolFormulaMetric.restorativePct</code> color hex).
+        No new palette entries were added — existing token values were reused.
+      </div>
+    </section>
+
+    <section>
+      <h2>Data Model</h2>
+      <h3>Formula versions</h3>
+      <ul>
+        <li><code>ProtocolFormulaVersion</code> represents V1, V2, V3, and later formulas.</li>
+        <li><code>formulaText</code> and components are immutable after a night log references the version.</li>
+        <li>Imported placeholders may be backfilled once, then become locked like normal versions.</li>
+      </ul>
+
+      <h3>Night logs</h3>
+      <ul>
+        <li><code>ProtocolNightLog</code> is one row per <code>sleepDateKey</code>.</li>
+        <li><code>.taken</code> contributes to formula impact rollups.</li>
+        <li><code>.skipped</code> is visible in timeline/adherence UI but excluded from formula impact rollups.</li>
+        <li><code>.unknown</code> means no row and is excluded from taken-vs-skipped calculations.</li>
+      </ul>
+
+      <h3>Frozen baseline</h3>
+      <ul>
+        <li><code>ProtocolBaselineSnapshot</code> is frozen once before protocol tracking starts.</li>
+        <li>Window: 90 days before first protocol night.</li>
+        <li>Sample: up to 30 most recent qualifying nights.</li>
+        <li>Qualifying data quality: <code>.detailedStages</code> or <code>.mixedSources</code>.</li>
+        <li>Insufficient when fewer than 7 valid nights exist; no snapshot is stored when zero valid nights exist.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Metrics</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Source</th>
+            <th>Baseline field</th>
+            <th>Better direction</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Restorative minutes</td>
+            <td><code>SleepSession.restorativeSleepDuration / 60</code></td>
+            <td><code>meanRestorativeMin</code></td>
+            <td>Higher</td>
+          </tr>
+          <tr>
+            <td>Restorative percent</td>
+            <td><code>restorativeSleepDuration / totalInBedTime * 100</code></td>
+            <td><code>meanRestorativePctOfInBed</code></td>
+            <td>Higher</td>
+          </tr>
+          <tr>
+            <td>Longest restorative block</td>
+            <td><code>continuitySummary.longestBlockDuration / 60</code></td>
+            <td><code>meanLongestRestorativeBlockMin</code></td>
+            <td>Higher</td>
+          </tr>
+          <tr>
+            <td>Deep sleep</td>
+            <td><code>deepDuration / 60</code></td>
+            <td><code>meanDeepMin</code></td>
+            <td>Higher</td>
+          </tr>
+          <tr>
+            <td>REM sleep</td>
+            <td><code>remDuration / 60</code></td>
+            <td><code>meanRemMin</code></td>
+            <td>Higher</td>
+          </tr>
+          <tr>
+            <td>Awake in bed</td>
+            <td><code>awakeDuration / 60</code></td>
+            <td><code>meanAwakeMin</code></td>
+            <td>Lower</td>
+          </tr>
+          <tr>
+            <td>Total sleep</td>
+            <td><code>totalSleepTime / 60</code></td>
+            <td><code>meanTotalSleepMin</code></td>
+            <td>Higher</td>
+          </tr>
+          <tr>
+            <td>Sleep latency</td>
+            <td><code>sleepLatency / 60</code></td>
+            <td><code>meanLatencyMin</code></td>
+            <td>Lower</td>
+          </tr>
+          <tr>
+            <td>Sleep score</td>
+            <td><code>qualityScore.overall</code></td>
+            <td><code>meanSleepScore</code></td>
+            <td>Higher</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">
+        Restorative, deep, REM, awake, and longest block require detailed or mixed sleep-stage data.
+        Total sleep, latency, and score can be available when any sleep data exists.
+      </div>
+    </section>
+
+    <section>
+      <h2>Screen Behavior</h2>
+      <h3>Home: Last night</h3>
+      <ul>
+        <li>Shows last available cached sleep session from the recent window.</li>
+        <li>Restorative hero uses the night's snapshot and the active/version color.</li>
+        <li>Deep, REM, awake, and sleep duration tiles compare the single night against frozen baseline means.</li>
+      </ul>
+
+      <h3>Home: Tonight</h3>
+      <ul>
+        <li><code>Mark taken</code> saves a <code>.taken</code> log with selected formula version and add-ins.</li>
+        <li><code>Didn't take</code> saves a <code>.skipped</code> log with no add-ins.</li>
+        <li>Saved state is durable because it is read back from <code>fetchNightLog(forSleepDateKey:)</code>.</li>
+        <li>Retry uses the failed status, so skipped retries remain skipped retries.</li>
+      </ul>
+
+      <h3>Impact vs Baseline</h3>
+      <ul>
+        <li>Compares active formula version rollup against the user's frozen baseline.</li>
+        <li>Requires a sufficient baseline and at least 3 taken nights for the active version.</li>
+        <li>Every displayed delta is paired with: <code>Observed, not causal -- your baseline isn't a control group.</code></li>
+      </ul>
+
+      <h3>All Metrics</h3>
+      <ul>
+        <li>Supports every <code>ProtocolFormulaMetric</code>.</li>
+        <li>Trend chart includes version phase shading, baseline line, selected-point crosshair, and tooltip.</li>
+        <li>Tooltip includes date, value, formula version, baseline value, and delta.</li>
+      </ul>
+
+      <h3>Timeline</h3>
+      <ul>
+        <li>Cards are created from stored protocol logs first.</li>
+        <li>Rollup metrics attach only when matching taken logs and cached sleep sessions exist.</li>
+        <li>Skipped nights appear in counts/heatmap but do not affect impact rollups.</li>
+        <li>The baseline anchor shows reference date range, 90-day window, and valid-night count.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Service Map</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Service / view model</th>
+            <th>Responsibility</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ProtocolBaselineService</code></td>
+            <td>Freezes and augments the protocol baseline from cached sleep sessions.</td>
+          </tr>
+          <tr>
+            <td><code>ProtocolFormulaAnalysisService</code></td>
+            <td>Builds per-night snapshots, taken-only rollups, impact summaries, and nightly chart points.</td>
+          </tr>
+          <tr>
+            <td><code>ProtocolFormulaCatalogService</code></td>
+            <td>Ensures formula catalog versions and selects best version when sufficient data exists.</td>
+          </tr>
+          <tr>
+            <td><code>ProtocolFormulaHomeViewModel</code></td>
+            <td>Loads active formula, last-night snapshot, baseline, impact, trend snapshots, and tonight save state.</td>
+          </tr>
+          <tr>
+            <td><code>ProtocolAllMetricsViewModel</code></td>
+            <td>Loads versions, rollups, nightly snapshots, baseline, and active metric chart points.</td>
+          </tr>
+          <tr>
+            <td><code>ProtocolTimelineViewModel</code></td>
+            <td>Builds version timeline cards from logs and attaches rollup/session data when available.</td>
+          </tr>
+          <tr>
+            <td><code>SyncCoordinator</code></td>
+            <td>Maintains cached sleep history with 90-day retention and clamps baseline windows to 90 days.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Verification</h2>
+      <ul>
+        <li><code>xcodebuild build-for-testing -project Better.xcodeproj -scheme Better -destination 'generic/platform=iOS Simulator'</code> passed.</li>
+        <li>Focused XCTest execution compiled but failed at simulator launch because the local Xcode runner could not use <code>simctl</code>.</li>
+        <li>Added focused coverage for baseline persistence, baseline augmentation, Home/Tonight save states, and Timeline log-first behavior.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

@@ -63,6 +63,10 @@ final class SleepModeViewModel {
     private(set) var statusMessageIsError = false
     private var activeSession: SleepModeSession?
 
+    /// Whether the in-app red overlay should be drawn on Sleep Mode screens.
+    /// This is local state — separate from any system Color Filter toggled via Shortcuts.
+    var redOverlayEnabled = false
+
     init(
         schedule: SleepModeSchedule? = nil,
         settings: SleepModeSettings? = nil,

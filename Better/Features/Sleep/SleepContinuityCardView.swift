@@ -33,30 +33,33 @@ struct SleepContinuityCardView: View {
     }
 
     var body: some View {
-        BetterHealthCard {
-            VStack(alignment: .leading, spacing: BetterSpacing.large) {
-                header
-                primaryMetric
+        VStack(alignment: .leading, spacing: BetterSpacing.large) {
+            header
+            primaryMetric
 
-                if summary.blocks.isEmpty {
-                    unavailableState
-                } else {
-                    SleepContinuityTimelineView(
-                        blocks: summary.blocks,
-                        selectedBlockIndex: effectiveSelectedBlockIndex,
-                        longestBlockIndex: summary.longestBlockIndex,
-                        accentColor: categoryColor,
-                        onSelectBlock: { selectBlock($0) }
-                    )
-                    blockDetails
-                    footerInsight
-                }
+            if summary.blocks.isEmpty {
+                unavailableState
+            } else {
+                SleepContinuityTimelineView(
+                    blocks: summary.blocks,
+                    selectedBlockIndex: effectiveSelectedBlockIndex,
+                    longestBlockIndex: summary.longestBlockIndex,
+                    accentColor: categoryColor,
+                    onSelectBlock: { selectBlock($0) }
+                )
+                blockDetails
+                footerInsight
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BetterSpacing.large)
+        .background(ProtocolPalette.surfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Sleep continuity")
         .onAppear(perform: syncSelectionIfNeeded)
-        .onChange(of: summary.blocks) { _ in
+        .onChange(of: summary.blocks) { _, _ in
             syncSelectionIfNeeded()
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: selectedBlockIndex)

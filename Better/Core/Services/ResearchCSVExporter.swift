@@ -22,6 +22,12 @@ nonisolated struct ResearchCSVExporter: Sendable {
             ("export_metadata.csv", Data(metadataCSV(package).utf8))
         ]
         files += chronotypeFiles(for: package)
+        if let baselineSelection = package.baselineSelection {
+            files.append(("baseline_snapshot.csv", Data(baselineSnapshotCSV(baselineSelection).utf8)))
+        }
+        if !package.contextComparisonResults.isEmpty {
+            files.append(("context_factor_analysis.csv", Data(contextFactorCSV(package.contextComparisonResults).utf8)))
+        }
 
         let zipURL = fileManager.temporaryDirectory
             .appendingPathComponent("\(Self.filenameStem(base: "BetterSleep", displayName: displayName))_\(startStamp)_to_\(endStamp).zip")
@@ -112,7 +118,12 @@ nonisolated struct ResearchCSVExporter: Sendable {
             "meaningful_awake_count",
             "sleep_block_durations_min",
             "sleep_block_start_iso",
-            "sleep_block_end_iso"
+            "sleep_block_end_iso",
+            // Protocol Formula fields (appended at end for backward compatibility)
+            "formula_version_label",
+            "formula_version_id",
+            "formula_night_status",
+            "restorative_pct_of_in_bed"
         ]
 
         let body = rows.map { row in
@@ -193,7 +204,12 @@ nonisolated struct ResearchCSVExporter: Sendable {
                 row.meaningfulAwakeCount.map(String.init) ?? "0",
                 row.sleepBlockDurationsMinutes?.map { Self.number($0, fractionDigits: 0) }.joined(separator: "|") ?? "",
                 row.sleepBlockStartDates?.map(Self.iso).joined(separator: "|") ?? "",
-                row.sleepBlockEndDates?.map(Self.iso).joined(separator: "|") ?? ""
+                row.sleepBlockEndDates?.map(Self.iso).joined(separator: "|") ?? "",
+                // Protocol Formula fields
+                row.formulaVersionLabel ?? "",
+                row.formulaVersionID ?? "",
+                row.formulaNightStatus ?? "",
+                Self.number(row.restorativePctOfInBed)
             ])
         }
 
@@ -238,6 +254,106 @@ nonisolated struct ResearchCSVExporter: Sendable {
                 Self.number(summary.lateTimingSleepDelta),
                 summary.confidence.rawValue,
                 summary.caveats.joined(separator: "|")
+            ])
+        }
+
+        return ([csvRow(header)] + body).joined(separator: "\n")
+    }
+
+    func baselineSnapshotCSV(_ selection: BaselineSelection) -> String {
+        let header = [
+            "is_active_comparator",
+            "window_days",
+            "valid_nights",
+            "metric",
+            "unit",
+            "average",
+            "std_dev"
+        ]
+
+        var body: [String] = []
+        let activeWindow = selection.activeBaseline?.windowDays
+
+        func rows(for baseline: SleepBaseline) -> [[String]] {
+            let isActive = baseline.windowDays == activeWindow
+            let active = isActive ? "true" : "false"
+            let w = String(baseline.windowDays)
+            let n = String(baseline.validNights)
+
+            return [
+                [active, w, n, "total_sleep",     "hrs",    Self.number(baseline.totalSleepAverage / 3_600),    Self.number(baseline.totalSleepStandardDeviation / 3_600)],
+                [active, w, n, "rem",              "hrs",    Self.number(baseline.remAverage / 3_600),            Self.number(baseline.remStandardDeviation / 3_600)],
+                [active, w, n, "deep",             "hrs",    Self.number(baseline.deepAverage / 3_600),           Self.number(baseline.deepStandardDeviation / 3_600)],
+                [active, w, n, "efficiency",       "pct",    Self.number(baseline.efficiencyAverage * 100),       Self.number(baseline.efficiencyStandardDeviation * 100)],
+                [active, w, n, "waso",             "min",    Self.number(baseline.wasoAverage / 60),              Self.number(baseline.wasoStandardDeviation / 60)],
+                [active, w, n, "latency",          "min",    Self.number(baseline.latencyAverage / 60),           Self.number(baseline.latencyStandardDeviation / 60)],
+                [active, w, n, "hrv",              "ms",     Self.number(baseline.hrvAverage),                    Self.number(baseline.hrvStandardDeviation)],
+                [active, w, n, "respiratory_rate", "br/min", Self.number(baseline.respiratoryRateAverage),        Self.number(baseline.respiratoryRateStandardDeviation)],
+                [active, w, n, "spo2",             "pct",    Self.number(baseline.oxygenSaturationAverage * 100), Self.number(baseline.oxygenSaturationStandardDeviation * 100)],
+                [active, w, n, "bedtime",          "min_since_midnight", Self.number(baseline.bedtimeMinuteAverage), Self.number(baseline.bedtimeMinuteStandardDeviation)],
+                [active, w, n, "wake_time",        "min_since_midnight", Self.number(baseline.wakeMinuteAverage),    Self.number(baseline.wakeMinuteStandardDeviation)]
+            ]
+        }
+
+        for baseline in selection.allBaselines {
+            body += rows(for: baseline).map(csvRow)
+        }
+
+        return ([csvRow(header)] + body).joined(separator: "\n")
+    }
+
+    func contextFactorCSV(_ results: [ContextComparisonResult]) -> String {
+        let header = [
+            "factor",
+            "factor_display_name",
+            "window",
+            "yes_nights",
+            "no_nights",
+            "unknown_nights",
+            "confidence",
+            "has_meaningful_difference",
+            "duration_yes_hrs",
+            "duration_no_hrs",
+            "duration_delta_hrs",
+            "efficiency_yes_pct",
+            "efficiency_no_pct",
+            "efficiency_delta_pct",
+            "deep_yes_hrs",
+            "deep_no_hrs",
+            "deep_delta_hrs",
+            "rem_yes_hrs",
+            "rem_no_hrs",
+            "rem_delta_hrs",
+            "awake_yes_hrs",
+            "awake_no_hrs",
+            "awake_delta_hrs"
+        ]
+
+        let body = results.map { r in
+            csvRow([
+                r.factor.rawValue,
+                r.factor.displayName,
+                r.window.rawValue,
+                String(r.yesNightCount),
+                String(r.noNightCount),
+                String(r.unknownNightCount),
+                r.confidence.rawValue,
+                r.hasMeaningfulDifference ? "true" : "false",
+                Self.number(r.averageSleepDurationYes.map { $0 / 3_600 }),
+                Self.number(r.averageSleepDurationNo.map { $0 / 3_600 }),
+                Self.number(r.durationDelta.map { $0 / 3_600 }),
+                Self.number(r.averageEfficiencyYes.map { $0 * 100 }),
+                Self.number(r.averageEfficiencyNo.map { $0 * 100 }),
+                Self.number(r.efficiencyDelta.map { $0 * 100 }),
+                Self.number(r.averageDeepSleepYes.map { $0 / 3_600 }),
+                Self.number(r.averageDeepSleepNo.map { $0 / 3_600 }),
+                Self.number(r.deepSleepDelta.map { $0 / 3_600 }),
+                Self.number(r.averageREMSleepYes.map { $0 / 3_600 }),
+                Self.number(r.averageREMSleepNo.map { $0 / 3_600 }),
+                Self.number(r.remSleepDelta.map { $0 / 3_600 }),
+                Self.number(r.averageAwakeTimeYes.map { $0 / 3_600 }),
+                Self.number(r.averageAwakeTimeNo.map { $0 / 3_600 }),
+                Self.number(r.awakeTimeDelta.map { $0 / 3_600 })
             ])
         }
 
@@ -323,6 +439,11 @@ nonisolated struct ResearchCSVExporter: Sendable {
             ["insight_confidence", package.insightSummary.confidence.rawValue],
             ["insight_best_protocol", package.insightSummary.bestProtocolName ?? ""],
             ["insight_best_sleep_diff_hrs", Self.number(package.insightSummary.bestProtocolSleepDifferenceHours)],
+            // Score formula reference — explains the sub-score columns in nightly_research_rows.csv
+            ["score_formula", "overall = 0.30*duration_score + 0.20*efficiency_score + 0.25*deep_score + 0.25*rem_score"],
+            ["score_formula_partial_nights", "When sleep stages are unavailable: overall = 0.60*duration_score + 0.40*efficiency_score (deep_score and rem_score are 0)"],
+            ["score_range", "0-100; higher is better"],
+            ["baseline_selection_rule", "Active comparator: 14-day window when >=14 valid nights, else 7-day; 30-day used only as stable context"],
             ["null_convention", "NA indicates measurement was unavailable for that night; empty string indicates field does not apply"]
         ]
 
@@ -356,9 +477,9 @@ nonisolated private extension ResearchCSVExporter {
     /// An empty string is reserved for fields that do not apply to the row at all.
     nonisolated static func tristate(_ value: Bool?) -> String {
         switch value {
-        case true:  "true"
-        case false: "false"
-        case nil:   "unknown"
+        case .some(true):  "true"
+        case .some(false): "false"
+        case nil:          "unknown"
         }
     }
 

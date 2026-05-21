@@ -8,7 +8,6 @@ final class SleepDashboardViewModel {
     private let localRepository: LocalDataRepositoryProtocol
     private let processor: SleepDataProcessor
     private let insightService: SleepInsightService
-    private let protocolComparisonService: ProtocolComparisonService
     private let calendar: Calendar
     private var requestedHistoricalKeys = Set<String>()
 
@@ -70,14 +69,12 @@ final class SleepDashboardViewModel {
         localRepository: LocalDataRepositoryProtocol,
         processor: SleepDataProcessor = SleepDataProcessor(),
         insightService: SleepInsightService = SleepInsightService(),
-        protocolComparisonService: ProtocolComparisonService? = nil,
         calendar: Calendar = .current
     ) {
         self.syncCoordinator = syncCoordinator
         self.localRepository = localRepository
         self.processor = processor
         self.insightService = insightService
-        self.protocolComparisonService = protocolComparisonService ?? ProtocolComparisonService(calendar: calendar)
         self.calendar = calendar
         let todayKey = SleepDateKey.today(calendar: calendar)
         self.selectedSleepDateKey = todayKey
@@ -187,6 +184,8 @@ private extension SleepDashboardViewModel {
 
     func refreshIfNeededForToday() async {
         guard isViewingToday else { return }
+        // Skip if a sync is already running (e.g. performLaunchSync still in flight)
+        guard syncCoordinator.phase != .syncing else { return }
         let shouldRefresh = await syncCoordinator.shouldPerformForegroundRefresh(
             hasCachedSessionForToday: selectedSession != nil
         )
@@ -236,38 +235,12 @@ private extension SleepDashboardViewModel {
     }
 
     func buildSleepInsights() async throws -> [SleepInsight] {
-        guard let selectedDate = SleepDateKey.date(from: selectedSleepDateKey, calendar: calendar) else {
-            return insightService.insights(
-                session: selectedSession,
-                baseline: selectedBaseline,
-                recentSessions: recentSessions
-            )
-        }
-        let start = calendar.date(byAdding: .day, value: -29, to: selectedDate)
-            ?? selectedDate.addingTimeInterval(-29 * 86_400)
-        let end = calendar.date(byAdding: .day, value: 1, to: selectedDate)
-            ?? selectedDate.addingTimeInterval(86_400)
-        let comparisonSessions = try await localRepository.fetchCachedSessions(from: start, to: end)
-        let adherence = try await localRepository.fetchAdherence(from: start, to: end)
-        let protocolComparisonService = self.protocolComparisonService
-        let insightService = self.insightService
-        let selectedSession = self.selectedSession
-        let selectedBaseline = self.selectedBaseline
-        let recentSessions = self.recentSessions
-
-        return await Task.detached {
-            let protocolComparison = protocolComparisonService.compare(
-                sessions: comparisonSessions,
-                adherence: adherence,
-                window: .last30Days,
-                endingAt: selectedDate
-            )
-            return insightService.insights(
-                session: selectedSession,
-                baseline: selectedBaseline,
-                recentSessions: recentSessions,
-                protocolComparison: protocolComparison
-            )
-        }.value
+        // Legacy ProtocolComparison-driven insights have been removed alongside the
+        // legacy Protocol tab. Formula-aware sleep insights are a follow-up.
+        return insightService.insights(
+            session: selectedSession,
+            baseline: selectedBaseline,
+            recentSessions: recentSessions
+        )
     }
 }

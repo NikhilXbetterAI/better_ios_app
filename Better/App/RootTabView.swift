@@ -5,9 +5,6 @@ struct RootTabView: View {
     @State private var selectedTab: AppTab = .sleep
     @State private var sleepViewModel: SleepDashboardViewModel
     @State private var trendsViewModel: TrendsViewModel
-    @State private var protocolViewModel: ProtocolViewModel
-    @State private var protocolComparisonViewModel: ProtocolComparisonDashboardViewModel
-    @State private var contextViewModel: ContextFactorDashboardViewModel
     @State private var alertsViewModel: AlertsViewModel
     @State private var settingsViewModel: SettingsViewModel
     @State private var biologyViewModel: BiologyViewModel
@@ -26,16 +23,6 @@ struct RootTabView: View {
             localRepository: environment.localRepository
         ))
         _trendsViewModel = State(initialValue: TrendsViewModel(
-            localRepository: environment.localRepository
-        ))
-        _protocolViewModel = State(initialValue: ProtocolViewModel(
-            localRepository: environment.localRepository,
-            healthRepository: environment.healthRepository
-        ))
-        _protocolComparisonViewModel = State(initialValue: ProtocolComparisonDashboardViewModel(
-            localRepository: environment.localRepository
-        ))
-        _contextViewModel = State(initialValue: ContextFactorDashboardViewModel(
             localRepository: environment.localRepository
         ))
         _alertsViewModel = State(initialValue: AlertsViewModel(
@@ -73,7 +60,6 @@ struct RootTabView: View {
                     hasCompletedOnboarding = true
                     Task {
                         await settingsViewModel.loadSettings()
-                        await protocolViewModel.onAppear()
                     }
                 }
             } else {
@@ -82,6 +68,7 @@ struct RootTabView: View {
         }
         .task {
             await loadOnboardingState()
+            await environment.runProtocolFormulaMigrationIfNeeded()
         }
         .onChange(of: settingsViewModel.privacyService.deleteCompleted) { _, completed in
             guard completed else { return }
@@ -98,6 +85,7 @@ struct RootTabView: View {
                 SleepTabView(
                     viewModel: sleepViewModel,
                     sleepModeViewModel: sleepModeViewModel,
+                    redLightFilterService: environment.redLightFilterService,
                     onOpenProfile: { secondarySheet = .settings }
                 )
             }
@@ -116,17 +104,14 @@ struct RootTabView: View {
             .toolbarBackground(.visible, for: .tabBar)
 
             // ── Protocol ─────────────────────────────────────────────────
-            NavigationStack {
-                ProtocolTabView(
-                    viewModel: protocolViewModel,
-                    comparisonViewModel: protocolComparisonViewModel,
-                    contextViewModel: contextViewModel
-                )
-            }
-            .tabItem { Label(AppTab.protocol.title, systemImage: AppTab.protocol.systemImageName) }
-            .tag(AppTab.protocol)
-            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
-            .toolbarBackground(.visible, for: .tabBar)
+            // Protocol Formula Tracking is the only Protocol surface. The legacy
+            // `ProtocolTabView` + feature-flag gate has been retired; deletion of
+            // the legacy view models and supporting services is a follow-up cleanup.
+            ProtocolFormulaTabView(localRepository: environment.localRepository)
+                .tabItem { Label(AppTab.protocol.title, systemImage: AppTab.protocol.systemImageName) }
+                .tag(AppTab.protocol)
+                .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+                .toolbarBackground(.visible, for: .tabBar)
 
             // ── Biology ─────────────────────────────────────────────────
             NavigationStack {
@@ -161,12 +146,16 @@ struct RootTabView: View {
                 case .alerts:
                     AlertsTabView(viewModel: alertsViewModel)
                 case .settings:
-                    SettingsTabView(viewModel: settingsViewModel, sleepModeViewModel: sleepModeViewModel)
+                    SettingsTabView(
+                        viewModel: settingsViewModel,
+                        sleepModeViewModel: sleepModeViewModel,
+                        redLightFilterService: environment.redLightFilterService
+                    )
                 }
             }
         }
         .fullScreenCover(item: $sleepModeCoordinator.activePresentation) { _ in
-            SleepModeView(viewModel: sleepModeViewModel)
+            SleepModeView(viewModel: sleepModeViewModel, redLightService: environment.redLightFilterService)
                 .task {
                     await sleepModeViewModel.reloadSchedule()
                 }
@@ -184,7 +173,7 @@ struct RootTabView: View {
                 // Fire off health auth and sync in background without blocking the splash screen dismissal
                 Task {
                     await environment.syncCoordinator.requestHealthAuthorization()
-                    await environment.syncCoordinator.performInitialSync()
+                    await environment.syncCoordinator.performLaunchSync()
                 }
             }
         } catch {

@@ -117,9 +117,7 @@ actor AlertGenerationService {
         recentSessions: [SleepSession],
         baseline: SleepBaseline,
         profile: UserProfile,
-        adherence: [ProtocolAdherence],
         settings: AlertGenerationSettings = .default,
-        protocolComparison: ProtocolComparisonResult? = nil,
         previousAlerts: [SleepAlert] = [],
         createdAt: Date = Date()
     ) async throws -> [SleepAlert] {
@@ -127,7 +125,6 @@ actor AlertGenerationService {
             latestSession: latestSession,
             recentSessions: recentSessions,
             baseline: baseline,
-            protocolComparison: protocolComparison,
             previousAlerts: previousAlerts,
             createdAt: createdAt
         ))
@@ -136,7 +133,6 @@ actor AlertGenerationService {
             recentSessions: recentSessions,
             baseline: baseline,
             profile: profile,
-            adherence: adherence,
             settings: settings,
             createdAt: createdAt
         )
@@ -162,9 +158,7 @@ actor AlertGenerationService {
         recentSessions: [SleepSession],
         baseline: SleepBaseline,
         profile: UserProfile,
-        adherence: [ProtocolAdherence],
         settings: AlertGenerationSettings = .default,
-        protocolComparison: ProtocolComparisonResult? = nil,
         previousAlerts: [SleepAlert] = [],
         createdAt: Date = Date()
     ) async throws -> [SleepAlert] {
@@ -176,9 +170,7 @@ actor AlertGenerationService {
                 recentSessions: sessionRecent,
                 baseline: baseline,
                 profile: profile,
-                adherence: adherence,
                 settings: settings,
-                protocolComparison: protocolComparison,
                 previousAlerts: previousAlerts + allAlerts,
                 createdAt: createdAt
             )
@@ -194,7 +186,6 @@ private extension AlertGenerationService {
         recentSessions: [SleepSession],
         baseline: SleepBaseline,
         profile: UserProfile,
-        adherence: [ProtocolAdherence],
         settings: AlertGenerationSettings,
         createdAt: Date
     ) -> [SleepAlert] {
@@ -332,20 +323,8 @@ private extension AlertGenerationService {
             alerts.append(improvement)
         }
 
-        if settings.protocolMissMonitoringEnabled,
-           hasPassedProtocolCutoff(on: createdAt, cutoffHour: settings.protocolMissCutoffHour),
-           adherence.filter(\.taken).contains(where: { $0.dateKey == session.sleepDateKey }) == false {
-            alerts.append(
-                alert(
-                    .missedProtocol,
-                    session: session,
-                    title: "Protocol not logged",
-                    body: "No protocol adherence was logged by your cutoff time.",
-                    severity: 0,
-                    createdAt: createdAt
-                )
-            )
-        }
+        // Legacy "missed protocol" adherence alert removed alongside the legacy
+        // Protocol tab. A formula-aware variant is a follow-up.
 
         return alerts
     }
@@ -562,7 +541,7 @@ private extension AlertGenerationService {
         switch type {
         case .poorSleepStreak, .durationBelowBaseline, .efficiencyDrop:
             1
-        case .durationAboveBaseline, .recovery, .baselineAvailable, .protocolDurationPattern, .protocolEfficiencyPattern:
+        case .durationAboveBaseline, .recovery, .baselineAvailable:
             0
         }
     }

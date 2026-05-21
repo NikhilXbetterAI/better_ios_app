@@ -49,12 +49,9 @@ nonisolated enum ProtocolUsageStatus: String, Codable, CaseIterable, Hashable, S
 
     var protocolTaken: Bool? {
         switch self {
-        case .taken:
-            true
-        case .notTaken:
-            false
-        case .unknown:
-            nil
+        case .taken: true
+        case .notTaken: false
+        case .unknown: nil
         }
     }
 }
@@ -174,6 +171,16 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
     var sleepBlockStartDates: [Date]?
     var sleepBlockEndDates: [Date]?
 
+    // MARK: - Protocol Formula fields (appended at end for backward compatibility)
+    /// Resolved display label of the formula version logged for this night (empty if none).
+    var formulaVersionLabel: String?
+    /// UUID string of the formula version (empty if none).
+    var formulaVersionID: String?
+    /// taken / skipped / unknown (or empty if no log row).
+    var formulaNightStatus: String?
+    /// Restorative % of in-bed time — nil unless dataQuality is detailed or mixed.
+    var restorativePctOfInBed: Double?
+
     init(
         sleepDateKey: String,
         sleepStart: Date,
@@ -209,12 +216,12 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         activityStatus: UserActivityStatus?,
         isJetLagged: Bool,
         activityNote: String?,
-        protocolTakenAny: Bool,
-        protocolIDsTaken: [String],
+        protocolTakenAny: Bool = false,
+        protocolIDsTaken: [String] = [],
         protocolIDsNotTaken: [String] = [],
-        protocolNamesTaken: [String],
-        protocolTakenAt: [Date],
-        minutesFromProtocolToSleep: [Double],
+        protocolNamesTaken: [String] = [],
+        protocolTakenAt: [Date] = [],
+        minutesFromProtocolToSleep: [Double] = [],
         baselineTotalSleepDeltaHours: Double?,
         baselineEfficiencyDeltaPercent: Double?,
         baselineWASODeltaMinutes: Double?,
@@ -250,7 +257,11 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         meaningfulAwakeCount: Int? = nil,
         sleepBlockDurationsMinutes: [Double]? = nil,
         sleepBlockStartDates: [Date]? = nil,
-        sleepBlockEndDates: [Date]? = nil
+        sleepBlockEndDates: [Date]? = nil,
+        formulaVersionLabel: String? = nil,
+        formulaVersionID: String? = nil,
+        formulaNightStatus: String? = nil,
+        restorativePctOfInBed: Double? = nil
     ) {
         self.sleepDateKey = sleepDateKey
         self.sleepStart = sleepStart
@@ -301,9 +312,9 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         self.baselineWindowUsed = baselineWindowUsed
         self.baselineTotalSleepMinutes = baselineTotalSleepMinutes
         self.durationVsBaselineMinutes = durationVsBaselineMinutes
-        let status = protocolUsageStatus ?? (protocolTakenAny ? .taken : .unknown)
-        self.protocolUsageStatus = status
-        self.protocolTaken = protocolTaken ?? status.protocolTaken
+        let resolvedStatus = protocolUsageStatus ?? (protocolTakenAny ? .taken : .unknown)
+        self.protocolUsageStatus = resolvedStatus
+        self.protocolTaken = protocolTaken ?? resolvedStatus.protocolTaken
         self.protocolName = protocolName
         self.protocolTiming = protocolTiming
         self.dataQualityStatus = dataQualityStatus ?? dataQuality.rawValue
@@ -329,6 +340,10 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         self.sleepBlockDurationsMinutes = sleepBlockDurationsMinutes
         self.sleepBlockStartDates = sleepBlockStartDates
         self.sleepBlockEndDates = sleepBlockEndDates
+        self.formulaVersionLabel = formulaVersionLabel
+        self.formulaVersionID = formulaVersionID
+        self.formulaNightStatus = formulaNightStatus
+        self.restorativePctOfInBed = restorativePctOfInBed
     }
 }
 
@@ -345,9 +360,9 @@ nonisolated struct ProtocolEffectSummary: Codable, Hashable, Sendable, Identifia
     var latencyDifferenceMinutes: Double?
     var hrvDifference: Double?
     var jetLagAdjustedSleepDifferenceHours: Double?
-    var earlyTimingSleepDelta: Double?   // >3h before sleep onset (≥5 nights each, else nil)
-    var optimalTimingSleepDelta: Double? // 1–3h before sleep onset
-    var lateTimingSleepDelta: Double?    // <1h before sleep onset
+    var earlyTimingSleepDelta: Double?
+    var optimalTimingSleepDelta: Double?
+    var lateTimingSleepDelta: Double?
     var confidence: AnalysisConfidence
     var caveats: [String]
 }
@@ -361,10 +376,30 @@ nonisolated struct ResearchInsightSummary: Codable, Hashable, Sendable {
     var baselineSleepDifferenceHours: Double?
     var confounderNote: String?
     var summary: String
+
+    init(
+        generatedAt: Date,
+        validNightCount: Int,
+        bestProtocolName: String? = nil,
+        bestProtocolSleepDifferenceHours: Double? = nil,
+        confidence: AnalysisConfidence = .insufficient,
+        baselineSleepDifferenceHours: Double?,
+        confounderNote: String?,
+        summary: String
+    ) {
+        self.generatedAt = generatedAt
+        self.validNightCount = validNightCount
+        self.bestProtocolName = bestProtocolName
+        self.bestProtocolSleepDifferenceHours = bestProtocolSleepDifferenceHours
+        self.confidence = confidence
+        self.baselineSleepDifferenceHours = baselineSleepDifferenceHours
+        self.confounderNote = confounderNote
+        self.summary = summary
+    }
 }
 
 nonisolated struct ResearchExportPackage: Codable, Hashable, Sendable {
-    static let schemaVersion = "2"
+    static let schemaVersion = "4"
 
     var generatedAt: Date
     var rangeStart: Date
@@ -376,4 +411,34 @@ nonisolated struct ResearchExportPackage: Codable, Hashable, Sendable {
     var protocolSummaries: [ProtocolEffectSummary]
     var insightSummary: ResearchInsightSummary
     var chronotypeResult: ChronotypeCalculationResult? = nil
+    var baselineSelection: BaselineSelection? = nil
+    var contextComparisonResults: [ContextComparisonResult] = []
+
+    init(
+        generatedAt: Date,
+        rangeStart: Date,
+        rangeEnd: Date,
+        baselineWindowDays: Int,
+        baselineValidNights: Int,
+        isResearchMode: Bool,
+        nightlyRows: [NightlyResearchRow],
+        protocolSummaries: [ProtocolEffectSummary] = [],
+        insightSummary: ResearchInsightSummary,
+        chronotypeResult: ChronotypeCalculationResult? = nil,
+        baselineSelection: BaselineSelection? = nil,
+        contextComparisonResults: [ContextComparisonResult] = []
+    ) {
+        self.generatedAt = generatedAt
+        self.rangeStart = rangeStart
+        self.rangeEnd = rangeEnd
+        self.baselineWindowDays = baselineWindowDays
+        self.baselineValidNights = baselineValidNights
+        self.isResearchMode = isResearchMode
+        self.nightlyRows = nightlyRows
+        self.protocolSummaries = protocolSummaries
+        self.insightSummary = insightSummary
+        self.chronotypeResult = chronotypeResult
+        self.baselineSelection = baselineSelection
+        self.contextComparisonResults = contextComparisonResults
+    }
 }

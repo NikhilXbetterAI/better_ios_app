@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Baseline comparison card matching CompBar / "vs Average" in SleepTab.tsx
+// MARK: - Baseline comparison card
 
 struct SleepVsBaselineView: View {
     let session: SleepSession
@@ -14,61 +14,67 @@ struct SleepVsBaselineView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.large) {
-            // Summary banner
             summaryBanner
 
-            // Comparison bars — ordered by USP priority
-            ComparisonBar(
-                label: "Deep Sleep",
-                tonightValue: session.deepDuration / 60,
-                baselineValue: baseline.deepAverage / 60,
-                unit: "min",
-                maxValue: 180,
-                higherIsBetter: true
-            )
-            ComparisonBar(
-                label: "REM Sleep",
-                tonightValue: session.remDuration / 60,
-                baselineValue: baseline.remAverage / 60,
-                unit: "min",
-                maxValue: 200,
-                higherIsBetter: true
-            )
-            ComparisonBar(
-                label: "Duration",
-                tonightValue: session.totalSleepTime / 60,
-                baselineValue: baseline.totalSleepAverage / 60,
-                unit: "min",
-                maxValue: 540,
-                higherIsBetter: true
-            )
-            ComparisonBar(
-                label: "Time to Fall Asleep",
-                tonightValue: session.sleepLatency / 60,
-                baselineValue: baseline.latencyAverage / 60,
-                unit: "min",
-                maxValue: 60,
-                higherIsBetter: false
-            )
-            TimeComparisonRow(
-                label: "Bedtime",
-                sessionDate: session.startDate,
-                baselineMinuteAverage: baseline.bedtimeMinuteAverage,
-                earlierIsBetter: true
-            )
-            TimeComparisonRow(
-                label: "Wake Time",
-                sessionDate: session.endDate,
-                baselineMinuteAverage: baseline.wakeMinuteAverage,
-                earlierIsBetter: false
-            )
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2),
+                spacing: 10
+            ) {
+                SleepMetricComparisonStrip(
+                    label: "Deep Sleep",
+                    accentColor: BetterColors.stageDeep,
+                    yourValue: session.deepDuration / 60,
+                    baselineValue: baseline.deepAverage / 60,
+                    unit: "min",
+                    lowerIsBetter: false
+                )
+                SleepMetricComparisonStrip(
+                    label: "REM Sleep",
+                    accentColor: ProtocolPalette.goodColor,
+                    yourValue: session.remDuration / 60,
+                    baselineValue: baseline.remAverage / 60,
+                    unit: "min",
+                    lowerIsBetter: false
+                )
+                SleepMetricComparisonStrip(
+                    label: "Total Sleep",
+                    accentColor: BetterColors.brand,
+                    yourValue: session.totalSleepTime / 60,
+                    baselineValue: baseline.totalSleepAverage / 60,
+                    unit: "min",
+                    lowerIsBetter: false
+                )
+                SleepMetricComparisonStrip(
+                    label: "Latency",
+                    accentColor: BetterColors.warning,
+                    yourValue: session.sleepLatency / 60,
+                    baselineValue: baseline.latencyAverage / 60,
+                    unit: "min",
+                    lowerIsBetter: true
+                )
+            }
+
+            VStack(spacing: 8) {
+                TimeComparisonRow(
+                    label: "Bedtime",
+                    sessionDate: session.startDate,
+                    baselineMinuteAverage: baseline.bedtimeMinuteAverage,
+                    earlierIsBetter: true
+                )
+                TimeComparisonRow(
+                    label: "Wake Time",
+                    sessionDate: session.endDate,
+                    baselineMinuteAverage: baseline.wakeMinuteAverage,
+                    earlierIsBetter: false
+                )
+            }
         }
     }
 
     private var summaryBanner: some View {
         let diffAbs = abs(durationDiffMinutes)
         let direction = isAboveBaseline ? "above" : "below"
-        let color = isAboveBaseline ? BetterColors.success : BetterColors.warning
+        let color: Color = isAboveBaseline ? ProtocolPalette.goodColor : ProtocolPalette.badColor
 
         return HStack(spacing: BetterSpacing.small) {
             Image(systemName: isAboveBaseline ? "arrow.up" : "arrow.down")
@@ -80,72 +86,104 @@ struct SleepVsBaselineView: View {
         }
         .padding(.horizontal, BetterSpacing.medium)
         .padding(.vertical, BetterSpacing.small)
-        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(color.opacity(0.25), lineWidth: 1)
+                .stroke(color.opacity(0.22), lineWidth: 1)
         )
     }
 }
 
-// MARK: - Single comparison bar
+// MARK: - Protocol-style metric comparison strip for sleep
 
-private struct ComparisonBar: View {
+private struct SleepMetricComparisonStrip: View {
     let label: String
-    let tonightValue: Double
-    let baselineValue: Double
+    let accentColor: Color
+    let yourValue: Double?
+    let baselineValue: Double?
     let unit: String
-    let maxValue: Double
-    let higherIsBetter: Bool
+    var lowerIsBetter: Bool = false
 
-    private var tonightFraction: CGFloat { CGFloat(min(tonightValue / maxValue, 1)) }
-    private var baselineFraction: CGFloat { CGFloat(min(baselineValue / maxValue, 1)) }
+    private var delta: Double? {
+        guard let y = yourValue, let b = baselineValue else { return nil }
+        return y - b
+    }
 
-    private var barColor: Color {
-        let isGood = higherIsBetter ? tonightValue >= baselineValue : tonightValue <= baselineValue
-        return isGood ? BetterColors.success : BetterColors.warning
+    private var scaleMax: Double {
+        max(yourValue ?? 0, baselineValue ?? 0, 1) * 1.15
     }
 
     var body: some View {
-        VStack(spacing: 5) {
-            HStack {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Circle()
+                    .fill(accentColor)
+                    .frame(width: 6, height: 6)
                 Text(label)
-                    .font(.system(size: 12, design: .rounded))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(BetterColors.text)
-                Spacer()
-                HStack(spacing: 4) {
-                    Text(formatted(tonightValue))
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(BetterColors.text)
-                    Text("vs \(formatted(baselineValue)) \(unit)")
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let delta {
+                    sleepDeltaBadge(delta)
                 }
             }
 
+            comparisonRow(label: "You", value: yourValue, color: accentColor)
+            comparisonRow(label: "Base", value: baselineValue, color: Color.white.opacity(0.34))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.white.opacity(0.02))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(ProtocolPalette.borderColor, lineWidth: 1))
+    }
+
+    private func sleepDeltaBadge(_ value: Double) -> some View {
+        let sign = value > 0 ? "+" : ""
+        let isGood = (value > 0) != lowerIsBetter && value != 0
+        let color: Color = value == 0 ? ProtocolPalette.mutedText
+            : (isGood ? ProtocolPalette.goodColor : ProtocolPalette.badColor)
+        let formatted: String = {
+            if unit == "%" { return "\(sign)\(String(format: "%.1f", value))%" }
+            let abs = Swift.abs(value)
+            let h = Int(abs) / 60; let m = Int(abs) % 60
+            let numStr = h > 0 ? "\(h)h\(m)m" : "\(Int(abs))m"
+            return "\(sign)\(numStr)"
+        }()
+        return Text(formatted)
+            .font(.system(size: 10, weight: .bold).monospacedDigit())
+            .foregroundStyle(color)
+    }
+
+    @ViewBuilder
+    private func comparisonRow(label: String, value: Double?, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(ProtocolPalette.dimText)
+                .frame(width: 30, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(BetterColors.cardTertiary)
-                        .frame(height: 8)
-
-                    // Baseline ghost
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(BetterColors.subtext.opacity(0.25))
-                        .frame(width: geo.size.width * baselineFraction, height: 8)
-
-                    // Tonight
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(barColor)
-                        .frame(width: geo.size.width * tonightFraction, height: 8)
+                    Capsule().fill(Color.white.opacity(0.05))
+                    Capsule()
+                        .fill(color)
+                        .frame(width: max(4, geo.size.width * CGFloat((value ?? 0) / scaleMax)))
                 }
             }
-            .frame(height: 8)
+            .frame(height: 5)
+            Text(formatted(value))
+                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                .foregroundStyle(value == nil ? ProtocolPalette.dimText : BetterColors.text)
+                .frame(width: 52, alignment: .trailing)
         }
     }
 
-    private func formatted(_ value: Double) -> String {
-        unit == "ms" ? String(format: "%.0f", value) : String(format: "%.0f", value)
+    private func formatted(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        if unit == "%" { return "\(String(format: "%.1f", value))%" }
+        let h = Int(value) / 60; let m = Int(value) % 60
+        return h > 0 ? "\(h)h \(m)m" : "\(Int(value))m"
     }
 }
 
@@ -166,7 +204,6 @@ private struct TimeComparisonRow: View {
 
     private var diffMinutes: Double {
         var d = sessionMinutes - baselineMinuteAverage
-        // Wrap across midnight for values near 0/1440 boundary
         if d > 720 { d -= 1440 }
         if d < -720 { d += 1440 }
         return d
@@ -182,7 +219,7 @@ private struct TimeComparisonRow: View {
         return "\(abs)m \(direction) than avg"
     }
 
-    private var color: Color { isPositive ? BetterColors.success : BetterColors.warning }
+    private var color: Color { isPositive ? ProtocolPalette.goodColor : ProtocolPalette.badColor }
 
     private static let timeFmt: DateFormatter = {
         let f = DateFormatter()
@@ -194,12 +231,12 @@ private struct TimeComparisonRow: View {
     var body: some View {
         HStack {
             Text(label)
-                .font(.system(size: 12, design: .rounded))
-                .foregroundStyle(BetterColors.text)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(ProtocolPalette.mutedText)
             Spacer()
             HStack(spacing: 6) {
                 Text(Self.timeFmt.string(from: sessionDate))
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(BetterColors.text)
                 HStack(spacing: 2) {
                     Image(systemName: diffMinutes < 0 ? "arrow.up" : "arrow.down")
@@ -210,6 +247,11 @@ private struct TimeComparisonRow: View {
                 .foregroundStyle(color)
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.white.opacity(0.02))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(ProtocolPalette.borderColor, lineWidth: 1))
     }
 }
 
@@ -240,7 +282,7 @@ struct WhatChangedGridView: View {
             ForEach(items.indices, id: \.self) { i in
                 let item = items[i]
                 let positive = item.higherIsBetter ? item.diff >= 0 : item.diff <= 0
-                let color = positive ? BetterColors.success : BetterColors.warning
+                let color: Color = positive ? ProtocolPalette.goodColor : ProtocolPalette.badColor
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
@@ -256,11 +298,12 @@ struct WhatChangedGridView: View {
                         .foregroundStyle(BetterColors.text)
                     Text("vs \(baseline.windowDays)-day avg")
                         .font(.system(size: 10, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
+                        .foregroundStyle(ProtocolPalette.dimText)
                 }
                 .padding(BetterSpacing.medium)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(color.opacity(0.18), lineWidth: 1))
             }
         }
     }

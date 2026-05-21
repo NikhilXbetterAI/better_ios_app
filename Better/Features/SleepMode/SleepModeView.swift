@@ -3,8 +3,10 @@ import UIKit
 
 struct SleepModeView: View {
     @Bindable var viewModel: SleepModeViewModel
+    var redLightService: RedLightFilterService? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var moonFloating = false
+    @State private var showRedSetup = false
 
     var body: some View {
         ZStack {
@@ -20,6 +22,24 @@ struct SleepModeView: View {
                     dimsScreen: viewModel.settings.dimScreenDuringBlackout,
                     onExit: endSession
                 )
+            }
+
+            if viewModel.redOverlayEnabled && viewModel.stage != .blackout {
+                // `.multiply` darkens rather than covers, keeping text/icons readable
+                // under the tint. Excluded from `.blackout` — that stage hides all UI.
+                Color.red
+                    .opacity(0.48)
+                    .blendMode(.multiply)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .sheet(isPresented: $showRedSetup) {
+            if let redLightService {
+                NavigationStack {
+                    RedLightFilterSetupView(viewModel: RedLightFilterSetupViewModel(service: redLightService))
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -76,6 +96,18 @@ struct SleepModeView: View {
                 SleepModeIntroStep(icon: "hand.tap.fill", title: "Hold to exit", detail: "A long press prevents accidental wakeups.")
             }
             .padding(.horizontal, BetterSpacing.screen)
+
+            if let redLightService {
+                RedLightFilterToggleRow(
+                    isSetupComplete: redLightService.isSetupComplete,
+                    overlayEnabled: $viewModel.redOverlayEnabled,
+                    onTapSystemToggle: {
+                        _ = redLightService.toggleSystemRedFilter()
+                    },
+                    onTapSetup: { showRedSetup = true }
+                )
+                .padding(.horizontal, BetterSpacing.screen)
+            }
 
             Spacer(minLength: 12)
 

@@ -155,6 +155,74 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertEqual(emptyContextEntryCount, 0)
     }
 
+    func testLocalRepositoryPersistsProtocolBaselineSnapshotExtendedMetrics() async throws {
+        let repository = try await makeRepository()
+        let snapshot = Self.protocolBaselineSnapshot()
+
+        try await repository.saveBaselineSnapshot(snapshot)
+
+        let fetched = try await repository.fetchBaselineSnapshot()
+        XCTAssertEqual(fetched?.id, snapshot.id)
+        XCTAssertEqual(fetched?.meanRestorativeMin, 80.0)
+        XCTAssertEqual(fetched?.stdRestorativePctOfInBed, 5.0)
+        XCTAssertEqual(fetched?.meanDeepMin, 64.0)
+        XCTAssertEqual(fetched?.stdDeepMin, 7.0)
+        XCTAssertEqual(fetched?.meanRemMin, 82.0)
+        XCTAssertEqual(fetched?.stdRemMin, 9.0)
+        XCTAssertEqual(fetched?.meanAwakeMin, 18.0)
+        XCTAssertEqual(fetched?.stdAwakeMin, 4.0)
+        XCTAssertEqual(fetched?.meanTotalSleepMin, 421.0)
+        XCTAssertEqual(fetched?.stdTotalSleepMin, 31.0)
+        XCTAssertEqual(fetched?.meanLatencyMin, 16.0)
+        XCTAssertEqual(fetched?.stdLatencyMin, 6.0)
+        XCTAssertEqual(fetched?.meanSleepScore, 77.0)
+        XCTAssertEqual(fetched?.stdSleepScore, 8.0)
+    }
+
+    @MainActor
+    func testLocalRepositoryDecodesLegacyProtocolBaselineSnapshotBody() async throws {
+        let container = try BetterPersistenceContainerFactory.makePreviewContainer()
+        let context = ModelContext(container)
+        let legacyBody = LegacyProtocolBaselineSnapshotBody(
+            meanRestorativeMin: 80.0,
+            stdRestorativeMin: 10.0,
+            meanRestorativePctOfInBed: 62.0,
+            stdRestorativePctOfInBed: 5.0,
+            meanLongestRestorativeBlockMin: 60.0,
+            stdLongestRestorativeBlockMin: 8.0,
+            continuityCategoryDistribution: [.good: 1.0]
+        )
+        context.insert(StoredProtocolBaselineSnapshot(
+            id: UUID(),
+            frozenAt: Self.date("2026-04-01T00:00:00Z"),
+            windowStart: Self.date("2026-01-01T00:00:00Z"),
+            windowEnd: Self.date("2026-04-01T00:00:00Z"),
+            validNightCount: 14,
+            isInsufficient: false,
+            bodyData: try PersistenceJSON.encode(legacyBody)
+        ))
+        try context.save()
+        let repository = LocalDataRepository(modelContainer: container)
+
+        let fetched = try await repository.fetchBaselineSnapshot()
+
+        XCTAssertEqual(fetched?.meanRestorativeMin, 80.0)
+        XCTAssertEqual(fetched?.stdLongestRestorativeBlockMin, 8.0)
+        XCTAssertEqual(fetched?.continuityCategoryDistribution[.good], 1.0)
+        XCTAssertNil(fetched?.meanDeepMin)
+        XCTAssertNil(fetched?.stdDeepMin)
+        XCTAssertNil(fetched?.meanRemMin)
+        XCTAssertNil(fetched?.stdRemMin)
+        XCTAssertNil(fetched?.meanAwakeMin)
+        XCTAssertNil(fetched?.stdAwakeMin)
+        XCTAssertNil(fetched?.meanTotalSleepMin)
+        XCTAssertNil(fetched?.stdTotalSleepMin)
+        XCTAssertNil(fetched?.meanLatencyMin)
+        XCTAssertNil(fetched?.stdLatencyMin)
+        XCTAssertNil(fetched?.meanSleepScore)
+        XCTAssertNil(fetched?.stdSleepScore)
+    }
+
     func testLocalRepositoryPersistsSleepModeSettingsScheduleAndSessions() async throws {
         let repository = try await makeRepository()
         let settings = SleepModeSettings(
@@ -749,6 +817,36 @@ private extension LocalDataRepositoryTests {
         )
     }
 
+    static func protocolBaselineSnapshot() -> ProtocolBaselineSnapshot {
+        ProtocolBaselineSnapshot(
+            id: UUID(),
+            frozenAt: date("2026-04-01T00:00:00Z"),
+            windowStart: date("2026-01-01T00:00:00Z"),
+            windowEnd: date("2026-04-01T00:00:00Z"),
+            validNightCount: 14,
+            meanRestorativeMin: 80.0,
+            stdRestorativeMin: 10.0,
+            meanRestorativePctOfInBed: 62.0,
+            stdRestorativePctOfInBed: 5.0,
+            meanLongestRestorativeBlockMin: 60.0,
+            stdLongestRestorativeBlockMin: 8.0,
+            continuityCategoryDistribution: [.good: 0.7, .moderatelyFragmented: 0.3],
+            isInsufficient: false,
+            meanDeepMin: 64.0,
+            stdDeepMin: 7.0,
+            meanRemMin: 82.0,
+            stdRemMin: 9.0,
+            meanAwakeMin: 18.0,
+            stdAwakeMin: 4.0,
+            meanTotalSleepMin: 421.0,
+            stdTotalSleepMin: 31.0,
+            meanLatencyMin: 16.0,
+            stdLatencyMin: 6.0,
+            meanSleepScore: 77.0,
+            stdSleepScore: 8.0
+        )
+    }
+
     static func chronotypeSessions() -> [SleepSession] {
         [
             session(key: "2026-04-05", start: date("2026-04-05T00:30:00Z"), end: date("2026-04-05T07:30:00Z")),
@@ -788,6 +886,16 @@ private extension LocalDataRepositoryTests {
     func date(_ string: String) -> Date {
         Self.date(string)
     }
+}
+
+private struct LegacyProtocolBaselineSnapshotBody: Codable {
+    var meanRestorativeMin: Double?
+    var stdRestorativeMin: Double?
+    var meanRestorativePctOfInBed: Double?
+    var stdRestorativePctOfInBed: Double?
+    var meanLongestRestorativeBlockMin: Double?
+    var stdLongestRestorativeBlockMin: Double?
+    var continuityCategoryDistribution: [SleepContinuityCategory: Double]
 }
 
 final class FakeHealthKitRepository: HealthKitRepositoryProtocol, @unchecked Sendable {

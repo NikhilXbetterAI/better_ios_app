@@ -22,7 +22,6 @@ final class AlertGenerationServiceTests: XCTestCase {
             recentSessions: [session],
             baseline: Self.baseline,
             profile: UserProfile(sleepGoalHours: 8),
-            adherence: [],
             settings: settings,
             createdAt: Self.date("2026-05-04T23:30:00Z")
         )
@@ -31,7 +30,6 @@ final class AlertGenerationServiceTests: XCTestCase {
             recentSessions: [session],
             baseline: Self.baseline,
             profile: UserProfile(sleepGoalHours: 8),
-            adherence: [],
             settings: settings,
             createdAt: Self.date("2026-05-04T23:30:00Z")
         )
@@ -49,8 +47,7 @@ final class AlertGenerationServiceTests: XCTestCase {
                 .highWASO,
                 .lowHRV,
                 .lowOxygenSaturation,
-                .irregularSchedule,
-                .missedProtocol
+                .irregularSchedule
             ]
         )
     }
@@ -73,7 +70,6 @@ final class AlertGenerationServiceTests: XCTestCase {
             recentSessions: [session],
             baseline: Self.stableBaseline,
             profile: UserProfile(sleepGoalHours: 8),
-            adherence: [],
             createdAt: Self.date("2026-05-04T08:00:00Z")
         )
 
@@ -103,7 +99,6 @@ final class AlertGenerationServiceTests: XCTestCase {
             recentSessions: sessions,
             baseline: Self.stableBaseline,
             profile: UserProfile(sleepGoalHours: 8),
-            adherence: [],
             createdAt: Self.date("2026-05-08T08:00:00Z")
         )
 
@@ -132,7 +127,6 @@ final class AlertGenerationServiceTests: XCTestCase {
             recentSessions: [session],
             baseline: Self.stableBaseline,
             profile: UserProfile(sleepGoalHours: 8),
-            adherence: [],
             settings: settings,
             createdAt: Self.date("2026-05-04T08:00:00Z")
         )
@@ -167,7 +161,6 @@ final class AlertGenerationServiceTests: XCTestCase {
             recentSessions: [session],
             baseline: baseline,
             profile: UserProfile(sleepGoalHours: 8),
-            adherence: [],
             settings: settings,
             createdAt: Self.date("2026-05-04T08:00:00Z")
         )

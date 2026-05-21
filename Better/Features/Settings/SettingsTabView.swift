@@ -4,6 +4,7 @@ import UIKit
 struct SettingsTabView: View {
     @Bindable var viewModel: SettingsViewModel
     @Bindable var sleepModeViewModel: SleepModeViewModel
+    @Bindable var redLightFilterService: RedLightFilterService
     @Environment(\.dismiss) private var dismiss
     @State private var exportDocument: ResearchExportDocument?
     @State private var showExportError = false
@@ -30,6 +31,7 @@ struct SettingsTabView: View {
                         Task { await viewModel.saveProfile() }
                     }
                     SleepModeScheduleView(viewModel: sleepModeViewModel)
+                    RedLightFilterSettingsCard(service: redLightFilterService)
                     PrivacyControlsView(
                         service: viewModel.privacyService,
                         healthAuthState: viewModel.healthAuthorizationState,
@@ -230,7 +232,8 @@ private struct ResearchExportDocumentPicker: UIViewControllerRepresentable {
         sleepModeViewModel: SleepModeViewModel(
             scheduleService: env.sleepModeScheduleService,
             localRepository: env.localRepository
-        )
+        ),
+        redLightFilterService: env.redLightFilterService
     )
 }
 #endif

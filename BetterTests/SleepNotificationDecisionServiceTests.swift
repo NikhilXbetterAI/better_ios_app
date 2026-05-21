@@ -53,48 +53,6 @@ final class SleepNotificationDecisionServiceTests: XCTestCase {
         XCTAssertEqual(duration?.shouldNotify, false)
         XCTAssertEqual(duration?.cooldownApplied, true)
     }
-
-    func testProtocolNotificationWeeklyCooldown() {
-        let previous = SleepAlert(
-            kind: .protocolPattern,
-            title: "Protocol sleep pattern",
-            body: "",
-            sleepDateKey: "2026-05-01",
-            createdAt: Self.date("2026-05-01T08:00:00Z")
-        )
-        let comparison = ProtocolComparisonResult(
-            window: .last30Days,
-            takenNightCount: 7,
-            notTakenNightCount: 7,
-            unknownNightCount: 0,
-            confidence: .medium,
-            averageTotalSleepTaken: 8 * 3_600,
-            averageTotalSleepNotTaken: 7.4 * 3_600,
-            deltaTotalSleep: 36 * 60,
-            averageEfficiencyTaken: nil,
-            averageEfficiencyNotTaken: nil,
-            deltaEfficiency: nil,
-            averageDeepSleepTaken: nil,
-            averageDeepSleepNotTaken: nil,
-            deltaDeepSleep: nil,
-            averageREMSleepTaken: nil,
-            averageREMSleepNotTaken: nil,
-            deltaREMSleep: nil,
-            averageAwakeTimeTaken: nil,
-            averageAwakeTimeNotTaken: nil,
-            deltaAwakeTime: nil
-        )
-
-        let decisions = service.decisions(input: input(
-            protocolComparison: comparison,
-            previousAlerts: [previous],
-            createdAt: Self.date("2026-05-05T08:00:00Z")
-        ))
-
-        let protocolDecision = decisions.first { $0.notificationType == .protocolDurationPattern }
-        XCTAssertEqual(protocolDecision?.shouldNotify, false)
-        XCTAssertEqual(protocolDecision?.cooldownApplied, true)
-    }
 }
 
 private extension SleepNotificationDecisionServiceTests {
@@ -107,7 +65,6 @@ private extension SleepNotificationDecisionServiceTests {
     func input(
         session: SleepSession = SleepInsightServiceTests.session(totalSleep: 7 * 3_600, efficiency: 0.90),
         baseline: SleepBaseline = SleepInsightServiceTests.baseline(validNights: 14),
-        protocolComparison: ProtocolComparisonResult? = nil,
         previousAlerts: [SleepAlert] = [],
         createdAt: Date = date("2026-05-03T08:00:00Z")
     ) -> SleepNotificationDecisionInput {
@@ -126,7 +83,6 @@ private extension SleepNotificationDecisionServiceTests {
             latestSession: session,
             recentSessions: [session],
             baseline: baseline,
-            protocolComparison: protocolComparison,
             previousAlerts: history,
             createdAt: createdAt
         )
