@@ -83,6 +83,56 @@ nonisolated struct ProtocolFormulaVersion: Codable, Hashable, Sendable, Identifi
     ]
 }
 
+// MARK: - Intervention window (V3)
+
+/// Bounded period during which a `ProtocolFormulaVersion` was the active intervention.
+/// One window per version. Closed when the next version ships (`endedAt = next.shippedOn`)
+/// or when the version is archived (`endedAt = archivedAt`). Active version's window has
+/// `endedAt = nil`. Used for sleep-data attribution and effect-size analysis.
+nonisolated struct InterventionWindow: Codable, Hashable, Sendable, Identifiable {
+    enum Phase: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Version is currently active (`endedAt == nil`).
+        case active
+        /// Closed because a newer version shipped.
+        case superseded
+        /// Closed because the version was archived without a successor.
+        case archived
+    }
+
+    var id: UUID
+    var versionID: UUID
+    var startedAt: Date
+    var endedAt: Date?
+    var phase: Phase
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        versionID: UUID,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        phase: Phase = .active,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.versionID = versionID
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.phase = phase
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    /// Inclusive-start, exclusive-end check against a sleep date.
+    func contains(_ date: Date) -> Bool {
+        guard date >= startedAt else { return false }
+        if let endedAt { return date < endedAt }
+        return true
+    }
+}
+
 // MARK: - Night log
 
 nonisolated enum ProtocolFormulaNightStatus: String, Codable, Hashable, Sendable, CaseIterable {
@@ -180,6 +230,9 @@ nonisolated struct ProtocolLogEdit: Codable, Hashable, Sendable, Identifiable {
 
 nonisolated struct ProtocolBaselineSnapshot: Codable, Hashable, Sendable {
     var id: UUID
+    /// V3+: per-version frozen baseline. `nil` means legacy singleton snapshot
+    /// pre-V3 backfill — treated as belonging to the active version at read time.
+    var versionID: UUID?
     var frozenAt: Date
     var windowStart: Date
     var windowEnd: Date
@@ -211,6 +264,7 @@ nonisolated struct ProtocolBaselineSnapshot: Codable, Hashable, Sendable {
 
     init(
         id: UUID = UUID(),
+        versionID: UUID? = nil,
         frozenAt: Date,
         windowStart: Date,
         windowEnd: Date,
@@ -237,6 +291,7 @@ nonisolated struct ProtocolBaselineSnapshot: Codable, Hashable, Sendable {
         stdSleepScore: Double? = nil
     ) {
         self.id = id
+        self.versionID = versionID
         self.frozenAt = frozenAt
         self.windowStart = windowStart
         self.windowEnd = windowEnd
