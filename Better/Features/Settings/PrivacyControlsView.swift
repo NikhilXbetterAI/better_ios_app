@@ -67,7 +67,13 @@ struct PrivacyControlsView: View {
                 detail: dateRangeText(inventory)
             )
             Divider().padding(.leading, BetterSpacing.large)
-            inventoryRow(label: "Baselines", value: "\(inventory.baselineCount)")
+            inventoryRow(label: "Rolling baseline records", value: "\(inventory.baselineCount)")
+            Divider().padding(.leading, BetterSpacing.large)
+            inventoryRow(
+                label: "Protocol baseline",
+                value: protocolBaselineValue(inventory),
+                detail: protocolBaselineDetail(inventory)
+            )
             Divider().padding(.leading, BetterSpacing.large)
             inventoryRow(label: "Protocol check-ins", value: "\(inventory.protocolAdherenceCount)")
             Divider().padding(.leading, BetterSpacing.large)
@@ -213,6 +219,20 @@ struct PrivacyControlsView: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .none
         return "Last: \(formatter.string(from: date))"
+    }
+
+    private func protocolBaselineValue(_ inventory: LocalDataInventory) -> String {
+        guard inventory.protocolBaselineSnapshotCount > 0 else { return "Not created" }
+        guard let count = inventory.protocolBaselineValidNightCount else { return "Created" }
+        return "\(count) night\(count == 1 ? "" : "s")"
+    }
+
+    private func protocolBaselineDetail(_ inventory: LocalDataInventory) -> String? {
+        guard inventory.protocolBaselineSnapshotCount > 0 else { return "Builds after enough qualifying pre-protocol sleep nights." }
+        if inventory.protocolBaselineIsInsufficient == true {
+            return "Building — needs \(ProtocolBaselineService.minimumPersistedNightCount) qualifying nights."
+        }
+        return "Frozen comparator for Protocol Formula."
     }
 }
 

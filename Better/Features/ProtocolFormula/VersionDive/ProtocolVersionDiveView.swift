@@ -164,14 +164,16 @@ struct ProtocolVersionDiveView: View {
     }
 
     private func miniHorizontalBar(label: String, value: Double, maxVal: Double, color: Color, unit: String, isDashed: Bool = false) -> some View {
-        HStack(spacing: 6) {
+        let safeValue = value.isFinite && value >= 0 ? value : 0
+        let safeMax = maxVal.isFinite && maxVal > 0 ? maxVal : 1
+        return HStack(spacing: 6) {
             Text(label)
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(ProtocolPalette.dimText)
                 .frame(width: 48, alignment: .leading)
             
             GeometryReader { geo in
-                let fraction = maxVal > 0 ? CGFloat(value / maxVal) : 0
+                let fraction = min(1, max(0, CGFloat(safeValue / safeMax)))
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.white.opacity(0.06))
@@ -189,7 +191,7 @@ struct ProtocolVersionDiveView: View {
             }
             .frame(height: 6)
             
-            Text(String(format: "%.1f%@", value, unit))
+            Text(String(format: "%.1f%@", safeValue, unit))
                 .font(.system(size: 11, weight: .bold).monospacedDigit())
                 .foregroundStyle(BetterColors.text)
                 .frame(width: 42, alignment: .trailing)
@@ -228,7 +230,7 @@ struct ProtocolVersionDiveView: View {
     }
 
     private func comparisonMetricGroup(metric: ProtocolFormulaMetric, myValue: Double?, baseValue: Double?, color: Color) -> some View {
-        let maxVal = max(myValue ?? 0, baseValue ?? 0) * 1.15
+        let maxVal = max(myValue ?? 0, baseValue ?? 0, 1) * 1.15
         let a11yValue: String = {
             var parts: [String] = []
             if let myValue { parts.append("you \(Int(myValue.rounded())) \(metric.unit)") }
@@ -264,7 +266,7 @@ struct ProtocolVersionDiveView: View {
                 let delta = myV - baseV
                 let isGood = metric.betterIsLower ? delta < 0 : delta > 0
                 let sign = delta >= 0 ? "+" : ""
-                Text("\(sign)\(Int(delta.rounded()))\(metric.unit) vs baseline")
+                Text("\(sign)\(Int(delta.rounded()))\(metric.deltaUnit) vs baseline")
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
                     .foregroundStyle(isGood ? ProtocolPalette.goodColor : ProtocolPalette.badColor)
                     .padding(.top, 2)
@@ -338,13 +340,16 @@ private struct NightlyDotsChart: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
-            let allVals = points + (baselineValue.map { [$0] } ?? []) + (meanValue.map { [$0] } ?? [])
+            let safePoints = points.filter { $0.isFinite && $0 >= 0 }
+            let safeBaseline = baselineValue.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+            let safeMean = meanValue.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+            let allVals = safePoints + (safeBaseline.map { [$0] } ?? []) + (safeMean.map { [$0] } ?? [])
             let minV = (allVals.min() ?? 0) * 0.90
             let maxV = (allVals.max() ?? 100) * 1.10
             let range = max(1.0, maxV - minV)
             
-            guard !points.isEmpty else { return AnyView(EmptyView()) }
-            let xStep = points.count > 1 ? w / CGFloat(points.count - 1) : w / 2
+            guard !safePoints.isEmpty else { return AnyView(EmptyView()) }
+            let xStep = safePoints.count > 1 ? w / CGFloat(safePoints.count - 1) : w / 2
             func yPos(_ v: Double) -> CGFloat { h - CGFloat((v - minV) / range) * (h - 16) - 8 }
 
             return AnyView(ZStack(alignment: .topLeading) {
@@ -360,7 +365,7 @@ private struct NightlyDotsChart: View {
                 }
 
                 // Baseline line
-                if let bv = baselineValue {
+                if let bv = safeBaseline {
                     let by = yPos(bv)
                     Path { p in
                         var x: CGFloat = 0
@@ -370,7 +375,7 @@ private struct NightlyDotsChart: View {
                 }
                 
                 // Version Mean line
-                if let mv = meanValue {
+                if let mv = safeMean {
                     let my = yPos(mv)
                     Path { p in
                         p.move(to: CGPoint(x: 0, y: my))
@@ -380,8 +385,8 @@ private struct NightlyDotsChart: View {
                 }
 
                 // Dots
-                ForEach(Array(points.enumerated()), id: \.offset) { i, val in
-                    let x = points.count > 1 ? CGFloat(i) * xStep : w / 2
+                ForEach(Array(safePoints.enumerated()), id: \.offset) { i, val in
+                    let x = safePoints.count > 1 ? CGFloat(i) * xStep : w / 2
                     let y = yPos(val)
                     
                     Circle()

@@ -23,23 +23,23 @@ nonisolated struct ProtocolFormulaAnalysisService: Sendable {
     static func snapshot(for session: SleepSession, log: ProtocolNightLog?) -> ProtocolNightMetricSnapshot {
         let hasDetailed = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
         let hasAnySleepData = session.dataQuality != .noData
-        let restMin = hasDetailed ? session.restorativeSleepDuration / 60.0 : nil
-        let restPctOfInBed: Double? = (hasDetailed && session.totalInBedTime > 0)
-            ? min(session.restorativeSleepDuration / session.totalInBedTime * 100.0, 100.0)
-            : nil
-        let longest = hasDetailed ? session.continuitySummary.longestBlockDuration / 60.0 : nil
+        let restMin = hasDetailed ? nonNegativeFiniteMinutes(session.restorativeSleepDuration) : nil
+        let restDenominatorMin = hasDetailed ? ProtocolFormulaMetricMath.restorativeDenominatorMinutes(for: session) : nil
+        let restPctOfInBed: Double? = hasDetailed ? ProtocolFormulaMetricMath.restorativePctOfInBed(for: session) : nil
+        let longest = hasDetailed ? nonNegativeFiniteMinutes(session.continuitySummary.longestBlockDuration) : nil
         let category = hasDetailed ? session.continuitySummary.continuityCategory : nil
-        let deep = hasDetailed ? session.deepDuration / 60.0 : nil
-        let rem = hasDetailed ? session.remDuration / 60.0 : nil
-        let awake = hasDetailed ? session.awakeDuration / 60.0 : nil
-        let totalSleep = hasAnySleepData ? session.totalSleepTime / 60.0 : nil
-        let latency = hasAnySleepData ? session.sleepLatency / 60.0 : nil
-        let score: Double? = hasAnySleepData ? session.qualityScore.overall : nil
+        let deep = hasDetailed ? nonNegativeFiniteMinutes(session.deepDuration) : nil
+        let rem = hasDetailed ? nonNegativeFiniteMinutes(session.remDuration) : nil
+        let awake = hasDetailed ? nonNegativeFiniteMinutes(session.awakeDuration) : nil
+        let totalSleep = hasAnySleepData ? nonNegativeFiniteMinutes(session.totalSleepTime) : nil
+        let latency = hasAnySleepData ? nonNegativeFiniteMinutes(session.sleepLatency) : nil
+        let score: Double? = hasAnySleepData ? nonNegativeFinite(session.qualityScore.overall) : nil
         return ProtocolNightMetricSnapshot(
             sleepDateKey: session.sleepDateKey,
             versionID: log?.versionID,
             restorativeSleepMinutes: restMin,
             restorativePctOfInBed: restPctOfInBed,
+            restorativeDenominatorMinutes: restDenominatorMin,
             longestRestorativeBlockMinutes: longest,
             continuityCategory: category,
             dataQuality: session.dataQuality,
@@ -64,7 +64,7 @@ nonisolated struct ProtocolFormulaAnalysisService: Sendable {
             to: dateRange.upperBound
         )
         let logs = try await repository.fetchNightLogs(from: startKey, to: endKey)
-        let logsByDate = Dictionary(uniqueKeysWithValues: logs.map { ($0.sleepDateKey, $0) })
+        let logsByDate = ProtocolFormulaDeduping.latestLogsByDate(logs, context: "analysis-rollups")
 
         var snapshotsByVersion: [UUID: [ProtocolNightMetricSnapshot]] = [:]
         for session in sessions {
@@ -177,9 +177,8 @@ nonisolated struct ProtocolFormulaAnalysisService: Sendable {
         let sessions = try await repository.fetchCachedSessions(
             from: dateRange.lowerBound, to: dateRange.upperBound)
         let logs = try await repository.fetchNightLogs(from: startKey, to: endKey)
-        let takenLogsByDate = Dictionary(
-            uniqueKeysWithValues: logs.filter { $0.status == .taken }.map { ($0.sleepDateKey, $0) }
-        )
+        let takenLogsByDate = ProtocolFormulaDeduping
+            .latestLogsByDate(logs.filter { $0.status == .taken }, context: "analysis-nightly-snapshots")
         let snapshots = sessions
             .filter { takenLogsByDate[$0.sleepDateKey] != nil }
             .sorted { $0.startDate < $1.startDate }
@@ -213,10 +212,32 @@ nonisolated struct ProtocolFormulaAnalysisService: Sendable {
         return bucket.map { AdherenceRollup(versionID: $0.key, taken: $0.value.taken, skipped: $0.value.skipped) }
     }
 
-    /// All rollups across all logged time. Convenience for Timeline / AllMetrics.
+    /// All rollups across all logged time. Convenience for insights/export paths
+    /// where the full history is required (CSV exporter, narrative insights).
+    /// UI viewmodels should prefer `recentRollups(days:)` to avoid materializing
+    /// years of sessions/logs on every refresh.
     func allRollups() async throws -> [ProtocolVersionRollup] {
         let distant = Date.distantPast...Date()
         return try await rollups(in: distant)
+    }
+
+    /// Bounded rollups for UI surfaces. Defaults to a 60-day window — matches
+    /// the protocol analysis window without dragging the full history into
+    /// memory for screens that only render the recent comparison.
+    func recentRollups(days: Int = 60, now: Date = Date()) async throws -> [ProtocolVersionRollup] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let start = calendar.date(byAdding: .day, value: -days, to: now) ?? Date.distantPast
+        return try await rollups(in: start...now)
+    }
+
+    /// Bounded nightly snapshots for UI surfaces. Same rationale as
+    /// `recentRollups(days:)` — chart/strip surfaces only need the recent tail.
+    func recentNightlySnapshots(days: Int = 60, now: Date = Date()) async throws -> [ProtocolNightMetricSnapshot] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let start = calendar.date(byAdding: .day, value: -days, to: now) ?? Date.distantPast
+        return try await nightlySnapshots(in: start...now)
     }
 
     private static func dateKey(for date: Date) -> String {
@@ -227,5 +248,14 @@ nonisolated struct ProtocolFormulaAnalysisService: Sendable {
                       components.year ?? 0,
                       components.month ?? 0,
                       components.day ?? 0)
+    }
+
+    private static func nonNegativeFiniteMinutes(_ seconds: Double) -> Double? {
+        nonNegativeFinite(seconds).map { $0 / 60.0 }
+    }
+
+    private static func nonNegativeFinite(_ value: Double) -> Double? {
+        guard value.isFinite, value >= 0 else { return nil }
+        return value
     }
 }

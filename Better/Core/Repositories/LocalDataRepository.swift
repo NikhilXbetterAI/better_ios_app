@@ -702,6 +702,13 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
     }
 
+    func deleteBaselineSnapshot() async throws {
+        for existing in try modelContext.fetch(FetchDescriptor<StoredProtocolBaselineSnapshot>()) {
+            modelContext.delete(existing)
+        }
+        try modelContext.save()
+    }
+
     func pruneDataOlderThan(days: Int) async throws {
         let cutoff = Date.now.addingTimeInterval(Double(-days) * 86_400)
         let cutoffKey = Self.dateKey(for: cutoff)
@@ -858,6 +865,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         )
         sleepModeSessionDescriptor.fetchLimit = 1
         let latestSleepModeSession = try modelContext.fetch(sleepModeSessionDescriptor).first
+        let protocolBaseline = try? await fetchBaselineSnapshot()
 
         return LocalDataInventory(
             sleepSessionCount: sessions.count,
@@ -877,7 +885,9 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             protocolFormulaVersionCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolFormulaVersion>()),
             protocolNightLogCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolNightLog>()),
             protocolLogEditCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolLogEdit>()),
-            protocolBaselineSnapshotCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolBaselineSnapshot>())
+            protocolBaselineSnapshotCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolBaselineSnapshot>()),
+            protocolBaselineValidNightCount: protocolBaseline?.validNightCount,
+            protocolBaselineIsInsufficient: protocolBaseline?.isInsufficient
         )
     }
 }

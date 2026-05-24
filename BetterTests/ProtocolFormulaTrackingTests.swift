@@ -453,40 +453,42 @@ final class ProtocolFormulaHomeViewModelTests: XCTestCase {
 final class ProtocolBaselineServiceTests: XCTestCase {
 
     func testFreezeBaseline_sufficiencyThreshold() async throws {
-        // < 7 nights → isInsufficient = true
+        // < 14 qualifying nights → no persisted Protocol baseline.
         let sessions = (0..<5).map { i -> SleepSession in
             makeSession(dateKey: "2026-0\(3)-\(String(format: "%02d", i + 1))")
         }
         let repo = ProtocolFormulaMemoryRepo(sessions: sessions)
         let svc = ProtocolBaselineService(repository: repo, calendar: gregorian())
         let snap = try await svc.freezeBaseline(beforeSleepDateKey: "2026-04-01")
-        XCTAssertNotNil(snap)
-        XCTAssertTrue(snap!.isInsufficient, "5 nights < threshold of 7 → isInsufficient")
-        XCTAssertEqual(snap!.validNightCount, 5)
+        let readiness = try await svc.readiness(beforeSleepDateKey: "2026-04-01")
+        XCTAssertNil(snap)
+        XCTAssertEqual(readiness?.validNightCount, 5)
+        XCTAssertEqual(readiness?.requiredNightCount, 14)
+        XCTAssertEqual(readiness?.totalCachedNightCount, 5)
     }
 
     func testFreezeBaseline_sufficientData() async throws {
-        let sessions = (1...10).map { i -> SleepSession in
+        let sessions = (1...14).map { i -> SleepSession in
             makeSession(dateKey: "2026-03-\(String(format: "%02d", i))")
         }
         let repo = ProtocolFormulaMemoryRepo(sessions: sessions)
         let svc = ProtocolBaselineService(repository: repo, calendar: gregorian())
         let snap = try await svc.freezeBaseline(beforeSleepDateKey: "2026-04-01")
         XCTAssertNotNil(snap)
-        XCTAssertFalse(snap!.isInsufficient, "10 nights ≥ 7 → sufficient")
-        XCTAssertEqual(snap!.validNightCount, 10)
+        XCTAssertFalse(snap!.isInsufficient, "14 nights meets Protocol baseline threshold")
+        XCTAssertEqual(snap!.validNightCount, 14)
     }
 
     func testFreezeBaseline_excludesSessionsOnOrAfterCutoff() async throws {
         // Sessions on 2026-04-01 and later must NOT contribute to the baseline
-        let beforeCutoff = (1...8).map { i -> SleepSession in
+        let beforeCutoff = (1...14).map { i -> SleepSession in
             makeSession(dateKey: "2026-03-\(String(format: "%02d", i))")
         }
         let onCutoff = [makeSession(dateKey: "2026-04-01")]
         let repo = ProtocolFormulaMemoryRepo(sessions: beforeCutoff + onCutoff)
         let svc = ProtocolBaselineService(repository: repo, calendar: gregorian())
         let snap = try await svc.freezeBaseline(beforeSleepDateKey: "2026-04-01")
-        XCTAssertEqual(snap?.validNightCount, 8, "Cutoff day itself must be excluded from baseline")
+        XCTAssertEqual(snap?.validNightCount, 14, "Cutoff day itself must be excluded from baseline")
     }
 
     func testFreezeBaseline_zeroQualifyingNights_returnsNil() async throws {
@@ -500,7 +502,7 @@ final class ProtocolBaselineServiceTests: XCTestCase {
     }
 
     func testFreezeBaseline_idempotent_doesNotOverwriteExisting() async throws {
-        let sessions = (1...10).map { makeSession(dateKey: "2026-03-\(String(format: "%02d", $0))") }
+        let sessions = (1...14).map { makeSession(dateKey: "2026-03-\(String(format: "%02d", $0))") }
         let repo = ProtocolFormulaMemoryRepo(sessions: sessions)
         let svc = ProtocolBaselineService(repository: repo, calendar: gregorian())
 
@@ -572,12 +574,29 @@ final class ProtocolBaselineServiceTests: XCTestCase {
     }
 
     func testFreezeBaseline_force_recomputesSnapshot() async throws {
-        let sessions = (1...10).map { makeSession(dateKey: "2026-03-\(String(format: "%02d", $0))") }
+        let sessions = (1...14).map { makeSession(dateKey: "2026-03-\(String(format: "%02d", $0))") }
         let repo = ProtocolFormulaMemoryRepo(sessions: sessions)
         let svc = ProtocolBaselineService(repository: repo, calendar: gregorian())
         let first = try await svc.freezeBaseline(beforeSleepDateKey: "2026-04-01")
         let second = try await svc.freezeBaseline(beforeSleepDateKey: "2026-04-01", force: true)
         XCTAssertNotEqual(first?.id, second?.id, "force=true must produce a new snapshot with a new ID")
+    }
+
+    func testReadiness_countsCachedAndQualifyingNightsInNinetyDayWindow() async throws {
+        let qualifying = (1...6).map { makeSession(dateKey: "2026-03-\(String(format: "%02d", $0))") }
+        let excluded = (7...10).map {
+            makeSession(dateKey: "2026-03-\(String(format: "%02d", $0))", quality: .noData)
+        }
+        let repo = ProtocolFormulaMemoryRepo(sessions: qualifying + excluded)
+        let svc = ProtocolBaselineService(repository: repo, calendar: gregorian())
+
+        let readiness = try await svc.readiness(beforeSleepDateKey: "2026-04-01")
+
+        XCTAssertEqual(readiness?.validNightCount, 6)
+        XCTAssertEqual(readiness?.qualifyingNightCount, 6)
+        XCTAssertEqual(readiness?.totalCachedNightCount, 10)
+        XCTAssertEqual(readiness?.excludedNightCount, 4)
+        XCTAssertFalse(readiness?.isReady ?? true)
     }
 
     func testStdDev_singleValue_returnsNil() {
@@ -621,6 +640,7 @@ final class ProtocolFormulaAnalysisRollupTests: XCTestCase {
         // Regression guard: ProtocolFormulaMetric.awake.betterIsLower == true
         XCTAssertTrue(ProtocolFormulaMetric.awake.betterIsLower)
         XCTAssertTrue(ProtocolFormulaMetric.latency.betterIsLower)
+        XCTAssertEqual(ProtocolFormulaMetric.restorativePct.deltaUnit, "pp")
         // All others should be higher-is-better
         let higherBetter: [ProtocolFormulaMetric] = [.restorativeMin, .restorativePct, .longestBlock, .deep, .rem, .duration, .score]
         for m in higherBetter {
@@ -1024,5 +1044,20 @@ final class BaselineStatHelperTests: XCTestCase {
         let dist = ProtocolBaselineService.continuityDistribution(for: sessions)
         let total = dist.values.reduce(0, +)
         XCTAssertEqual(total, 1.0, accuracy: 0.001, "Continuity distribution must sum to 1.0")
+    }
+
+    func testRestorativePct_rejectsImplausibleHundredPercent() {
+        let impossible = makeSession(
+            dateKey: "2026-01-02",
+            deepSeconds: 30 * 60,
+            remSeconds: 30 * 60,
+            awakeSeconds: 0,
+            totalSleepSeconds: 60 * 60
+        )
+
+        XCTAssertNil(
+            ProtocolFormulaMetricMath.restorativePctOfInBed(for: impossible),
+            "100% restorative sleep is treated as suspect source data, not a real protocol result"
+        )
     }
 }

@@ -14,13 +14,13 @@ nonisolated struct ProtocolFormulaInsightsService: Sendable {
         guard !versions.isEmpty else { return [] }
         let baseline = try await repository.fetchBaselineSnapshot()
         let rollups = try await analysisService.allRollups()
-        let rollupByVersion = Dictionary(uniqueKeysWithValues: rollups.map { ($0.versionID, $0) })
+        let rollupByVersion = ProtocolFormulaDeduping.rollupsByVersion(rollups, context: "insights")
 
         guard let baseline else {
             return [ProtocolFormulaInsight(
                 kind: .baselineUnavailable,
                 headline: "Baseline not available yet",
-                body: "Log 7 or more nights to unlock protocol impact insights.",
+                body: "Log \(ProtocolBaselineService.minimumPersistedNightCount) or more qualifying nights to unlock protocol impact insights.",
                 isPositive: false
             )]
         }

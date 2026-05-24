@@ -121,12 +121,12 @@ nonisolated private extension ResearchAnalysisService {
         formulaVersions: [ProtocolFormulaVersion] = []
     ) -> [NightlyResearchRow] {
         let adherenceByDate = Dictionary(grouping: adherence, by: \.dateKey)
-        let statusByDate = Dictionary(uniqueKeysWithValues: statusLogs.map { ($0.dateKey, $0) })
-        let activityByDate = Dictionary(uniqueKeysWithValues: activitySummaries.map { ($0.dateKey, $0) })
-        let contextByDate = Dictionary(uniqueKeysWithValues: contextEntries.map { ($0.sleepDateKey, $0) })
-        let nightLogByDate = Dictionary(uniqueKeysWithValues: nightLogs.map { ($0.sleepDateKey, $0) })
-        let formulaVersionByID = Dictionary(uniqueKeysWithValues: formulaVersions.map { ($0.id, $0) })
-        let protocolNameByID = Dictionary(uniqueKeysWithValues: protocolItems.map { ($0.id.uuidString, $0.name) })
+        let statusByDate = Dictionary(statusLogs.map { ($0.dateKey, $0) }, uniquingKeysWith: { _, latest in latest })
+        let activityByDate = Dictionary(activitySummaries.map { ($0.dateKey, $0) }, uniquingKeysWith: { _, latest in latest })
+        let contextByDate = Dictionary(contextEntries.map { ($0.sleepDateKey, $0) }, uniquingKeysWith: { _, latest in latest })
+        let nightLogByDate = ProtocolFormulaDeduping.latestLogsByDate(nightLogs, context: "research-export")
+        let formulaVersionByID = ProtocolFormulaDeduping.latestVersionsByID(formulaVersions, context: "research-export")
+        let protocolNameByID = Dictionary(protocolItems.map { ($0.id.uuidString, $0.name) }, uniquingKeysWith: { _, latest in latest })
 
         return sessions.sorted { $0.sleepDateKey < $1.sleepDateKey }.map { session in
             let nightlyAdherence = adherenceByDate[session.sleepDateKey, default: []].sorted { lhs, rhs in

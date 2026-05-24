@@ -248,7 +248,7 @@ nonisolated struct ProtocolFormulaCatalogService: Sendable {
         }
 
         let existingLogs = try await repository.fetchNightLogs(from: startKey, to: endKey)
-        let existingByKey = Dictionary(uniqueKeysWithValues: existingLogs.map { ($0.sleepDateKey, $0) })
+        let existingByKey = ProtocolFormulaDeduping.latestLogsByDate(existingLogs, context: "catalog-seed-history")
 
         for (versionID, dateKeys) in seed.dateKeysByVersionID {
             guard let version = versionsByID[versionID] else { continue }
@@ -273,7 +273,7 @@ nonisolated struct ProtocolFormulaCatalogService: Sendable {
     ) -> ProtocolFormulaBestVersion? {
         // Insufficient baselines cannot ground a delta — surface "—" instead of ranking.
         guard let baseline, baseline.isInsufficient == false else { return nil }
-        let versionsByID = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0) })
+        let versionsByID = ProtocolFormulaDeduping.latestVersionsByID(versions, context: "best-version")
         func delta(_ value: Double?, _ base: Double?) -> Double? {
             guard let value, let base else { return nil }
             return value - base

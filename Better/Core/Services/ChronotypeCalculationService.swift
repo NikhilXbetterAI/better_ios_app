@@ -8,6 +8,7 @@ nonisolated struct ChronotypeCalculationService: Sendable {
     static let minimumTotalNights = 14
     static let minimumWorkdayNights = 6
     static let minimumFreeDayNights = 3
+    static let stableBodyClockNightCount = 30
 
     func estimate(
         sessions: [SleepSession],
@@ -108,6 +109,13 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             excludedNightCount: excludedCountsByReason.values.reduce(0, +),
             candidateNightCount: candidateCount
         )
+        let readiness = Self.bodyClockReadiness(validNightCount: includedNights.count, confidence: confidence)
+        let caveats = Self.bodyClockCaveats(
+            validNightCount: includedNights.count,
+            freeDayNightCount: freeDayNights.count,
+            excludedCountsByReason: excludedCountsByReason,
+            candidateNightCount: candidateCount
+        )
         let estimate = ChronotypeEstimate(
             bucket: Self.bucket(for: correctedMidpointMinute),
             correctedMidpointMinute: correctedMidpointMinute,
@@ -122,6 +130,8 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             excludedNightCount: excludedCountsByReason.values.reduce(0, +),
             excludedCountsByReason: excludedCountsByReason,
             confidence: confidence,
+            bodyClockReadiness: readiness,
+            bodyClockCaveats: caveats,
             optimalSleepWindow: Self.sleepWindow(centerMinute: correctedMidpointMinute, duration: weeklyAverageDuration)
         )
 
@@ -138,6 +148,41 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             windowDays: clampedWindowDays,
             windowStart: windowStart,
             windowEnd: endingAt
+        )
+    }
+
+    func alignment(
+        for session: SleepSession,
+        estimate: ChronotypeEstimate,
+        calendar: Calendar = .current
+    ) -> BodyClockSleepAlignment? {
+        guard let timing = timing(for: session) else { return nil }
+        let midpoint = timing.onset.addingTimeInterval(session.totalSleepTime / 2)
+        let actualMidpointMinute = Self.minuteOfDay(for: midpoint, calendar: calendar)
+        return alignment(actualMidpointMinute: actualMidpointMinute, estimate: estimate)
+    }
+
+    func alignment(
+        for night: ChronotypeNight,
+        estimate: ChronotypeEstimate
+    ) -> BodyClockSleepAlignment {
+        alignment(actualMidpointMinute: night.midpointMinute, estimate: estimate)
+    }
+
+    private func alignment(
+        actualMidpointMinute: Int,
+        estimate: ChronotypeEstimate
+    ) -> BodyClockSleepAlignment {
+        let signedDeltaMinutes = Self.signedCircularDelta(
+            from: estimate.correctedMidpointMinute,
+            to: actualMidpointMinute
+        )
+
+        return BodyClockSleepAlignment(
+            actualMidpointMinute: actualMidpointMinute,
+            targetMidpointMinute: estimate.correctedMidpointMinute,
+            signedDeltaMinutes: signedDeltaMinutes,
+            category: Self.alignmentCategory(for: signedDeltaMinutes)
         )
     }
 
@@ -239,6 +284,53 @@ nonisolated struct ChronotypeCalculationService: Sendable {
         return .low
     }
 
+    private static func bodyClockReadiness(
+        validNightCount: Int,
+        confidence: ComparisonConfidence
+    ) -> BodyClockReadiness {
+        if confidence == .high && validNightCount >= stableBodyClockNightCount {
+            return .highConfidence
+        }
+
+        if validNightCount >= stableBodyClockNightCount {
+            return .stable
+        }
+
+        return .preview
+    }
+
+    private static func bodyClockCaveats(
+        validNightCount: Int,
+        freeDayNightCount: Int,
+        excludedCountsByReason: [ChronotypeExclusionReason: Int],
+        candidateNightCount: Int
+    ) -> [BodyClockCaveat] {
+        var caveats: [BodyClockCaveat] = []
+        let excludedCount = excludedCountsByReason.values.reduce(0, +)
+        let excludedRatio = candidateNightCount > 0 ? Double(excludedCount) / Double(candidateNightCount) : 0
+
+        if freeDayNightCount < 5 { caveats.append(.fewFreeDays) }
+        if excludedRatio >= 0.2 { caveats.append(.highExclusionRate) }
+        if validNightCount < stableBodyClockNightCount { caveats.append(.previewOnly) }
+        if (excludedCountsByReason[.travelOrJetLag] ?? 0) > 0 { caveats.append(.travelRecentlyExcluded) }
+
+        return caveats
+    }
+
+    private static func alignmentCategory(for signedDeltaMinutes: Int) -> BodyClockAlignmentCategory {
+        let absoluteDelta = abs(signedDeltaMinutes)
+
+        if absoluteDelta <= 30 {
+            return .aligned
+        }
+
+        if signedDeltaMinutes < 0 {
+            return absoluteDelta <= 75 ? .slightlyEarly : .early
+        }
+
+        return absoluteDelta <= 75 ? .slightlyLate : .late
+    }
+
     private static func dayType(forOnset onset: Date, calendar: Calendar) -> ChronotypeDayType {
         switch calendar.component(.weekday, from: onset) {
         case 1...5:
@@ -321,6 +413,13 @@ nonisolated struct ChronotypeCalculationService: Sendable {
         let normalized = minute.truncatingRemainder(dividingBy: 1_440)
         let positive = normalized < 0 ? normalized + 1_440 : normalized
         return Int(positive.rounded()) % 1_440
+    }
+
+    private static func signedCircularDelta(from targetMinute: Int, to actualMinute: Int) -> Int {
+        var delta = actualMinute - targetMinute
+        while delta > 720 { delta -= 1_440 }
+        while delta < -720 { delta += 1_440 }
+        return delta
     }
 
     private static func clamp(_ value: Int, lower: Int, upper: Int) -> Int {
