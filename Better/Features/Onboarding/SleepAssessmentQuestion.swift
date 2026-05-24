@@ -9,19 +9,19 @@ struct SleepAssessmentQuestion: Identifiable, Hashable, Sendable {
     static let allQuestions: [SleepAssessmentQuestion] = [
         SleepAssessmentQuestion(
             id: "workday_sleep_time",
-            section: "Sleep Timing & Chronotype",
+            section: "Sleep Timing & Body Clock",
             prompt: "On workdays, what time do you usually fall asleep?",
             options: ["Before 10pm", "10-11pm", "11pm-12am", "12-1am", "After 1am"]
         ),
         SleepAssessmentQuestion(
             id: "workday_wake_time",
-            section: "Sleep Timing & Chronotype",
+            section: "Sleep Timing & Body Clock",
             prompt: "On workdays, what time do you wake up?",
             options: ["Before 6am", "6-7am", "7-8am", "8-9am", "After 9am"]
         ),
         SleepAssessmentQuestion(
             id: "free_day_wake_time",
-            section: "Sleep Timing & Chronotype",
+            section: "Sleep Timing & Body Clock",
             prompt: "On free days, what time do you naturally wake up?",
             options: ["Before 6am", "6-7am", "7-8am", "8-9am", "After 9am"]
         ),
@@ -81,4 +81,3 @@ struct SleepAssessmentQuestion: Identifiable, Hashable, Sendable {
         )
     ]
 }
-

@@ -386,11 +386,16 @@ nonisolated struct ResearchCSVExporter: Sendable {
             "missing_requirements",
             "window_days",
             "window_start_iso",
-            "window_end_iso"
+            "window_end_iso",
+            "body_clock_readiness",
+            "body_clock_alignment_status",
+            "body_clock_alignment_delta_min",
+            "body_clock_caveats"
         ]
 
         let estimate = result.estimate
         let excluded = result.excludedCountsByReason
+        let alignment = Self.bodyClockAlignment(for: result)
         let body = csvRow([
             result.status.rawValue,
             estimate?.bucket.rawValue ?? "",
@@ -416,10 +421,24 @@ nonisolated struct ResearchCSVExporter: Sendable {
             result.missingRequirements.map(\.rawValue).joined(separator: "|"),
             String(result.windowDays),
             Self.iso(result.windowStart),
-            Self.iso(result.windowEnd)
+            Self.iso(result.windowEnd),
+            estimate?.bodyClockReadiness.rawValue ?? "",
+            alignment?.category.rawValue ?? "",
+            alignment.map { String($0.signedDeltaMinutes) } ?? "",
+            estimate?.bodyClockCaveats.map(\.rawValue).joined(separator: "|") ?? ""
         ])
 
         return [csvRow(header), body].joined(separator: "\n")
+    }
+
+    private static func bodyClockAlignment(for result: ChronotypeCalculationResult) -> BodyClockSleepAlignment? {
+        guard let estimate = result.estimate,
+              let latestNight = result.includedNights.max(by: { $0.onset < $1.onset })
+        else {
+            return nil
+        }
+
+        return ChronotypeCalculationService().alignment(for: latestNight, estimate: estimate)
     }
 
     func metadataCSV(_ package: ResearchExportPackage) -> String {

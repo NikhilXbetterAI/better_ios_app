@@ -41,8 +41,8 @@ final class ProtocolVersionDiveViewModel {
             } else {
                 baseline = try await repository.fetchBaselineSnapshot()
             }
-            rollups = try await analysisService.allRollups()
-            snapshots = try await analysisService.nightlySnapshots(in: Date.distantPast...Date())
+            rollups = try await analysisService.recentRollups()
+            snapshots = try await analysisService.recentNightlySnapshots()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -63,21 +63,26 @@ final class ProtocolVersionDiveViewModel {
 
     /// Comparison bar value for restorativePct: (you, baseline). Max for bar scaling.
     func restorativeComparison() -> (my: Double?, base: Double?) {
-        (selectedRollup?.meanRestorativePctOfInBed, baseline?.meanRestorativePctOfInBed)
+        (Self.sanitized(selectedRollup?.meanRestorativePctOfInBed), Self.sanitized(baseline?.meanRestorativePctOfInBed))
     }
 
     func longestBlockComparison() -> (my: Double?, base: Double?) {
-        (selectedRollup?.meanLongestRestorativeBlockMin, baseline?.meanLongestRestorativeBlockMin)
+        (Self.sanitized(selectedRollup?.meanLongestRestorativeBlockMin), Self.sanitized(baseline?.meanLongestRestorativeBlockMin))
     }
 
     func restorativeMinComparison() -> (my: Double?, base: Double?) {
-        (selectedRollup?.meanRestorativeMin, baseline?.meanRestorativeMin)
+        (Self.sanitized(selectedRollup?.meanRestorativeMin), Self.sanitized(baseline?.meanRestorativeMin))
     }
 
     /// Generic accessor for any `ProtocolFormulaMetric` — drives the full bar list.
     func comparison(for metric: ProtocolFormulaMetric) -> (my: Double?, base: Double?) {
         let my = selectedRollup.flatMap { metric.rollupMean(from: $0) }
         let base = baseline.flatMap { metric.baselineValue(from: $0) }
-        return (my, base)
+        return (Self.sanitized(my), Self.sanitized(base))
+    }
+
+    private static func sanitized(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, value >= 0 else { return nil }
+        return value
     }
 }

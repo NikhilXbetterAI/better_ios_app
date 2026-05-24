@@ -1,6 +1,10 @@
 import Foundation
 import OSLog
 
+nonisolated enum ProtocolBaselineError: Error, Sendable {
+    case invalidCutoff
+}
+
 /// Freezes a `ProtocolBaselineSnapshot` for Protocol Formula Tracking V1.
 ///
 /// The snapshot is the **frozen** mean/std of restorative-sleep metrics computed across
@@ -19,7 +23,7 @@ nonisolated struct ProtocolBaselineService: Sendable {
 
     nonisolated static let windowDays: Int = 90
     nonisolated static let maxNights: Int = 30
-    nonisolated static let sufficiencyThreshold: Int = 7
+    nonisolated static let minimumPersistedNightCount: Int = 14
 
     init(repository: LocalDataRepositoryProtocol, calendar: Calendar = .current) {
         self.repository = repository
@@ -50,23 +54,24 @@ nonisolated struct ProtocolBaselineService: Sendable {
                 Self.logger.debug("baseline freeze reused (versioned) validNightCount=\(existing.validNightCount, privacy: .public) insufficient=\(existing.isInsufficient, privacy: .public) missing=\(existing.extendedMetricReadinessSummary, privacy: .public)")
                 return existing
             }
-            if versionID == nil, let existing = try await repository.fetchBaselineSnapshot() {
+            if versionID == nil,
+               let existing = try await repository.fetchBaselineSnapshot(),
+               existing.isInsufficient == false {
                 Self.logger.debug("baseline freeze reused validNightCount=\(existing.validNightCount, privacy: .public) insufficient=\(existing.isInsufficient, privacy: .public) missing=\(existing.extendedMetricReadinessSummary, privacy: .public)")
                 return existing
             }
         }
-        guard let cutoffDate = SleepDateKey.date(from: cutoffKey, calendar: calendar),
-              let windowStart = calendar.date(byAdding: .day, value: -Self.windowDays, to: cutoffDate) else {
+
+        let candidate = try await baselineCandidate(beforeSleepDateKey: cutoffKey)
+        let nights = candidate.nights
+
+        guard nights.count >= Self.minimumPersistedNightCount else {
+            if let existing = try await repository.fetchBaselineSnapshot(), existing.isInsufficient {
+                try await repository.deleteBaselineSnapshot()
+            }
+            Self.logger.debug("baseline freeze deferred validNightCount=\(nights.count, privacy: .public) required=\(Self.minimumPersistedNightCount, privacy: .public)")
             return nil
         }
-        let sessions = try await repository.fetchCachedSessions(from: windowStart, to: cutoffDate)
-        let qualifying = sessions
-            .filter { $0.dataQuality == .detailedStages || $0.dataQuality == .mixedSources }
-            .filter { $0.sleepDateKey < cutoffKey }
-            .sorted { $0.startDate > $1.startDate }
-        let nights = Array(qualifying.prefix(Self.maxNights))
-
-        guard !nights.isEmpty else { return nil }
 
         let metrics = Self.metrics(for: nights)
         let distribution = Self.continuityDistribution(for: nights)
@@ -74,8 +79,8 @@ nonisolated struct ProtocolBaselineService: Sendable {
         let snapshot = ProtocolBaselineSnapshot(
             versionID: versionID,
             frozenAt: Date(),
-            windowStart: windowStart,
-            windowEnd: cutoffDate,
+            windowStart: candidate.windowStart,
+            windowEnd: candidate.windowEnd,
             validNightCount: nights.count,
             meanRestorativeMin: Self.mean(metrics.restorativeMins),
             stdRestorativeMin: Self.standardDeviation(metrics.restorativeMins),
@@ -84,7 +89,7 @@ nonisolated struct ProtocolBaselineService: Sendable {
             meanLongestRestorativeBlockMin: Self.mean(metrics.longestBlockMins),
             stdLongestRestorativeBlockMin: Self.standardDeviation(metrics.longestBlockMins),
             continuityCategoryDistribution: distribution,
-            isInsufficient: nights.count < Self.sufficiencyThreshold,
+            isInsufficient: false,
             meanDeepMin: Self.mean(metrics.deepMins),
             stdDeepMin: Self.standardDeviation(metrics.deepMins),
             meanRemMin: Self.mean(metrics.remMins),
@@ -103,6 +108,17 @@ nonisolated struct ProtocolBaselineService: Sendable {
         return snapshot
     }
 
+    func readiness(beforeSleepDateKey cutoffKey: String) async throws -> ProtocolBaselineReadiness? {
+        guard let candidate = try? await baselineCandidate(beforeSleepDateKey: cutoffKey) else { return nil }
+        return ProtocolBaselineReadiness(
+            validNightCount: candidate.nights.count,
+            requiredNightCount: Self.minimumPersistedNightCount,
+            totalCachedNightCount: candidate.totalCachedNightCount,
+            windowStart: candidate.windowStart,
+            windowEnd: candidate.windowEnd
+        )
+    }
+
     /// One-shot augmentation for pre-existing baselines that were frozen before the
     /// full-stage metric scope landed. Re-fetches sessions for the original window and
     /// fills in any nil extended metric fields without touching the originals.
@@ -114,13 +130,9 @@ nonisolated struct ProtocolBaselineService: Sendable {
         let needsAugment = !existing.hasExtendedMetrics
         guard needsAugment else { return false }
 
-        let sessions = try await repository.fetchCachedSessions(from: existing.windowStart, to: existing.windowEnd)
         let cutoffKey = SleepDateKey.calendarDateKey(for: existing.windowEnd, calendar: calendar)
-        let qualifying = sessions
-            .filter { $0.dataQuality == .detailedStages || $0.dataQuality == .mixedSources }
-            .filter { $0.sleepDateKey < cutoffKey }
-            .sorted { $0.startDate > $1.startDate }
-        let nights = Array(qualifying.prefix(Self.maxNights))
+        let candidate = try await baselineCandidate(beforeSleepDateKey: cutoffKey)
+        let nights = candidate.nights
         guard !nights.isEmpty else { return false }
 
         let metrics = Self.metrics(for: nights)
@@ -154,19 +166,41 @@ nonisolated struct ProtocolBaselineService: Sendable {
         var sleepScores: [Double]
     }
 
-    private static func metrics(for nights: [SleepSession]) -> ExtractedMetrics {
-        let restorativeMins = nights.map { $0.restorativeSleepDuration / 60.0 }
-        let restorativePcts: [Double] = nights.compactMap { session in
-            guard session.totalInBedTime > 0 else { return nil }
-            return min(session.restorativeSleepDuration / session.totalInBedTime * 100.0, 100.0)
+    private struct BaselineCandidate {
+        var windowStart: Date
+        var windowEnd: Date
+        var totalCachedNightCount: Int
+        var nights: [SleepSession]
+    }
+
+    private func baselineCandidate(beforeSleepDateKey cutoffKey: String) async throws -> BaselineCandidate {
+        guard let cutoffDate = SleepDateKey.date(from: cutoffKey, calendar: calendar),
+              let windowStart = calendar.date(byAdding: .day, value: -Self.windowDays, to: cutoffDate) else {
+            throw ProtocolBaselineError.invalidCutoff
         }
-        let longestBlockMins = nights.map { $0.continuitySummary.longestBlockDuration / 60.0 }
-        let deepMins = nights.map { $0.deepDuration / 60.0 }
-        let remMins = nights.map { $0.remDuration / 60.0 }
-        let awakeMins = nights.map { $0.awakeDuration / 60.0 }
-        let totalSleepMins = nights.map { $0.totalSleepTime / 60.0 }
-        let latencyMins = nights.map { $0.sleepLatency / 60.0 }
-        let sleepScores = nights.map { $0.qualityScore.overall }
+        let sessions = try await repository.fetchCachedSessions(from: windowStart, to: cutoffDate)
+        let qualifying = sessions
+            .filter { $0.dataQuality == .detailedStages || $0.dataQuality == .mixedSources }
+            .filter { $0.sleepDateKey < cutoffKey }
+            .sorted { $0.startDate > $1.startDate }
+        return BaselineCandidate(
+            windowStart: windowStart,
+            windowEnd: cutoffDate,
+            totalCachedNightCount: sessions.filter { $0.sleepDateKey < cutoffKey }.count,
+            nights: Array(qualifying.prefix(Self.maxNights))
+        )
+    }
+
+    private static func metrics(for nights: [SleepSession]) -> ExtractedMetrics {
+        let restorativeMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.restorativeSleepDuration) }
+        let restorativePcts = nights.compactMap(ProtocolFormulaMetricMath.restorativePctOfInBed)
+        let longestBlockMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.continuitySummary.longestBlockDuration) }
+        let deepMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.deepDuration) }
+        let remMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.remDuration) }
+        let awakeMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.awakeDuration) }
+        let totalSleepMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.totalSleepTime) }
+        let latencyMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.sleepLatency) }
+        let sleepScores = nights.compactMap { Self.nonNegativeFinite($0.qualityScore.overall) }
         return ExtractedMetrics(
             restorativeMins: restorativeMins,
             restorativePcts: restorativePcts,
@@ -178,6 +212,15 @@ nonisolated struct ProtocolBaselineService: Sendable {
             latencyMins: latencyMins,
             sleepScores: sleepScores
         )
+    }
+
+    private static func nonNegativeFiniteMinutes(_ seconds: Double) -> Double? {
+        nonNegativeFinite(seconds).map { $0 / 60.0 }
+    }
+
+    private static func nonNegativeFinite(_ value: Double) -> Double? {
+        guard value.isFinite, value >= 0 else { return nil }
+        return value
     }
 
     // MARK: - Stats helpers

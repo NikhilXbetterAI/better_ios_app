@@ -234,6 +234,68 @@ final class ChronotypeCalculationServiceTests: XCTestCase {
 
         XCTAssertEqual(result.estimate?.confidence, .high)
     }
+
+    func testBodyClockReadinessUsesStableNightCount() {
+        let preview = service.estimate(
+            sessions: fillerSessions,
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+        let stable = service.estimate(
+            sessions: stableSessions,
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+        let high = service.estimate(
+            sessions: highConfidenceSessions,
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertEqual(preview.estimate?.bodyClockReadiness, .preview)
+        XCTAssertEqual(stable.estimate?.bodyClockReadiness, .stable)
+        XCTAssertEqual(high.estimate?.bodyClockReadiness, .highConfidence)
+    }
+
+    func testBodyClockCaveatsReportWeakInputs() {
+        let travel = makeSession(sleepDateKey: "2026-04-05", onset: "2026-04-05T23:00:00Z", durationHours: 8, midpointMinute: 180)
+        let result = service.estimate(
+            sessions: fillerSessions + [travel],
+            contextEntries: [SleepContextEntry(sleepDateKey: "2026-04-05", travel: true)],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertTrue(result.estimate?.bodyClockCaveats.contains(.previewOnly) == true)
+        XCTAssertTrue(result.estimate?.bodyClockCaveats.contains(.fewFreeDays) == true)
+        XCTAssertTrue(result.estimate?.bodyClockCaveats.contains(.travelRecentlyExcluded) == true)
+    }
+
+    func testBodyClockAlignmentThresholds() {
+        let estimate = makeEstimate(targetMidpointMinute: 240)
+
+        XCTAssertEqual(alignment(onset: "2026-04-05T00:00:00Z", durationHours: 8, estimate: estimate)?.category, .aligned)
+        XCTAssertEqual(alignment(onset: "2026-04-05T00:30:00Z", durationHours: 8, estimate: estimate)?.category, .aligned)
+        XCTAssertEqual(alignment(onset: "2026-04-04T23:29:00Z", durationHours: 8, estimate: estimate)?.category, .slightlyEarly)
+        XCTAssertEqual(alignment(onset: "2026-04-05T01:15:00Z", durationHours: 8, estimate: estimate)?.category, .slightlyLate)
+        XCTAssertEqual(alignment(onset: "2026-04-05T01:16:00Z", durationHours: 8, estimate: estimate)?.category, .late)
+    }
+
+    func testBodyClockAlignmentHandlesMidnightWraparound() {
+        let estimate = makeEstimate(targetMidpointMinute: 23 * 60 + 50)
+        let alignment = alignment(onset: "2026-04-04T20:20:00Z", durationHours: 8, estimate: estimate)
+
+        XCTAssertEqual(alignment?.actualMidpointMinute, 20)
+        XCTAssertEqual(alignment?.signedDeltaMinutes, 30)
+        XCTAssertEqual(alignment?.category, .aligned)
+    }
 }
 
 private extension ChronotypeCalculationServiceTests {
@@ -274,6 +336,49 @@ private extension ChronotypeCalculationServiceTests {
             let onset = ISO8601DateFormatter().string(from: onsetDate)
             return makeSession(onset: onset, durationHours: 7.5, midpointMinute: midpointMinute(onset: onsetDate, durationHours: 7.5))
         }
+    }
+
+    var stableSessions: [SleepSession] {
+        (0..<32).compactMap { index in
+            guard let onsetDate = Self.calendar.date(byAdding: .day, value: -index - 1, to: date("2026-05-01T00:30:00Z")) else {
+                return nil
+            }
+            let onset = ISO8601DateFormatter().string(from: onsetDate)
+            return makeSession(onset: onset, durationHours: 7.5, midpointMinute: midpointMinute(onset: onsetDate, durationHours: 7.5))
+        }
+    }
+
+    func alignment(
+        onset: String,
+        durationHours: Double,
+        estimate: ChronotypeEstimate
+    ) -> BodyClockSleepAlignment? {
+        let session = makeSession(
+            onset: onset,
+            durationHours: durationHours,
+            midpointMinute: midpointMinute(onset: date(onset), durationHours: durationHours)
+        )
+        return service.alignment(for: session, estimate: estimate, calendar: Self.calendar)
+    }
+
+    func makeEstimate(targetMidpointMinute: Int) -> ChronotypeEstimate {
+        ChronotypeEstimate(
+            bucket: .intermediate,
+            correctedMidpointMinute: targetMidpointMinute,
+            workdayMidpointMinute: targetMidpointMinute,
+            freeDayMidpointMinute: targetMidpointMinute,
+            workdayMedianDuration: 8 * 3_600,
+            freeDayMedianDuration: 8 * 3_600,
+            weeklyAverageDuration: 8 * 3_600,
+            validNightCount: 30,
+            workdayNightCount: 20,
+            freeDayNightCount: 10,
+            excludedNightCount: 0,
+            excludedCountsByReason: [:],
+            confidence: .medium,
+            bodyClockReadiness: .stable,
+            optimalSleepWindow: SleepWindowRecommendation(startMinute: targetMidpointMinute - 240, endMinute: targetMidpointMinute + 240, duration: 8 * 3_600)
+        )
     }
 
     func makeSession(

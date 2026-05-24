@@ -59,8 +59,8 @@ final class ProtocolTimelineViewModel {
             let baselineExists = baseline != nil
             let baselineMissing = baseline?.extendedMetricReadinessSummary ?? "none"
             Self.logger.debug("timeline reload baseline exists=\(baselineExists, privacy: .public) missing=\(baselineMissing, privacy: .public)")
-            let rollups = try await analysisService.allRollups()
-            let rollupByVersion = Dictionary(uniqueKeysWithValues: rollups.map { ($0.versionID, $0) })
+            let rollups = try await analysisService.recentRollups()
+            let rollupByVersion = ProtocolFormulaDeduping.rollupsByVersion(rollups, context: "timeline")
             let logs = try await repository.fetchNightLogs(from: "0000-00-00", to: "9999-12-31")
             let timelineLogs = logs.filter { $0.status != .unknown }
             let logsByVersion = Dictionary(grouping: timelineLogs, by: { $0.versionID })
@@ -105,7 +105,7 @@ final class ProtocolTimelineViewModel {
             }
 
             // Best-lift tile only renders when the comparison is meaningful:
-            //   1. A baseline exists and clears the sufficiency threshold (>=7 nights).
+            //   1. A baseline exists and clears the sufficiency threshold.
             //   2. The contributing card has >= 3 taken nights (rollups are taken-only post-fix).
             //   3. The delta is positive (no "best regression" tile).
             // Otherwise we surface nil and the view hides the tile entirely.
@@ -145,10 +145,11 @@ final class ProtocolTimelineViewModel {
         versions: [ProtocolFormulaVersion],
         days: Int
     ) -> [HeatmapCell] {
-        let colorByVersion = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0.colorHex) })
-        let labelByVersion = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0.resolvedLabel) })
+        let versionByID = ProtocolFormulaDeduping.latestVersionsByID(versions, context: "timeline-heatmap")
+        let colorByVersion = versionByID.mapValues(\.colorHex)
+        let labelByVersion = versionByID.mapValues(\.resolvedLabel)
         // Latest log per sleepDateKey wins (logs are unique-by-key in storage, but be safe).
-        let logByKey = Dictionary(logs.map { ($0.sleepDateKey, $0) }, uniquingKeysWith: { _, b in b })
+        let logByKey = ProtocolFormulaDeduping.latestLogsByDate(logs, context: "timeline-heatmap")
 
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")

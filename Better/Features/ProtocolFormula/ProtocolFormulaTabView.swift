@@ -5,6 +5,7 @@ import SwiftUI
 /// and Version Dive screens.
 struct ProtocolFormulaTabView: View {
     let localRepository: LocalDataRepositoryProtocol
+    let historicalRefresh: (() async -> Void)?
 
     @State private var homeViewModel: ProtocolFormulaHomeViewModel
     @State private var setupViewModel: ProtocolFormulaSetupViewModel
@@ -27,13 +28,24 @@ struct ProtocolFormulaTabView: View {
         case versionDive
     }
 
-    init(localRepository: LocalDataRepositoryProtocol, userDefaults: UserDefaults = .standard) {
+    init(
+        localRepository: LocalDataRepositoryProtocol,
+        userDefaults: UserDefaults = .standard,
+        historicalRefresh: (() async -> Void)? = nil
+    ) {
         self.localRepository = localRepository
+        self.historicalRefresh = historicalRefresh
         self.userDefaults = userDefaults
-        _homeViewModel = State(initialValue: ProtocolFormulaHomeViewModel(localRepository: localRepository))
+        _homeViewModel = State(initialValue: ProtocolFormulaHomeViewModel(
+            localRepository: localRepository,
+            historicalRefresh: historicalRefresh
+        ))
         _setupViewModel = State(initialValue: ProtocolFormulaSetupViewModel(localRepository: localRepository))
         _editLogViewModel = State(initialValue: ProtocolEditLogViewModel(localRepository: localRepository))
-        _onboardingViewModel = State(initialValue: ProtocolOnboardingViewModel(localRepository: localRepository))
+        _onboardingViewModel = State(initialValue: ProtocolOnboardingViewModel(
+            localRepository: localRepository,
+            historicalRefresh: historicalRefresh
+        ))
         _timelineViewModel = State(initialValue: ProtocolTimelineViewModel(repository: localRepository))
         _allMetricsViewModel = State(initialValue: ProtocolAllMetricsViewModel(repository: localRepository))
         _versionDiveViewModel = State(initialValue: ProtocolVersionDiveViewModel(repository: localRepository))

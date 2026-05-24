@@ -625,6 +625,90 @@ final class LocalDataRepositoryTests: XCTestCase {
         XCTAssertTrue(viewModel.chronotypeResult?.missingRequirements.contains(.freeDayNights) == true)
     }
 
+    @MainActor
+    func testSleepDashboardLoadsBodyClockForSelectedDate() async throws {
+        let sessions = Self.chronotypeSessions()
+        let repository = MockLocalDataRepository(
+            sessions: sessions,
+            profile: UserProfile(sleepGoalHours: 8, baselineWindowDays: 30)
+        )
+        let coordinator = SyncCoordinator(
+            healthRepository: FakeHealthKitRepository(),
+            localRepository: repository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar)
+        )
+        let viewModel = SleepDashboardViewModel(
+            syncCoordinator: coordinator,
+            localRepository: repository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar),
+            calendar: Self.utcCalendar
+        )
+
+        await viewModel.selectDate("2026-04-18")
+
+        XCTAssertEqual(viewModel.bodyClockResult?.status, .estimated)
+        XCTAssertEqual(viewModel.bodyClockResult?.estimate?.bucket, .intermediate)
+        XCTAssertEqual(viewModel.selectedSleepBodyClockAlignment?.category, .aligned)
+        XCTAssertEqual(viewModel.selectedSleepBodyClockAlignment?.signedDeltaMinutes, 21)
+    }
+
+    @MainActor
+    func testSleepDashboardHidesBodyClockAlignmentWhenDataIsInsufficient() async throws {
+        let sessions = [
+            Self.session(key: "2026-04-06", start: Self.date("2026-04-06T00:30:00Z"), end: Self.date("2026-04-06T07:30:00Z")),
+            Self.session(key: "2026-04-07", start: Self.date("2026-04-07T00:30:00Z"), end: Self.date("2026-04-07T07:30:00Z"))
+        ]
+        let repository = MockLocalDataRepository(
+            sessions: sessions,
+            profile: UserProfile(sleepGoalHours: 8, baselineWindowDays: 30)
+        )
+        let coordinator = SyncCoordinator(
+            healthRepository: FakeHealthKitRepository(),
+            localRepository: repository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar)
+        )
+        let viewModel = SleepDashboardViewModel(
+            syncCoordinator: coordinator,
+            localRepository: repository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar),
+            calendar: Self.utcCalendar
+        )
+
+        await viewModel.selectDate("2026-04-07")
+
+        XCTAssertEqual(viewModel.bodyClockResult?.status, .insufficientData)
+        XCTAssertNil(viewModel.selectedSleepBodyClockAlignment)
+    }
+
+    @MainActor
+    func testSleepDashboardRecalculatesBodyClockAlignmentForHistoricalSelection() async throws {
+        let sessions = Self.chronotypeSessions()
+        let repository = MockLocalDataRepository(
+            sessions: sessions,
+            profile: UserProfile(sleepGoalHours: 8, baselineWindowDays: 30)
+        )
+        let coordinator = SyncCoordinator(
+            healthRepository: FakeHealthKitRepository(),
+            localRepository: repository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar)
+        )
+        let viewModel = SleepDashboardViewModel(
+            syncCoordinator: coordinator,
+            localRepository: repository,
+            processor: SleepDataProcessor(calendar: Self.utcCalendar),
+            calendar: Self.utcCalendar
+        )
+
+        await viewModel.selectDate("2026-04-18")
+        XCTAssertNotNil(viewModel.selectedSleepBodyClockAlignment)
+
+        await viewModel.selectDate("2026-04-06")
+
+        XCTAssertEqual(viewModel.selectedSession?.sleepDateKey, "2026-04-06")
+        XCTAssertEqual(viewModel.bodyClockResult?.status, .insufficientData)
+        XCTAssertNil(viewModel.selectedSleepBodyClockAlignment)
+    }
+
     func testActivityStatusLogPersistsAndOverwritesSameDate() async throws {
         let repository = try await makeRepository()
         let first = ActivityStatusLog(

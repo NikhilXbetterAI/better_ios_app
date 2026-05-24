@@ -121,7 +121,7 @@ struct SleepQuestionnaireStepView: View {
 
     private func sectionStyle(for section: String) -> (color: Color, icon: String) {
         switch section {
-        case "Sleep Timing & Chronotype": return (BetterColors.brand,      "moon.fill")
+        case "Sleep Timing & Body Clock": return (BetterColors.brand,      "moon.fill")
         case "Sleep Quality":             return (BetterColors.stageDeep,  "heart.fill")
         case "Daytime Function":          return (BetterColors.stageAwake, "figure.run")
         case "Behavioral Drivers":        return (BetterColors.hrv,        "brain.head.profile")

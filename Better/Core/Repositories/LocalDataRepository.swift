@@ -733,6 +733,13 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
     }
 
+    func deleteBaselineSnapshot() async throws {
+        for existing in try modelContext.fetch(FetchDescriptor<StoredProtocolBaselineSnapshot>()) {
+            modelContext.delete(existing)
+        }
+        try modelContext.save()
+    }
+
     // MARK: - Intervention windows (V3)
 
     func fetchInterventionWindows() async throws -> [InterventionWindow] {
@@ -926,6 +933,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         )
         sleepModeSessionDescriptor.fetchLimit = 1
         let latestSleepModeSession = try modelContext.fetch(sleepModeSessionDescriptor).first
+        let protocolBaseline = try? await fetchBaselineSnapshot()
 
         return LocalDataInventory(
             sleepSessionCount: sessions.count,
@@ -945,7 +953,9 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             protocolFormulaVersionCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolFormulaVersion>()),
             protocolNightLogCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolNightLog>()),
             protocolLogEditCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolLogEdit>()),
-            protocolBaselineSnapshotCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolBaselineSnapshot>())
+            protocolBaselineSnapshotCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolBaselineSnapshot>()),
+            protocolBaselineValidNightCount: protocolBaseline?.validNightCount,
+            protocolBaselineIsInsufficient: protocolBaseline?.isInsufficient
         )
     }
 }

@@ -18,16 +18,19 @@ final class ProtocolOnboardingViewModel {
     private let baselineService: ProtocolBaselineService
     private let catalogService: ProtocolFormulaCatalogService
     private let calendar: Calendar
+    private let historicalRefresh: (() async -> Void)?
 
     init(
         localRepository: LocalDataRepositoryProtocol,
         baselineService: ProtocolBaselineService? = nil,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        historicalRefresh: (() async -> Void)? = nil
     ) {
         self.localRepository = localRepository
         self.baselineService = baselineService ?? ProtocolBaselineService(repository: localRepository)
         self.catalogService = ProtocolFormulaCatalogService(repository: localRepository, calendar: calendar)
         self.calendar = calendar
+        self.historicalRefresh = historicalRefresh
         self.displayedMonth = Self.startOfMonth(for: Date(), calendar: calendar)
     }
 
@@ -148,6 +151,7 @@ final class ProtocolOnboardingViewModel {
             try await catalogService.seedHistory(seed)
             versions = try await catalogService.loadExistingVersions(currentVersionID: currentVersionID)
             if let firstKey = paintedDateKeysByVersionID.values.flatMap({ $0 }).min() {
+                await historicalRefresh?()
                 _ = try await baselineService.freezeBaseline(beforeSleepDateKey: firstKey)
             }
             isCompleted = true

@@ -93,6 +93,30 @@ nonisolated enum BetterPersistenceContainerFactory {
         return container
     }
 
+    /// Removes the on-disk SwiftData store files so a fresh container can be
+    /// built. Used by the launch recovery path when `makeLiveContainer()`
+    /// throws (typically a migration failure on a partly-corrupted store).
+    /// Destructive — only invoke after the user has explicitly opted in.
+    static func wipeStoreFiles() {
+        let fileManager = FileManager.default
+        guard let appSupport = try? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        ) else { return }
+        // SwiftData's default store name is "default.store" (+ -shm / -wal).
+        let storeURL = appSupport.appendingPathComponent("default.store")
+        let candidates = [
+            storeURL.path,
+            storeURL.path + "-shm",
+            storeURL.path + "-wal"
+        ]
+        for path in candidates where fileManager.fileExists(atPath: path) {
+            try? fileManager.removeItem(atPath: path)
+        }
+    }
+
     static func makePreviewContainer() throws -> ModelContainer {
         try ModelContainer(
             for: currentSchema,
