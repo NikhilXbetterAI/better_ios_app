@@ -36,9 +36,24 @@ nonisolated struct ProtocolBaselineService: Sendable {
     /// whose wake-date key matches the first protocol night is correctly excluded.
     @discardableResult
     func freezeBaseline(beforeSleepDateKey cutoffKey: String, force: Bool = false) async throws -> ProtocolBaselineSnapshot? {
-        if !force, let existing = try await repository.fetchBaselineSnapshot() {
-            Self.logger.debug("baseline freeze reused validNightCount=\(existing.validNightCount, privacy: .public) insufficient=\(existing.isInsufficient, privacy: .public) missing=\(existing.extendedMetricReadinessSummary, privacy: .public)")
-            return existing
+        try await freezeBaseline(beforeSleepDateKey: cutoffKey, versionID: nil, force: force)
+    }
+
+    /// V3 per-version freeze. When `versionID` is non-nil, the snapshot is keyed by
+    /// version (one frozen baseline per version) and reused on subsequent calls for
+    /// that version.
+    @discardableResult
+    func freezeBaseline(beforeSleepDateKey cutoffKey: String, versionID: UUID?, force: Bool = false) async throws -> ProtocolBaselineSnapshot? {
+        if !force {
+            if let versionID,
+               let existing = try await repository.fetchBaselineSnapshot(versionID: versionID) {
+                Self.logger.debug("baseline freeze reused (versioned) validNightCount=\(existing.validNightCount, privacy: .public) insufficient=\(existing.isInsufficient, privacy: .public) missing=\(existing.extendedMetricReadinessSummary, privacy: .public)")
+                return existing
+            }
+            if versionID == nil, let existing = try await repository.fetchBaselineSnapshot() {
+                Self.logger.debug("baseline freeze reused validNightCount=\(existing.validNightCount, privacy: .public) insufficient=\(existing.isInsufficient, privacy: .public) missing=\(existing.extendedMetricReadinessSummary, privacy: .public)")
+                return existing
+            }
         }
         guard let cutoffDate = SleepDateKey.date(from: cutoffKey, calendar: calendar),
               let windowStart = calendar.date(byAdding: .day, value: -Self.windowDays, to: cutoffDate) else {
@@ -57,6 +72,7 @@ nonisolated struct ProtocolBaselineService: Sendable {
         let distribution = Self.continuityDistribution(for: nights)
 
         let snapshot = ProtocolBaselineSnapshot(
+            versionID: versionID,
             frozenAt: Date(),
             windowStart: windowStart,
             windowEnd: cutoffDate,

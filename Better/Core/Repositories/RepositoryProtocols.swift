@@ -93,6 +93,11 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
 
     func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws
     func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot?
+    func fetchBaselineSnapshot(versionID: UUID) async throws -> ProtocolBaselineSnapshot?
+
+    func fetchInterventionWindows() async throws -> [InterventionWindow]
+    func saveInterventionWindow(_ window: InterventionWindow) async throws
+    func deleteInterventionWindow(id: UUID) async throws
 
     // MARK: - Privacy & migration
 
@@ -227,6 +232,10 @@ extension LocalDataRepositoryProtocol {
     func fetchLogEdits(forSleepDateKey key: String) async throws -> [ProtocolLogEdit] { [] }
     func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws {}
     func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot? { nil }
+    func fetchBaselineSnapshot(versionID: UUID) async throws -> ProtocolBaselineSnapshot? { nil }
+    func fetchInterventionWindows() async throws -> [InterventionWindow] { [] }
+    func saveInterventionWindow(_ window: InterventionWindow) async throws {}
+    func deleteInterventionWindow(id: UUID) async throws {}
 }
 
 

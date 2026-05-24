@@ -36,13 +36,18 @@ final class ProtocolOnboardingViewModel {
         // are persisted until `finish()` calls `seedHistory`. This avoids
         // fabricating shippedOn dates for versions the user never paints.
         versions = ProtocolFormulaCatalog.specs.map { spec in
+            // `shippedOn` is intentionally `.distantPast` — these are display-only
+            // rows. The real `shippedOn` is derived from the earliest user-painted
+            // date in `ProtocolFormulaCatalogService.seedHistory`. If you see
+            // .distantPast leaking into a persisted version row, that is a bug:
+            // upsertVersion should never be called from this in-memory list.
             ProtocolFormulaVersion(
                 id: spec.id,
                 displayLabel: spec.label,
                 ordinalLabel: spec.label,
                 formulaText: spec.formulaText,
                 components: [],
-                shippedOn: Date(),
+                shippedOn: .distantPast,
                 colorHex: spec.colorHex,
                 isActive: false
             )

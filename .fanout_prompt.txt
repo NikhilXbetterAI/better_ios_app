@@ -1,0 +1,119 @@
+You are Claude Code (Sonnet 4.6) working in the Better iOS app repo at the current
+directory. The schema V3 surgical work is DONE and committed (see `git log -1`):
+new domain types `InterventionWindow` + `Phase`, `ProtocolBaselineSnapshot.versionID`,
+`@Model StoredInterventionWindow`, `BetterSchemaV3`, V2→V3 lightweight stage.
+
+Your job: fan out the rest of the work. The audit is in `MANIFEST.md` (read it).
+
+# Better iOS Maintainer skill — load it
+
+Before any code changes, read `~/.claude/skills/better-ios-maintainer/SKILL.md` and
+follow its rules (11 invariants, plan-before-acting, file:line citations).
+
+# Decisions already made (do NOT relitigate)
+
+- Per-version frozen baseline + intervention windows combined in V3.
+- Migration is V2→V3 LIGHTWEIGHT. Backfill runs in app code, idempotent, gated by
+  UserDefaults key `protocolFormula.v3BackfillCompleted` (Bool).
+- Window backfill ordering: sort versions by `(shippedOn ASC, createdAt ASC)`.
+- For each version i in sorted order, emit `InterventionWindow`:
+    startedAt = version.shippedOn
+    endedAt   = version[i+1].shippedOn  if a successor exists,
+                else version.archivedAt if archived (clamp to >= shippedOn),
+                else nil (active)
+    phase     = .active if endedAt == nil
+                .archived if version.archivedAt != nil and no successor
+                .superseded otherwise
+- Archived versions DO get windows (endedAt = archivedAt, clamped).
+- `versionID` backfill on existing `StoredProtocolBaselineSnapshot`: assign to the
+  CURRENT active version's id (only one snapshot row exists pre-V3 due to the
+  delete-all-then-insert pattern at LocalDataRepository.swift:685–695).
+- Stop the delete-all-then-insert pattern. Replace `saveBaselineSnapshot(_:)` with
+  upsert keyed by `(versionID)`. Keep legacy no-arg signature working (treat as
+  "save for currently-active version").
+- New repo methods to add:
+    func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws
+    func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot?           // newest, back-compat
+    func fetchBaselineSnapshot(versionID: UUID) async throws -> ProtocolBaselineSnapshot?
+    func fetchInterventionWindows() async throws -> [InterventionWindow]
+    func saveInterventionWindow(_ window: InterventionWindow) async throws            // upsert by id
+    func deleteInterventionWindow(id: UUID) async throws
+- Add to RepositoryProtocols.swift; provide default no-op fallbacks for
+  `MockLocalDataRepository` consistent with existing pattern at L216–L229.
+- `ProtocolBaselineService.freezeBaseline(...)` — overload with `versionID: UUID`
+  param. Old singleton signature stays, calls new one with active version id.
+- `ProtocolFormulaCatalogService.upsertVersion` (~L196) — when a new version is
+  created, transactionally:
+    1. close the previous active window (set endedAt = newVersion.shippedOn,
+       phase = .superseded)
+    2. insert window for the new version (phase = .active)
+- Window emission is also required when a version is archived: close its window
+  (endedAt = archivedAt clamped, phase = .archived).
+- Add `BackfillCoordinator.runV3Backfill(repository:)` — idempotent. Place
+  alongside existing migration coordinators (search for `runProtocolFormulaMigrationIfNeeded`
+  in `AppEnvironment.swift` for the pattern). Wire it into app launch right after
+  the existing protocol-formula migration.
+- Onboarding bug at `ProtocolOnboardingViewModel.swift:45` (`shippedOn: Date()`
+  fallback) — fix it: use the user-entered shippedOn or fail loudly. Don't fabricate.
+
+# Read sites that may need updating (per MANIFEST.md §6)
+
+These currently call `fetchBaselineSnapshot()` (singleton). They should be
+audited and updated to call the version-keyed variant where appropriate:
+- ProtocolFormulaHomeViewModel.swift:168, 177
+- VersionDive*.swift:36
+- AllMetrics*.swift:39
+- Timeline*.swift:58
+
+For each: if the view is showing data for a SPECIFIC version, switch to
+`fetchBaselineSnapshot(versionID: ...)`. If it's showing the "current" baseline,
+keep the no-arg variant (which now returns the newest by frozenAt).
+
+# Test updates
+
+- `ProtocolFormulaTrackingTests.swift` — extend in-memory actor to support
+  intervention windows. Add coverage:
+    * V3 backfill creates correct windows for [v1, v2, v3-archived] sequence
+    * Versioned baseline freeze/fetch round-trip
+    * upsertVersion closes prior window + opens new
+    * Archive closes window with phase=.archived, endedAt=archivedAt
+- `LocalDataRepositoryTests.swift` — add tests for the new methods,
+  preserve the legacy-decode test at :183 (don't break old snapshot decode).
+- `ProtocolFormulaCatalogServiceTests.swift` — verify window emission on upsert.
+
+# Build/test commands
+
+After your changes, run:
+  xcodebuild -scheme Better -configuration Debug \
+    -destination 'platform=iOS Simulator,name=iPhone 16' \
+    -only-testing:BetterTests/ProtocolFormulaTrackingTests test \
+    -parallel-testing-enabled NO 2>&1 | tail -50
+
+If green, then the full suite:
+  xcodebuild -scheme Better -configuration Debug \
+    -destination 'platform=iOS Simulator,name=iPhone 16' test \
+    -parallel-testing-enabled NO 2>&1 | tail -80
+
+# Output expectations
+
+When done, print a `## Summary` block with:
+- Files modified (one per line, with line counts).
+- Test results (pass/fail counts).
+- Any open issues or risks you couldn't resolve.
+- A final `## Next` section listing anything you deferred.
+
+DO NOT commit. I'll review the diff first.
+
+# Constraints (from the maintainer skill)
+
+- Stay within the 11 invariants. The most relevant ones here:
+  * Encryption: continue using `PersistenceJSON.encode/decode` for any new
+    encrypted bodies. The new `StoredInterventionWindow` has no encrypted body
+    (all fields are plain columns) — that's intentional, keep it.
+  * SwiftData migrations: NEVER mutate V1/V2/V3 schemas after they ship. If you
+    realize you need a schema change beyond what's in V3, stop and report.
+  * iOS 18+, SwiftUI, SwiftData. No third-party deps.
+  * `nonisolated` on domain models stays.
+  * `actor`-based services keep their concurrency boundaries.
+
+Read MANIFEST.md, then plan, then act.

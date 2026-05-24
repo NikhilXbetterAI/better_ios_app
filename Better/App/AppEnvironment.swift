@@ -51,6 +51,7 @@ final class AppEnvironment {
         // (or another explicit user action) actually paints a version. Eager
         // creation at launch was fabricating fake shippedOn dates for every user.
         await augmentProtocolBaselineExtendedMetricsIfNeeded()
+        await BackfillCoordinator.runV3Backfill(repository: localRepository)
     }
 
     /// Pass to fill in the full-sleep-stage baseline metrics (deep / REM / awake /

@@ -26,7 +26,8 @@ private actor ProtocolFormulaMemoryRepo: LocalDataRepositoryProtocol {
     var formulaVersions: [UUID: ProtocolFormulaVersion] = [:]
     var nightLogs: [String: ProtocolNightLog] = [:]
     var logEdits: [String: [ProtocolLogEdit]] = [:]
-    var baseline: ProtocolBaselineSnapshot?
+    var baselines: [ProtocolBaselineSnapshot] = []
+    var interventionWindows: [UUID: InterventionWindow] = [:]
     private var failingNightLogSaveCount: Int = 0
 
     // Legacy adherence (used by ProtocolAdherenceMigrationService.runIfNeeded)
@@ -107,9 +108,26 @@ private actor ProtocolFormulaMemoryRepo: LocalDataRepositoryProtocol {
 
     func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws {
         guard snapshot.validNightCount > 0 else { throw ProtocolFormulaRepositoryError.baselineSnapshotEmpty }
-        self.baseline = snapshot
+        // V3 upsert semantics: keyed by versionID (or the legacy nil slot)
+        // AND by `id` (so legacy → versioned re-keys don't leave orphan rows).
+        baselines.removeAll { $0.versionID == snapshot.versionID || $0.id == snapshot.id }
+        baselines.append(snapshot)
     }
-    func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot? { baseline }
+    func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot? {
+        baselines.sorted { $0.frozenAt > $1.frozenAt }.first
+    }
+    func fetchBaselineSnapshot(versionID: UUID) async throws -> ProtocolBaselineSnapshot? {
+        baselines.first { $0.versionID == versionID }
+    }
+    func fetchInterventionWindows() async throws -> [InterventionWindow] {
+        interventionWindows.values.sorted { $0.startedAt < $1.startedAt }
+    }
+    func saveInterventionWindow(_ window: InterventionWindow) async throws {
+        interventionWindows[window.id] = window
+    }
+    func deleteInterventionWindow(id: UUID) async throws {
+        interventionWindows[id] = nil
+    }
 
     // MARK: - Legacy adherence
     func saveAdherence(_ a: ProtocolAdherence) async throws { adherenceRows.append(a) }
@@ -147,7 +165,7 @@ private actor ProtocolFormulaMemoryRepo: LocalDataRepositoryProtocol {
     func fetchDataInventory() async throws -> LocalDataInventory {
         LocalDataInventory(
             sleepSessionCount: sessionsByKey.count,
-            baselineCount: baseline != nil ? 1 : 0,
+            baselineCount: baselines.count,
             alertCount: 0,
             protocolAdherenceCount: adherenceRows.count,
             activityLogCount: 0,
@@ -156,7 +174,7 @@ private actor ProtocolFormulaMemoryRepo: LocalDataRepositoryProtocol {
             protocolFormulaVersionCount: formulaVersions.count,
             protocolNightLogCount: nightLogs.count,
             protocolLogEditCount: logEdits.values.reduce(0) { $0 + $1.count },
-            protocolBaselineSnapshotCount: baseline != nil ? 1 : 0
+            protocolBaselineSnapshotCount: baselines.count
         )
     }
 }
@@ -1024,5 +1042,162 @@ final class BaselineStatHelperTests: XCTestCase {
         let dist = ProtocolBaselineService.continuityDistribution(for: sessions)
         let total = dist.values.reduce(0, +)
         XCTAssertEqual(total, 1.0, accuracy: 0.001, "Continuity distribution must sum to 1.0")
+    }
+}
+
+// MARK: - V3: Versioned baseline + InterventionWindow
+
+final class ProtocolFormulaSchemaV3Tests: XCTestCase {
+
+    func testBaselineUpsertByVersionID_isolatesPerVersionRows() async throws {
+        let repo = ProtocolFormulaMemoryRepo()
+        let v1 = UUID(), v2 = UUID()
+
+        var b1 = makeBaseline(nights: 10)
+        b1.versionID = v1
+        var b2 = makeBaseline(nights: 12)
+        b2.versionID = v2
+
+        try await repo.saveBaselineSnapshot(b1)
+        try await repo.saveBaselineSnapshot(b2)
+
+        let fetchedV1 = try await repo.fetchBaselineSnapshot(versionID: v1)
+        let fetchedV2 = try await repo.fetchBaselineSnapshot(versionID: v2)
+        XCTAssertEqual(fetchedV1?.validNightCount, 10)
+        XCTAssertEqual(fetchedV2?.validNightCount, 12)
+
+        // Re-saving for v1 should replace, not duplicate.
+        var b1Updated = makeBaseline(nights: 14)
+        b1Updated.versionID = v1
+        try await repo.saveBaselineSnapshot(b1Updated)
+
+        let all = await repo.baselines
+        XCTAssertEqual(all.count, 2, "Upsert must replace by versionID, not append")
+        let v1Refetched = try await repo.fetchBaselineSnapshot(versionID: v1)
+        XCTAssertEqual(v1Refetched?.validNightCount, 14)
+    }
+
+    func testInterventionWindowUpsertAndDelete() async throws {
+        let repo = ProtocolFormulaMemoryRepo()
+        let id = UUID()
+        let window = InterventionWindow(
+            id: id,
+            versionID: UUID(),
+            startedAt: Date(timeIntervalSince1970: 1000),
+            phase: .active
+        )
+        try await repo.saveInterventionWindow(window)
+        let initial = try await repo.fetchInterventionWindows()
+        XCTAssertEqual(initial.count, 1)
+
+        var updated = window
+        updated.endedAt = Date(timeIntervalSince1970: 2000)
+        updated.phase = .superseded
+        try await repo.saveInterventionWindow(updated)
+        let fetched = try await repo.fetchInterventionWindows()
+        XCTAssertEqual(fetched.count, 1, "Save by id must upsert, not append")
+        XCTAssertEqual(fetched.first?.phase, .superseded)
+
+        try await repo.deleteInterventionWindow(id: id)
+        let afterDelete = try await repo.fetchInterventionWindows()
+        XCTAssertEqual(afterDelete.count, 0)
+    }
+
+    func testCatalogUpsertVersionEmitsActiveWindowAndClosesPredecessor() async throws {
+        let repo = ProtocolFormulaMemoryRepo()
+        let service = ProtocolFormulaCatalogService(repository: repo)
+
+        let spec1 = ProtocolFormulaCatalog.specs[0]
+        let spec2 = ProtocolFormulaCatalog.specs[2] // V2
+        let shipped1 = Date(timeIntervalSince1970: 10_000)
+        let shipped2 = Date(timeIntervalSince1970: 20_000)
+
+        _ = try await service.upsertVersion(for: spec1, shippedOn: shipped1, currentVersionID: spec1.id)
+        let afterFirst = try await repo.fetchInterventionWindows()
+        XCTAssertEqual(afterFirst.count, 1)
+        XCTAssertEqual(afterFirst.first?.phase, .active)
+        XCTAssertNil(afterFirst.first?.endedAt)
+        XCTAssertEqual(afterFirst.first?.versionID, spec1.id)
+
+        _ = try await service.upsertVersion(for: spec2, shippedOn: shipped2, currentVersionID: spec2.id)
+        let afterSecond = try await repo.fetchInterventionWindows().sorted { $0.startedAt < $1.startedAt }
+        XCTAssertEqual(afterSecond.count, 2)
+        XCTAssertEqual(afterSecond[0].phase, .superseded)
+        XCTAssertEqual(afterSecond[0].endedAt, shipped2)
+        XCTAssertEqual(afterSecond[1].phase, .active)
+        XCTAssertNil(afterSecond[1].endedAt)
+    }
+
+    func testCatalogArchiveVersionClosesWindowAsArchived() async throws {
+        let repo = ProtocolFormulaMemoryRepo()
+        let service = ProtocolFormulaCatalogService(repository: repo)
+        let spec = ProtocolFormulaCatalog.specs[0]
+        let shipped = Date(timeIntervalSince1970: 10_000)
+        let version = try await service.upsertVersion(for: spec, shippedOn: shipped, currentVersionID: spec.id)
+
+        try await service.archiveVersion(id: version.id)
+
+        let windows = try await repo.fetchInterventionWindows()
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertEqual(windows.first?.phase, .archived)
+        XCTAssertNotNil(windows.first?.endedAt)
+        if let ended = windows.first?.endedAt {
+            XCTAssertGreaterThanOrEqual(ended, shipped, "endedAt must be clamped to >= startedAt")
+        }
+    }
+
+    func testV3BackfillIsIdempotentAndAssignsVersionIDToLegacyBaseline() async throws {
+        let repo = ProtocolFormulaMemoryRepo()
+        let suiteName = "BackfillCoordinatorTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let v1 = makeVersion(label: "V1", shippedOn: Date(timeIntervalSince1970: 10_000), active: false)
+        let v2 = makeVersion(label: "V2", shippedOn: Date(timeIntervalSince1970: 20_000), active: true)
+        try await repo.saveFormulaVersion(v1)
+        try await repo.saveFormulaVersion(v2)
+
+        // Legacy singleton baseline (no versionID).
+        let legacy = makeBaseline(nights: 14)
+        try await repo.saveBaselineSnapshot(legacy)
+
+        await BackfillCoordinator.runV3Backfill(repository: repo, userDefaults: defaults)
+
+        let windows = try await repo.fetchInterventionWindows().sorted { $0.startedAt < $1.startedAt }
+        XCTAssertEqual(windows.count, 2)
+        XCTAssertEqual(windows[0].versionID, v1.id)
+        XCTAssertEqual(windows[0].phase, .superseded)
+        XCTAssertEqual(windows[0].endedAt, v2.shippedOn)
+        XCTAssertEqual(windows[1].versionID, v2.id)
+        XCTAssertEqual(windows[1].phase, .active)
+        XCTAssertNil(windows[1].endedAt)
+
+        // Legacy baseline got versionID = active version id.
+        let migrated = try await repo.fetchBaselineSnapshot()
+        XCTAssertEqual(migrated?.versionID, v2.id)
+
+        // Idempotency: a second run must be a no-op.
+        let countBefore = try await repo.fetchInterventionWindows().count
+        await BackfillCoordinator.runV3Backfill(repository: repo, userDefaults: defaults)
+        let countAfter = try await repo.fetchInterventionWindows().count
+        XCTAssertEqual(countAfter, countBefore)
+    }
+
+    func testV3BackfillArchivedVersionWithoutSuccessorBecomesArchivedPhase() async throws {
+        let repo = ProtocolFormulaMemoryRepo()
+        let suiteName = "BackfillCoordinatorTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var v1 = makeVersion(label: "V1", shippedOn: Date(timeIntervalSince1970: 10_000), active: false)
+        v1.archivedAt = Date(timeIntervalSince1970: 15_000)
+        try await repo.saveFormulaVersion(v1)
+
+        await BackfillCoordinator.runV3Backfill(repository: repo, userDefaults: defaults)
+
+        let windows = try await repo.fetchInterventionWindows()
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertEqual(windows.first?.phase, .archived)
+        XCTAssertEqual(windows.first?.endedAt, v1.archivedAt)
     }
 }

@@ -33,7 +33,14 @@ final class ProtocolVersionDiveViewModel {
             if selectedVersionID == nil {
                 selectedVersionID = versions.first(where: { $0.isActive })?.id ?? versions.last?.id
             }
-            baseline = try await repository.fetchBaselineSnapshot()
+            // V3: prefer per-version baseline. Fall back to the singleton row for
+            // pre-V3 stores or versions that haven't had a baseline frozen yet.
+            if let id = selectedVersionID,
+               let perVersion = try await repository.fetchBaselineSnapshot(versionID: id) {
+                baseline = perVersion
+            } else {
+                baseline = try await repository.fetchBaselineSnapshot()
+            }
             rollups = try await analysisService.allRollups()
             snapshots = try await analysisService.nightlySnapshots(in: Date.distantPast...Date())
         } catch {

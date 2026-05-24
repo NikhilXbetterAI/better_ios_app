@@ -84,7 +84,7 @@ final class ProtocolFormulaSetupViewModel {
 
     func archive(_ version: ProtocolFormulaVersion) async {
         do {
-            try await localRepository.archiveFormulaVersion(id: version.id)
+            try await catalogService.archiveVersion(id: version.id)
             await reload()
         } catch {
             errorMessage = "Couldn't archive: \(error.localizedDescription)"
