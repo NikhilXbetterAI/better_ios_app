@@ -107,7 +107,10 @@ struct RootTabView: View {
             // Protocol Formula Tracking is the only Protocol surface. The legacy
             // `ProtocolTabView` + feature-flag gate has been retired; deletion of
             // the legacy view models and supporting services is a follow-up cleanup.
-            ProtocolFormulaTabView(localRepository: environment.localRepository)
+            ProtocolFormulaTabView(
+                localRepository: environment.localRepository,
+                historicalRefresh: { await environment.syncCoordinator.performInitialSync() }
+            )
                 .tabItem { Label(AppTab.protocol.title, systemImage: AppTab.protocol.systemImageName) }
                 .tag(AppTab.protocol)
                 .toolbarBackground(.ultraThinMaterial, for: .tabBar)

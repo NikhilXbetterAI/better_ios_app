@@ -227,7 +227,51 @@ nonisolated struct ProtocolFormulaCatalogService: Sendable {
             isActive: currentVersionID == spec.id
         )
         try await repository.saveFormulaVersion(version)
+
+        // V3: emit InterventionWindow transitions for the newly-created version.
+        // Close any window whose `endedAt == nil` by stamping it with the new
+        // version's shippedOn and phase = .superseded. Then open a new active
+        // window for the new version. Idempotent for an already-existing window
+        // for this versionID (saveInterventionWindow upserts by id).
+        let existingWindows = try await repository.fetchInterventionWindows()
+        let now = Date()
+        for window in existingWindows where window.endedAt == nil && window.versionID != version.id {
+            var closed = window
+            closed.endedAt = max(window.startedAt, shippedOn)
+            closed.phase = .superseded
+            closed.updatedAt = now
+            try await repository.saveInterventionWindow(closed)
+        }
+        if !existingWindows.contains(where: { $0.versionID == version.id }) {
+            let newWindow = InterventionWindow(
+                versionID: version.id,
+                startedAt: shippedOn,
+                endedAt: nil,
+                phase: .active,
+                createdAt: now,
+                updatedAt: now
+            )
+            try await repository.saveInterventionWindow(newWindow)
+        }
         return version
+    }
+
+    /// V3 archive flow: archives the version row and closes its intervention
+    /// window with `phase = .archived`. `endedAt` is clamped to be ≥ the
+    /// window's `startedAt`.
+    func archiveVersion(id versionID: UUID) async throws {
+        try await repository.archiveFormulaVersion(id: versionID)
+        let archivedAt = Date()
+        let windows = try await repository.fetchInterventionWindows()
+        guard var window = windows.first(where: { $0.versionID == versionID }) else { return }
+        if window.endedAt == nil {
+            window.endedAt = max(window.startedAt, archivedAt)
+        } else if let existingEnd = window.endedAt {
+            window.endedAt = max(window.startedAt, existingEnd)
+        }
+        window.phase = .archived
+        window.updatedAt = archivedAt
+        try await repository.saveInterventionWindow(window)
     }
 
     func seedHistory(_ seed: ProtocolFormulaHistorySeed) async throws {
@@ -248,7 +292,7 @@ nonisolated struct ProtocolFormulaCatalogService: Sendable {
         }
 
         let existingLogs = try await repository.fetchNightLogs(from: startKey, to: endKey)
-        let existingByKey = Dictionary(uniqueKeysWithValues: existingLogs.map { ($0.sleepDateKey, $0) })
+        let existingByKey = ProtocolFormulaDeduping.latestLogsByDate(existingLogs, context: "catalog-seed-history")
 
         for (versionID, dateKeys) in seed.dateKeysByVersionID {
             guard let version = versionsByID[versionID] else { continue }
@@ -273,7 +317,7 @@ nonisolated struct ProtocolFormulaCatalogService: Sendable {
     ) -> ProtocolFormulaBestVersion? {
         // Insufficient baselines cannot ground a delta — surface "—" instead of ranking.
         guard let baseline, baseline.isInsufficient == false else { return nil }
-        let versionsByID = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0) })
+        let versionsByID = ProtocolFormulaDeduping.latestVersionsByID(versions, context: "best-version")
         func delta(_ value: Double?, _ base: Double?) -> Double? {
             guard let value, let base else { return nil }
             return value - base

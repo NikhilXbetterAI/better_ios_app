@@ -54,7 +54,7 @@ struct DeltaBadge: View {
     var lowerIsBetter: Bool = false
 
     var body: some View {
-        if let value {
+        if let value, value.isFinite {
             valueText(for: value)
         } else {
             Text("—")
@@ -84,12 +84,13 @@ struct ProtocolMetricComparisonStrip: View {
 
     private var color: Color { ProtocolPalette.versionColor(hex: metric.colorHex) }
     private var delta: Double? {
-        guard let yourValue, let baselineValue else { return nil }
+        guard let yourValue = sanitized(yourValue),
+              let baselineValue = sanitized(baselineValue) else { return nil }
         return yourValue - baselineValue
     }
 
     private var scaleMax: Double {
-        max(yourValue ?? 0, baselineValue ?? 0, 1) * 1.15
+        max(sanitized(yourValue) ?? 0, sanitized(baselineValue) ?? 0, 1) * 1.15
     }
 
     var body: some View {
@@ -105,7 +106,7 @@ struct ProtocolMetricComparisonStrip: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 6)
                 if let delta {
-                    DeltaBadge(value: delta, unit: metric.unit, lowerIsBetter: metric.betterIsLower)
+                    DeltaBadge(value: delta, unit: metric.deltaUnit, lowerIsBetter: metric.betterIsLower)
                         .font(.system(size: compact ? 10 : 11, weight: .bold))
                 }
             }
@@ -138,6 +139,7 @@ struct ProtocolMetricComparisonStrip: View {
 
     @ViewBuilder
     private func metricComparisonRow(label: String, value: Double?, color: Color, compact: Bool) -> some View {
+        let safeValue = sanitized(value)
         HStack(spacing: 6) {
             Text(label)
                 .font(.system(size: compact ? 9 : 10, weight: .bold))
@@ -149,15 +151,20 @@ struct ProtocolMetricComparisonStrip: View {
                         .fill(Color.white.opacity(0.05))
                     Capsule()
                         .fill(color)
-                        .frame(width: max(4, geo.size.width * CGFloat((value ?? 0) / scaleMax)))
+                        .frame(width: max(4, geo.size.width * CGFloat((safeValue ?? 0) / scaleMax)))
                 }
             }
             .frame(height: compact ? 5 : 6)
-            Text(formatted(value))
+            Text(formatted(safeValue))
                 .font(.system(size: compact ? 9 : 10, weight: .bold).monospacedDigit())
-                .foregroundStyle(value == nil ? ProtocolPalette.dimText : BetterColors.text)
+                .foregroundStyle(safeValue == nil ? ProtocolPalette.dimText : BetterColors.text)
                 .frame(width: compact ? 56 : 60, alignment: .trailing)
         }
+    }
+
+    private func sanitized(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, value >= 0 else { return nil }
+        return value
     }
 
     private func formatted(_ value: Double?) -> String {
@@ -294,8 +301,12 @@ struct StageBar: View {
     var color: Color
     var showLabels: Bool = true
 
-    private var lightMin: Double { max(0, totalSleepMin - deepMin - remMin) }
-    private var totalMin: Double { deepMin + remMin + lightMin + awakeMin }
+    private var safeDeepMin: Double { Self.safeMinutes(deepMin) }
+    private var safeRemMin: Double { Self.safeMinutes(remMin) }
+    private var safeAwakeMin: Double { Self.safeMinutes(awakeMin) }
+    private var safeTotalSleepMin: Double { Self.safeMinutes(totalSleepMin) }
+    private var lightMin: Double { max(0, safeTotalSleepMin - safeDeepMin - safeRemMin) }
+    private var totalMin: Double { safeDeepMin + safeRemMin + lightMin + safeAwakeMin }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -312,10 +323,10 @@ struct StageBar: View {
 
             if showLabels {
                 HStack(spacing: 12) {
-                    legendItem(label: "Deep", value: formatMin(deepMin), dotColor: color)
-                    legendItem(label: "REM", value: formatMin(remMin), dotColor: Self.remColor)
+                    legendItem(label: "Deep", value: formatMin(safeDeepMin), dotColor: color)
+                    legendItem(label: "REM", value: formatMin(safeRemMin), dotColor: Self.remColor)
                     legendItem(label: "Light", value: formatMin(lightMin), dotColor: Self.lightColor.opacity(0.7))
-                    legendItem(label: "Awake", value: formatMin(awakeMin), dotColor: ProtocolPalette.badColor.opacity(0.8))
+                    legendItem(label: "Awake", value: formatMin(safeAwakeMin), dotColor: ProtocolPalette.badColor.opacity(0.8))
                 }
             }
         }
@@ -326,16 +337,16 @@ struct StageBar: View {
 
     @ViewBuilder
     private func stageBarHStack(totalWidth: CGFloat) -> some View {
-        let wDeep  = totalWidth * CGFloat(deepMin  / totalMin)
-        let wRem   = totalWidth * CGFloat(remMin   / totalMin)
+        let wDeep  = totalWidth * CGFloat(safeDeepMin  / totalMin)
+        let wRem   = totalWidth * CGFloat(safeRemMin   / totalMin)
         let wLight = totalWidth * CGFloat(lightMin / totalMin)
-        let wAwake = totalWidth * CGFloat(awakeMin / totalMin)
+        let wAwake = totalWidth * CGFloat(safeAwakeMin / totalMin)
         HStack(spacing: 2) {
-            if deepMin > 0 {
+            if safeDeepMin > 0 {
                 RoundedRectangle(cornerRadius: 3).fill(color)
                     .frame(width: max(2, wDeep - 2))
             }
-            if remMin > 0 {
+            if safeRemMin > 0 {
                 RoundedRectangle(cornerRadius: 3).fill(Self.remColor)
                     .frame(width: max(2, wRem - 2))
             }
@@ -343,7 +354,7 @@ struct StageBar: View {
                 RoundedRectangle(cornerRadius: 3).fill(Self.lightColor.opacity(0.5))
                     .frame(width: max(2, wLight - 2))
             }
-            if awakeMin > 0 {
+            if safeAwakeMin > 0 {
                 RoundedRectangle(cornerRadius: 3).fill(ProtocolPalette.badColor.opacity(0.8))
                     .frame(width: max(2, wAwake - 2))
             }
@@ -363,6 +374,11 @@ struct StageBar: View {
         let h = Int(mins) / 60
         let m = Int(mins) % 60
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    }
+
+    private static func safeMinutes(_ value: Double) -> Double {
+        guard value.isFinite, value > 0 else { return 0 }
+        return value
     }
 }
 
@@ -430,11 +446,18 @@ struct PvRestoreSpark: View {
     let points: [SparkPoint]
     let baseline: Double?
 
-    private var values: [Double] { points.map { $0.value } }
+    private var sanitizedPoints: [SparkPoint] {
+        points.filter { $0.value.isFinite && $0.value >= 0 }
+    }
+    private var values: [Double] { sanitizedPoints.map { $0.value } }
+    private var sanitizedBaseline: Double? {
+        guard let baseline, baseline.isFinite, baseline >= 0 else { return nil }
+        return baseline
+    }
     private var minVal: Double { (values.min() ?? 0) * 0.95 }
     private var maxVal: Double { (values.max() ?? 100) * 1.05 }
     private var range: Double { max(1.0, maxVal - minVal) }
-    private var count: Int { points.count }
+    private var count: Int { sanitizedPoints.count }
 
     var body: some View {
         GeometryReader { geo in
@@ -449,7 +472,7 @@ struct PvRestoreSpark: View {
                         .stroke(Color.white.opacity(0.04), lineWidth: 1)
 
                         // Baseline dashed line
-                        if let baseline {
+                        if let baseline = sanitizedBaseline {
                             baselinePath(baseline: baseline, w: geo.size.width, h: geo.size.height)
                         }
 
@@ -461,7 +484,7 @@ struct PvRestoreSpark: View {
                         // End dot
                         if let lastVal = values.last {
                             Circle()
-                                .fill(points.last?.color ?? Color.white)
+                                .fill(sanitizedPoints.last?.color ?? Color.white)
                                 .frame(width: 6, height: 6)
                                 .position(x: xPos(count - 1, w: geo.size.width), y: yPos(lastVal, h: geo.size.height))
                         }
@@ -498,13 +521,13 @@ struct PvRestoreSpark: View {
     }
 
     private func segmentLine(i: Int, w: CGFloat, h: CGFloat) -> some View {
-        let p0 = CGPoint(x: xPos(i, w: w),     y: yPos(points[i].value, h: h))
-        let p1 = CGPoint(x: xPos(i + 1, w: w), y: yPos(points[i + 1].value, h: h))
+        let p0 = CGPoint(x: xPos(i, w: w),     y: yPos(sanitizedPoints[i].value, h: h))
+        let p1 = CGPoint(x: xPos(i + 1, w: w), y: yPos(sanitizedPoints[i + 1].value, h: h))
         return Path { path in
             path.move(to: p0)
             path.addLine(to: p1)
         }
-        .stroke(points[i + 1].color,
+        .stroke(sanitizedPoints[i + 1].color,
                 style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
     }
 }

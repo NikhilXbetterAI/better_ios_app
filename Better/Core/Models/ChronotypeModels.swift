@@ -34,6 +34,33 @@ nonisolated enum ChronotypeCalculationStatus: String, Codable, CaseIterable, Has
     var id: String { rawValue }
 }
 
+nonisolated enum BodyClockReadiness: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case preview
+    case stable
+    case highConfidence
+
+    var id: String { rawValue }
+}
+
+nonisolated enum BodyClockCaveat: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case fewFreeDays = "few_free_days"
+    case highExclusionRate = "high_exclusion_rate"
+    case previewOnly = "preview_only"
+    case travelRecentlyExcluded = "travel_recently_excluded"
+
+    var id: String { rawValue }
+}
+
+nonisolated enum BodyClockAlignmentCategory: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case aligned
+    case slightlyEarly
+    case slightlyLate
+    case early
+    case late
+
+    var id: String { rawValue }
+}
+
 nonisolated enum ChronotypeMinimumRequirement: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
     case totalNights
     case workdayNights
@@ -51,6 +78,25 @@ nonisolated struct SleepWindowRecommendation: Codable, Hashable, Sendable {
         self.startMinute = startMinute
         self.endMinute = endMinute
         self.duration = duration
+    }
+}
+
+nonisolated struct BodyClockSleepAlignment: Codable, Hashable, Sendable {
+    var actualMidpointMinute: Int
+    var targetMidpointMinute: Int
+    var signedDeltaMinutes: Int
+    var category: BodyClockAlignmentCategory
+
+    init(
+        actualMidpointMinute: Int,
+        targetMidpointMinute: Int,
+        signedDeltaMinutes: Int,
+        category: BodyClockAlignmentCategory
+    ) {
+        self.actualMidpointMinute = actualMidpointMinute
+        self.targetMidpointMinute = targetMidpointMinute
+        self.signedDeltaMinutes = signedDeltaMinutes
+        self.category = category
     }
 }
 
@@ -94,6 +140,8 @@ nonisolated struct ChronotypeEstimate: Codable, Hashable, Sendable {
     var excludedNightCount: Int
     var excludedCountsByReason: [ChronotypeExclusionReason: Int]
     var confidence: ComparisonConfidence
+    var bodyClockReadiness: BodyClockReadiness
+    var bodyClockCaveats: [BodyClockCaveat]
     var optimalSleepWindow: SleepWindowRecommendation
 
     init(
@@ -110,6 +158,8 @@ nonisolated struct ChronotypeEstimate: Codable, Hashable, Sendable {
         excludedNightCount: Int,
         excludedCountsByReason: [ChronotypeExclusionReason: Int],
         confidence: ComparisonConfidence,
+        bodyClockReadiness: BodyClockReadiness,
+        bodyClockCaveats: [BodyClockCaveat] = [],
         optimalSleepWindow: SleepWindowRecommendation
     ) {
         self.bucket = bucket
@@ -125,6 +175,8 @@ nonisolated struct ChronotypeEstimate: Codable, Hashable, Sendable {
         self.excludedNightCount = excludedNightCount
         self.excludedCountsByReason = excludedCountsByReason
         self.confidence = confidence
+        self.bodyClockReadiness = bodyClockReadiness
+        self.bodyClockCaveats = bodyClockCaveats
         self.optimalSleepWindow = optimalSleepWindow
     }
 }

@@ -8,6 +8,7 @@ final class SleepDashboardViewModel {
     private let localRepository: LocalDataRepositoryProtocol
     private let processor: SleepDataProcessor
     private let insightService: SleepInsightService
+    private let chronotypeService: ChronotypeCalculationService
     private let calendar: Calendar
     private var requestedHistoricalKeys = Set<String>()
 
@@ -25,6 +26,8 @@ final class SleepDashboardViewModel {
     var sleepGoalHours: Double = 8.0
     var displayName: String?
     var sleepInsights: [SleepInsight] = []
+    var bodyClockResult: ChronotypeCalculationResult?
+    var selectedSleepBodyClockAlignment: BodyClockSleepAlignment?
 
     var isViewingToday: Bool {
         selectedSleepDateKey == SleepDateKey.today(calendar: calendar)
@@ -69,12 +72,14 @@ final class SleepDashboardViewModel {
         localRepository: LocalDataRepositoryProtocol,
         processor: SleepDataProcessor = SleepDataProcessor(),
         insightService: SleepInsightService = SleepInsightService(),
+        chronotypeService: ChronotypeCalculationService = ChronotypeCalculationService(),
         calendar: Calendar = .current
     ) {
         self.syncCoordinator = syncCoordinator
         self.localRepository = localRepository
         self.processor = processor
         self.insightService = insightService
+        self.chronotypeService = chronotypeService
         self.calendar = calendar
         let todayKey = SleepDateKey.today(calendar: calendar)
         self.selectedSleepDateKey = todayKey
@@ -144,9 +149,18 @@ final class SleepDashboardViewModel {
             selectedBaseline = loadedBaseline
             recentSessions = loadedRecentSessions
             let loadedSleepInsights = try await buildSleepInsights()
+            let loadedBodyClockResult = try await loadBodyClockResult(endingAtSleepDateKey: loadKey)
+            let loadedBodyClockAlignment = Self.bodyClockAlignment(
+                for: loadedSession,
+                result: loadedBodyClockResult,
+                service: chronotypeService,
+                calendar: calendar
+            )
             guard selectedSleepDateKey == loadKey else { return }
 
             sleepInsights = loadedSleepInsights
+            bodyClockResult = loadedBodyClockResult
+            selectedSleepBodyClockAlignment = loadedBodyClockAlignment
             dataQuality = selectedSession?.dataQuality ?? .noData
             authorizationState = syncCoordinator.authorizationState
             lastSyncedAt = syncCoordinator.lastSyncedAt
@@ -242,5 +256,45 @@ private extension SleepDashboardViewModel {
             baseline: selectedBaseline,
             recentSessions: recentSessions
         )
+    }
+
+    func loadBodyClockResult(endingAtSleepDateKey key: String) async throws -> ChronotypeCalculationResult? {
+        guard let selectedDate = SleepDateKey.date(from: key, calendar: calendar) else { return nil }
+        let windowEnd = calendar.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate.addingTimeInterval(86_400)
+        let windowStart = calendar.date(byAdding: .day, value: -91, to: windowEnd) ?? windowEnd.addingTimeInterval(-91 * 86_400)
+        let startKey = SleepDateKey.calendarDateKey(for: windowStart, calendar: calendar)
+        let endKey = SleepDateKey.calendarDateKey(for: windowEnd, calendar: calendar)
+
+        async let sessions = localRepository.fetchCachedSessions(from: windowStart, to: windowEnd)
+        async let contextEntries = localRepository.fetchContextEntries(from: startKey, to: endKey)
+        async let activityLogs = localRepository.fetchActivityStatusLogs(from: startKey, to: endKey)
+        let (loadedSessions, loadedContextEntries, loadedActivityLogs) = try await (sessions, contextEntries, activityLogs)
+
+        let service = chronotypeService
+        let calendar = calendar
+        return service.estimate(
+            sessions: loadedSessions,
+            contextEntries: loadedContextEntries,
+            activityLogs: loadedActivityLogs,
+            windowDays: 90,
+            endingAt: windowEnd,
+            calendar: calendar
+        )
+    }
+
+    static func bodyClockAlignment(
+        for session: SleepSession?,
+        result: ChronotypeCalculationResult?,
+        service: ChronotypeCalculationService,
+        calendar: Calendar
+    ) -> BodyClockSleepAlignment? {
+        guard let session,
+              let estimate = result?.estimate,
+              result?.status == .estimated
+        else {
+            return nil
+        }
+
+        return service.alignment(for: session, estimate: estimate, calendar: calendar)
     }
 }

@@ -24,6 +24,9 @@ final class ProtocolFormulaHomeViewModel {
 
     var isLoading: Bool = false
     var versions: [ProtocolFormulaVersion] = []
+    /// Pre-built lookup so SwiftUI `body` and computed deriveds can resolve a
+    /// version by ID in O(1) instead of scanning `versions` linearly per call.
+    var versionsByID: [UUID: ProtocolFormulaVersion] = [:]
     var activeVersion: ProtocolFormulaVersion?
     var selectedTonightVersionID: UUID?
     var tonightAddins: [ProtocolFormulaComponent] = []
@@ -32,12 +35,25 @@ final class ProtocolFormulaHomeViewModel {
     var lastNightLog: ProtocolNightLog?
     var lastNightVersion: ProtocolFormulaVersion?
     var lastNightSnapshot: ProtocolNightMetricSnapshot?
-    var impact: ProtocolImpactSummary?
+    var impact: ProtocolImpactSummary? {
+        didSet { recomputeImpactPairs() }
+    }
+    /// Cached per-metric (you, baseline, delta, unit) tuples so the impact grid
+    /// doesn't re-run a 9-case switch per card per SwiftUI body re-evaluation.
+    var impactPairs: [ProtocolFormulaMetric: ImpactPair] = [:]
+    struct ImpactPair: Equatable {
+        var you: Double?
+        var baseline: Double?
+        var delta: Double?
+        var unit: String
+    }
     var baseline: ProtocolBaselineSnapshot?
+    var baselineReadiness: ProtocolBaselineReadiness?
     var bestVersion: ProtocolFormulaBestVersion?
     var showFirstSwitchHint: Bool = false
     var recentSnapshots: [ProtocolNightMetricSnapshot] = []
     var ribbonSegments: [PvPhaseRibbon.Segment] = []
+    var errorMessage: String?
 
     // MARK: - Tonight save-state feedback
 
@@ -67,7 +83,7 @@ final class ProtocolFormulaHomeViewModel {
     enum BaselineStatus: Hashable {
         case ready
         case needsMoreNights(remaining: Int)
-        case baselineInsufficient
+        case baselineBuilding(valid: Int, required: Int)
         case baselineMissingMetricData(missing: [String])
         case baselineMissing
         case noFormula
@@ -75,8 +91,21 @@ final class ProtocolFormulaHomeViewModel {
 
     var baselineStatus: BaselineStatus {
         guard activeVersion != nil else { return .noFormula }
-        guard let baseline else { return .baselineMissing }
-        if baseline.isInsufficient { return .baselineInsufficient }
+        guard let baseline else {
+            if let baselineReadiness {
+                return .baselineBuilding(
+                    valid: baselineReadiness.validNightCount,
+                    required: baselineReadiness.requiredNightCount
+                )
+            }
+            return .baselineMissing
+        }
+        if baseline.isInsufficient {
+            return .baselineBuilding(
+                valid: baselineReadiness?.validNightCount ?? baseline.validNightCount,
+                required: baselineReadiness?.requiredNightCount ?? ProtocolBaselineService.minimumPersistedNightCount
+            )
+        }
         if !baseline.hasExtendedMetrics {
             return .baselineMissingMetricData(missing: baseline.missingExtendedMetricLabels)
         }
@@ -94,20 +123,11 @@ final class ProtocolFormulaHomeViewModel {
         var rem: Double?
         var awake: Double?
         var totalSleep: Double?
-        var deepPctVsBaseline: Double?   // fractional improvement: (delta / baseline) * 100
-        var remPctVsBaseline: Double?
-        var awakePctVsBaseline: Double?
-        var totalSleepPctVsBaseline: Double?
     }
 
     var lastNightVsBaselineDeltas: LastNightDeltas? {
         guard let snap = lastNightSnapshot,
               let bl = baseline, !bl.isInsufficient else { return nil }
-
-        func pct(_ delta: Double?, baseline: Double?) -> Double? {
-            guard let d = delta, let b = baseline, b != 0 else { return nil }
-            return (d / b) * 100
-        }
 
         let deepDelta    = snap.deepMinutes.flatMap  { d in bl.meanDeepMin.map      { d - $0 } }
         let remDelta     = snap.remMinutes.flatMap   { d in bl.meanRemMin.map       { d - $0 } }
@@ -118,11 +138,7 @@ final class ProtocolFormulaHomeViewModel {
             deep: deepDelta,
             rem: remDelta,
             awake: awakeDelta,
-            totalSleep: sleepDelta,
-            deepPctVsBaseline:      pct(deepDelta,  baseline: bl.meanDeepMin),
-            remPctVsBaseline:       pct(remDelta,   baseline: bl.meanRemMin),
-            awakePctVsBaseline:     pct(awakeDelta, baseline: bl.meanAwakeMin),
-            totalSleepPctVsBaseline: pct(sleepDelta, baseline: bl.meanTotalSleepMin)
+            totalSleep: sleepDelta
         )
     }
 
@@ -136,7 +152,8 @@ final class ProtocolFormulaHomeViewModel {
         analysisService: ProtocolFormulaAnalysisService? = nil,
         userDefaults: UserDefaults = .standard,
         calendar: Calendar = .current,
-        nowProvider: @escaping () -> Date = Date.init
+        nowProvider: @escaping () -> Date = Date.init,
+        historicalRefresh: (() async -> Void)? = nil
     ) {
         self.localRepository = localRepository
         self.analysisService = analysisService ?? ProtocolFormulaAnalysisService(repository: localRepository)
@@ -145,8 +162,29 @@ final class ProtocolFormulaHomeViewModel {
         self.userDefaults = userDefaults
         self.calendar = calendar
         self.nowProvider = nowProvider
+        self.historicalRefresh = historicalRefresh
         let raw = userDefaults.string(forKey: ProtocolFormulaHomeSegmentStorage.key) ?? Segment.lastNight.rawValue
         self.segment = Segment(rawValue: raw) ?? .lastNight
+    }
+
+    private let historicalRefresh: (() async -> Void)?
+
+    /// Cooldown gate for `historicalRefresh`. The closure performs a 90-day
+    /// HealthKit pull; without a gate, every Home refresh on a device whose
+    /// baseline never freezes would re-pull the full window and contribute to
+    /// peak-memory jetsam crashes. In-memory only — resets on cold launch is
+    /// fine because the first launch needs the historical pull anyway.
+    private var lastHistoricalRefreshAt: Date?
+    private static let historicalRefreshCooldown: TimeInterval = 60 * 60 * 24
+
+    private func runHistoricalRefreshIfStale() async {
+        let now = nowProvider()
+        if let last = lastHistoricalRefreshAt,
+           now.timeIntervalSince(last) < Self.historicalRefreshCooldown {
+            return
+        }
+        lastHistoricalRefreshAt = now
+        await historicalRefresh?()
     }
 
     func onAppear() async {
@@ -158,7 +196,9 @@ final class ProtocolFormulaHomeViewModel {
         isLoading = true
         defer { isLoading = false }
         do {
+            errorMessage = nil
             versions = try await catalogService.ensureCatalogVersions()
+            versionsByID = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0) })
             let active = versions.first(where: { $0.isActive })
             activeVersion = active
             if selectedTonightVersionID == nil || versions.contains(where: { $0.id == selectedTonightVersionID }) == false {
@@ -172,12 +212,19 @@ final class ProtocolFormulaHomeViewModel {
             // Lazy-freeze: onboarding/migration may have run before any qualifying
             // nights existed in HealthKit. Retry on Home appear so users don't get
             // stuck on "Comparing vs baseline..." indefinitely.
-            if baseline == nil, let earliestKey = versions.compactMap({ Self.sleepDateKey(for: $0.shippedOn) }).min() {
+            if (baseline == nil || baseline?.isInsufficient == true),
+               let earliestKey = versions.compactMap({ Self.sleepDateKey(for: $0.shippedOn) }).min() {
+                await runHistoricalRefreshIfStale()
                 _ = try? await baselineService.freezeBaseline(beforeSleepDateKey: earliestKey)
                 baseline = try await localRepository.fetchBaselineSnapshot()
+                baselineReadiness = try? await baselineService.readiness(beforeSleepDateKey: earliestKey)
                 let refetchedExists = baseline != nil
                 let refetchedMissing = baseline?.extendedMetricReadinessSummary ?? "none"
                 Self.logger.debug("home refresh baseline refetched exists=\(refetchedExists, privacy: .public) missing=\(refetchedMissing, privacy: .public)")
+            } else if let earliestKey = versions.compactMap({ Self.sleepDateKey(for: $0.shippedOn) }).min() {
+                baselineReadiness = try? await baselineService.readiness(beforeSleepDateKey: earliestKey)
+            } else {
+                baselineReadiness = nil
             }
             let now = Date()
             let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) ?? now
@@ -204,15 +251,18 @@ final class ProtocolFormulaHomeViewModel {
             } else {
                 impact = nil
             }
-            let rollups = try await analysisService.allRollups()
+            let rollups = try await analysisService.recentRollups(now: now)
             bestVersion = ProtocolFormulaCatalogService.bestVersion(
                 versions: versions,
                 rollups: rollups,
                 baseline: baseline
             )
             
-            // Fetch 14-night trend snapshots
-            let allRecent = try await analysisService.nightlySnapshots(in: Date.distantPast...now)
+            // Fetch 14-night trend snapshots. Bound to 30 days — the UI only
+            // shows the last 14, and `Date.distantPast` materializes years of
+            // sessions/logs, blowing up peak memory on real devices.
+            let trendWindowStart = calendar.date(byAdding: .day, value: -30, to: now) ?? now
+            let allRecent = try await analysisService.nightlySnapshots(in: trendWindowStart...now)
             recentSnapshots = Array(allRecent.suffix(14))
             let recentSnapshotCount = recentSnapshots.count
             let ribbonCount = ribbonSegments.count
@@ -233,6 +283,7 @@ final class ProtocolFormulaHomeViewModel {
             ribbonSegments = segments
         } catch {
             // Errors during background refresh are non-fatal; the UI shows empty states.
+            errorMessage = error.localizedDescription
             Self.logger.error("home refresh failed: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -336,6 +387,72 @@ final class ProtocolFormulaHomeViewModel {
     }
 
     func dismissHint() { showFirstSwitchHint = false }
+
+    /// Rebuilds `impactPairs` from the latest `impact`. Triggered automatically
+    /// by `impact`'s didSet — view code reads `viewModel.impactPairs[metric]`
+    /// instead of calling a per-render switch helper.
+    private func recomputeImpactPairs() {
+        guard let impact else {
+            impactPairs = [:]
+            return
+        }
+        impactPairs = [
+            .restorativePct: ImpactPair(
+                you: impact.versionMeanRestorativePctOfInBed,
+                baseline: impact.baselineMeanRestorativePctOfInBed,
+                delta: impact.deltaRestorativePctOfInBed,
+                unit: "%"
+            ),
+            .deep: ImpactPair(
+                you: impact.versionMeanDeepMin,
+                baseline: impact.baselineMeanDeepMin,
+                delta: impact.deltaDeepMin,
+                unit: "m"
+            ),
+            .rem: ImpactPair(
+                you: impact.versionMeanRemMin,
+                baseline: impact.baselineMeanRemMin,
+                delta: impact.deltaRemMin,
+                unit: "m"
+            ),
+            .duration: ImpactPair(
+                you: impact.versionMeanTotalSleepMin,
+                baseline: impact.baselineMeanTotalSleepMin,
+                delta: impact.deltaTotalSleepMin,
+                unit: "m"
+            ),
+            .longestBlock: ImpactPair(
+                you: impact.versionMeanLongestRestorativeBlockMin,
+                baseline: impact.baselineMeanLongestRestorativeBlockMin,
+                delta: impact.deltaLongestRestorativeBlockMin,
+                unit: "m"
+            ),
+            .restorativeMin: ImpactPair(
+                you: impact.versionMeanRestorativeMin,
+                baseline: impact.baselineMeanRestorativeMin,
+                delta: impact.deltaRestorativeMin,
+                unit: "m"
+            ),
+            .awake: ImpactPair(
+                you: impact.versionMeanAwakeMin,
+                baseline: impact.baselineMeanAwakeMin,
+                delta: impact.deltaAwakeMin,
+                unit: "m"
+            ),
+            .latency: ImpactPair(
+                you: impact.versionMeanLatencyMin,
+                baseline: impact.baselineMeanLatencyMin,
+                delta: impact.deltaLatencyMin,
+                unit: "m"
+            ),
+            .score: ImpactPair(
+                you: impact.versionMeanSleepScore,
+                baseline: impact.baselineMeanSleepScore,
+                delta: impact.deltaSleepScore,
+                unit: "pts"
+            )
+        ]
+    }
 
     /// Resolves "tonight" to the upcoming-night's wake-date sleep key.
     ///

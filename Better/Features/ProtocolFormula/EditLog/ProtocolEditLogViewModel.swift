@@ -36,7 +36,7 @@ final class ProtocolEditLogViewModel {
                 from: Self.dateKey(for: range.lowerBound, calendar: calendar),
                 to: Self.dateKey(for: range.upperBound, calendar: calendar)
             )
-            logs = Dictionary(uniqueKeysWithValues: logsList.map { ($0.sleepDateKey, $0) })
+            logs = ProtocolFormulaDeduping.latestLogsByDate(logsList, context: "edit-log")
         } catch {
             errorMessage = "Couldn't load logs: \(error.localizedDescription)"
         }

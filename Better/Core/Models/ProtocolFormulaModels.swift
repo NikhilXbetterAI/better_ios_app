@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import OSLog
 
 // MARK: - Formula version
 
@@ -81,6 +82,56 @@ nonisolated struct ProtocolFormulaVersion: Codable, Hashable, Sendable, Identifi
         "#C084FC",
         "#67E8F9"
     ]
+}
+
+// MARK: - Intervention window (V3)
+
+/// Bounded period during which a `ProtocolFormulaVersion` was the active intervention.
+/// One window per version. Closed when the next version ships (`endedAt = next.shippedOn`)
+/// or when the version is archived (`endedAt = archivedAt`). Active version's window has
+/// `endedAt = nil`. Used for sleep-data attribution and effect-size analysis.
+nonisolated struct InterventionWindow: Codable, Hashable, Sendable, Identifiable {
+    enum Phase: String, Codable, Hashable, Sendable, CaseIterable {
+        /// Version is currently active (`endedAt == nil`).
+        case active
+        /// Closed because a newer version shipped.
+        case superseded
+        /// Closed because the version was archived without a successor.
+        case archived
+    }
+
+    var id: UUID
+    var versionID: UUID
+    var startedAt: Date
+    var endedAt: Date?
+    var phase: Phase
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        versionID: UUID,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        phase: Phase = .active,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.versionID = versionID
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.phase = phase
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    /// Inclusive-start, exclusive-end check against a sleep date.
+    func contains(_ date: Date) -> Bool {
+        guard date >= startedAt else { return false }
+        if let endedAt { return date < endedAt }
+        return true
+    }
 }
 
 // MARK: - Night log
@@ -180,6 +231,9 @@ nonisolated struct ProtocolLogEdit: Codable, Hashable, Sendable, Identifiable {
 
 nonisolated struct ProtocolBaselineSnapshot: Codable, Hashable, Sendable {
     var id: UUID
+    /// V3+: per-version frozen baseline. `nil` means legacy singleton snapshot
+    /// pre-V3 backfill — treated as belonging to the active version at read time.
+    var versionID: UUID?
     var frozenAt: Date
     var windowStart: Date
     var windowEnd: Date
@@ -211,6 +265,7 @@ nonisolated struct ProtocolBaselineSnapshot: Codable, Hashable, Sendable {
 
     init(
         id: UUID = UUID(),
+        versionID: UUID? = nil,
         frozenAt: Date,
         windowStart: Date,
         windowEnd: Date,
@@ -237,6 +292,7 @@ nonisolated struct ProtocolBaselineSnapshot: Codable, Hashable, Sendable {
         stdSleepScore: Double? = nil
     ) {
         self.id = id
+        self.versionID = versionID
         self.frozenAt = frozenAt
         self.windowStart = windowStart
         self.windowEnd = windowEnd
@@ -285,6 +341,18 @@ nonisolated struct ProtocolBaselineSnapshot: Codable, Hashable, Sendable {
     }
 }
 
+nonisolated struct ProtocolBaselineReadiness: Hashable, Sendable {
+    var validNightCount: Int
+    var requiredNightCount: Int
+    var totalCachedNightCount: Int = 0
+    var qualifyingNightCount: Int { validNightCount }
+    var excludedNightCount: Int { max(0, totalCachedNightCount - validNightCount) }
+    var windowStart: Date
+    var windowEnd: Date
+
+    var isReady: Bool { validNightCount >= requiredNightCount }
+}
+
 // MARK: - Analysis snapshots (in-memory only)
 
 nonisolated struct ProtocolNightMetricSnapshot: Hashable, Sendable {
@@ -292,6 +360,7 @@ nonisolated struct ProtocolNightMetricSnapshot: Hashable, Sendable {
     var versionID: UUID?
     var restorativeSleepMinutes: Double?
     var restorativePctOfInBed: Double?
+    var restorativeDenominatorMinutes: Double?
     var longestRestorativeBlockMinutes: Double?
     var continuityCategory: SleepContinuityCategory?
     var dataQuality: SleepDataQuality
@@ -426,6 +495,14 @@ nonisolated enum ProtocolFormulaMetric: String, CaseIterable, Identifiable, Send
         }
     }
 
+    var deltaUnit: String {
+        switch self {
+        case .restorativePct: "pp"
+        case .score: "pts"
+        default: "m"
+        }
+    }
+
     var colorHex: String {
         switch self {
         case .restorativeMin: "#34D399"
@@ -479,6 +556,93 @@ nonisolated enum ProtocolFormulaMetric: String, CaseIterable, Identifiable, Send
         case .duration: rollup.meanTotalSleepMin
         case .latency: rollup.meanLatencyMin
         case .score: rollup.meanSleepScore
+        }
+    }
+}
+
+// MARK: - Protocol Formula metric helpers
+
+nonisolated enum ProtocolFormulaMetricMath {
+    private static let logger = Logger(subsystem: "Better", category: "ProtocolFormula")
+    /// Deep + REM as a share of in-bed time above this level is usually a source
+    /// or denominator problem, not a real protocol effect. Omit these nights from
+    /// percent-based protocol impact instead of showing impossible 100% lifts.
+    static let maximumPlausibleRestorativePct: Double = 70.0
+
+    static func restorativeDenominatorSeconds(for session: SleepSession) -> Double? {
+        guard session.totalInBedTime.isFinite,
+              session.totalSleepTime.isFinite,
+              session.awakeDuration.isFinite,
+              session.restorativeSleepDuration.isFinite,
+              session.totalInBedTime >= 0,
+              session.totalSleepTime >= 0,
+              session.awakeDuration >= 0 else {
+            logger.error("restorative denominator rejected non-finite sleepDate=\(session.sleepDateKey, privacy: .public)")
+            return nil
+        }
+        let stageDerivedInBed = session.totalSleepTime + session.awakeDuration
+        let denominator = max(session.totalInBedTime, stageDerivedInBed)
+        if session.totalInBedTime > 0, session.totalInBedTime < stageDerivedInBed {
+            logger.debug("restorative denominator repaired sleepDate=\(session.sleepDateKey, privacy: .public) rawInBed=\(session.totalInBedTime, privacy: .public) stageInBed=\(stageDerivedInBed, privacy: .public)")
+        }
+        guard denominator > 0, denominator >= session.restorativeSleepDuration else { return nil }
+        return denominator
+    }
+
+    static func restorativeDenominatorMinutes(for session: SleepSession) -> Double? {
+        restorativeDenominatorSeconds(for: session).map { $0 / 60.0 }
+    }
+
+    static func restorativePctOfInBed(for session: SleepSession) -> Double? {
+        guard let denominator = restorativeDenominatorSeconds(for: session),
+              session.restorativeSleepDuration >= 0 else {
+            return nil
+        }
+        let pct = session.restorativeSleepDuration / denominator * 100.0
+        guard pct.isFinite, pct <= maximumPlausibleRestorativePct else {
+            logger.error("restorative percent rejected sleepDate=\(session.sleepDateKey, privacy: .public) pct=\(pct, privacy: .public) restorative=\(session.restorativeSleepDuration, privacy: .public) denominator=\(denominator, privacy: .public)")
+            return nil
+        }
+        return pct
+    }
+}
+
+nonisolated enum ProtocolFormulaDeduping {
+    private static let logger = Logger(subsystem: "Better", category: "ProtocolFormula")
+
+    static func latestLogsByDate(_ logs: [ProtocolNightLog], context: String) -> [String: ProtocolNightLog] {
+        let grouped = Dictionary(grouping: logs, by: \.sleepDateKey)
+        for (key, rows) in grouped where rows.count > 1 {
+            logger.error("duplicate protocol logs context=\(context, privacy: .public) sleepDate=\(key, privacy: .public) count=\(rows.count, privacy: .public)")
+        }
+        return grouped.mapValues { rows in
+            rows.max {
+                if $0.updatedAt != $1.updatedAt { return $0.updatedAt < $1.updatedAt }
+                return $0.createdAt < $1.createdAt
+            } ?? rows[0]
+        }
+    }
+
+    static func latestVersionsByID(_ versions: [ProtocolFormulaVersion], context: String) -> [UUID: ProtocolFormulaVersion] {
+        let grouped = Dictionary(grouping: versions, by: \.id)
+        for (id, rows) in grouped where rows.count > 1 {
+            logger.error("duplicate protocol versions context=\(context, privacy: .public) id=\(id.uuidString, privacy: .public) count=\(rows.count, privacy: .public)")
+        }
+        return grouped.mapValues { rows in
+            rows.max {
+                if $0.updatedAt != $1.updatedAt { return $0.updatedAt < $1.updatedAt }
+                return $0.createdAt < $1.createdAt
+            } ?? rows[0]
+        }
+    }
+
+    static func rollupsByVersion(_ rollups: [ProtocolVersionRollup], context: String) -> [UUID: ProtocolVersionRollup] {
+        let grouped = Dictionary(grouping: rollups, by: \.versionID)
+        for (id, rows) in grouped where rows.count > 1 {
+            logger.error("duplicate protocol rollups context=\(context, privacy: .public) id=\(id.uuidString, privacy: .public) count=\(rows.count, privacy: .public)")
+        }
+        return grouped.mapValues { rows in
+            rows.max { $0.nightCount < $1.nightCount } ?? rows[0]
         }
     }
 }

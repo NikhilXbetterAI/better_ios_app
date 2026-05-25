@@ -93,6 +93,11 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
 
     func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws
     func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot?
+    func fetchBaselineSnapshot(versionID: UUID) async throws -> ProtocolBaselineSnapshot?
+    func fetchInterventionWindows() async throws -> [InterventionWindow]
+    func saveInterventionWindow(_ window: InterventionWindow) async throws
+    func deleteInterventionWindow(id: UUID) async throws
+    func deleteBaselineSnapshot() async throws
 
     // MARK: - Privacy & migration
 
@@ -132,6 +137,8 @@ nonisolated struct LocalDataInventory: Sendable {
     var protocolNightLogCount: Int
     var protocolLogEditCount: Int
     var protocolBaselineSnapshotCount: Int
+    var protocolBaselineValidNightCount: Int?
+    var protocolBaselineIsInsufficient: Bool?
 
     init(
         sleepSessionCount: Int,
@@ -151,7 +158,9 @@ nonisolated struct LocalDataInventory: Sendable {
         protocolFormulaVersionCount: Int = 0,
         protocolNightLogCount: Int = 0,
         protocolLogEditCount: Int = 0,
-        protocolBaselineSnapshotCount: Int = 0
+        protocolBaselineSnapshotCount: Int = 0,
+        protocolBaselineValidNightCount: Int? = nil,
+        protocolBaselineIsInsufficient: Bool? = nil
     ) {
         self.sleepSessionCount = sleepSessionCount
         self.baselineCount = baselineCount
@@ -171,6 +180,8 @@ nonisolated struct LocalDataInventory: Sendable {
         self.protocolNightLogCount = protocolNightLogCount
         self.protocolLogEditCount = protocolLogEditCount
         self.protocolBaselineSnapshotCount = protocolBaselineSnapshotCount
+        self.protocolBaselineValidNightCount = protocolBaselineValidNightCount
+        self.protocolBaselineIsInsufficient = protocolBaselineIsInsufficient
     }
 }
 
@@ -227,6 +238,11 @@ extension LocalDataRepositoryProtocol {
     func fetchLogEdits(forSleepDateKey key: String) async throws -> [ProtocolLogEdit] { [] }
     func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws {}
     func fetchBaselineSnapshot() async throws -> ProtocolBaselineSnapshot? { nil }
+    func fetchBaselineSnapshot(versionID: UUID) async throws -> ProtocolBaselineSnapshot? { nil }
+    func fetchInterventionWindows() async throws -> [InterventionWindow] { [] }
+    func saveInterventionWindow(_ window: InterventionWindow) async throws {}
+    func deleteInterventionWindow(id: UUID) async throws {}
+    func deleteBaselineSnapshot() async throws {}
 }
 
 

@@ -53,7 +53,7 @@ struct ProtocolAllMetricsView: View {
                     VersionChip(version: best.version)
                     Spacer()
                     if let delta = best.restorativePctDelta {
-                        DeltaBadge(value: delta, unit: "%")
+                        DeltaBadge(value: delta, unit: ProtocolFormulaMetric.restorativePct.deltaUnit)
                             .font(.system(size: 18, weight: .bold))
                     }
                 }
@@ -265,7 +265,7 @@ struct ProtocolAllMetricsView: View {
                                     .font(.system(size: 24, weight: .black).monospacedDigit())
                                     .foregroundStyle(BetterColors.text)
                                 if let restorativeDelta {
-                                    DeltaBadge(value: restorativeDelta, unit: "%", lowerIsBetter: false)
+                                    DeltaBadge(value: restorativeDelta, unit: ProtocolFormulaMetric.restorativePct.deltaUnit, lowerIsBetter: false)
                                 } else {
                                     Text("Baseline pending")
                                         .font(.system(size: 10, weight: .semibold))
@@ -356,7 +356,7 @@ struct ProtocolAllMetricsView: View {
                     .foregroundStyle(ProtocolPalette.dimText)
                 Spacer()
                 if let delta {
-                    DeltaBadge(value: delta, unit: viewModel.activeMetric.unit, lowerIsBetter: viewModel.activeMetric.betterIsLower)
+                    DeltaBadge(value: delta, unit: viewModel.activeMetric.deltaUnit, lowerIsBetter: viewModel.activeMetric.betterIsLower)
                 }
             }
         }
@@ -409,7 +409,8 @@ private struct NightlyTrendChart: View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             let pointValues = points.map { $0.value }
-            let values = baselineValue.map { pointValues + [$0] } ?? pointValues
+            let safeBaseline = baselineValue.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+            let values = safeBaseline.map { pointValues + [$0] } ?? pointValues
             let minV = (values.min() ?? 0) * 0.95
             let maxV = (values.max() ?? 100) * 1.05
             let range = max(1.0, maxV - minV)
@@ -462,7 +463,7 @@ private struct NightlyTrendChart: View {
                 }
 
                 // Baseline dashed line
-                if let bv = baselineValue {
+                if let bv = safeBaseline {
                     let by = yPos(bv)
                     Path { p in
                         var x: CGFloat = 0
@@ -539,7 +540,7 @@ private struct NightlyTrendChart: View {
                     let clampedX = min(max(rawX, 0), w - tooltipWidth)
                     let tooltipY = max(0, yPos(pt.value) - 72)
 
-                    ChartTooltip(point: pt, metric: metric, baselineValue: baselineValue)
+                    ChartTooltip(point: pt, metric: metric, baselineValue: safeBaseline)
                         .frame(width: tooltipWidth)
                         .offset(x: clampedX, y: tooltipY)
                 }
@@ -600,7 +601,7 @@ private struct ChartTooltip: View {
             : (isGood ? ProtocolPalette.goodColor : ProtocolPalette.badColor)
         switch metric.unit {
         case "%":
-            return ("\(sign)\(String(format: "%.1f", delta))% vs base", col)
+            return ("\(sign)\(String(format: "%.1f", delta))pp vs base", col)
         case "pts":
             return ("\(sign)\(Int(delta.rounded()))pts vs base", col)
         default:

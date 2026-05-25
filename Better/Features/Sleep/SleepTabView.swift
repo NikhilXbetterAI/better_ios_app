@@ -214,6 +214,9 @@ struct SleepTabView: View {
         VStack(spacing: BetterSpacing.large) {
             topBar(session: session)
             scoreRingHero(session: session, score: score)
+            if let alignment = viewModel.selectedSleepBodyClockAlignment {
+                bodyClockAlignmentPill(alignment)
+            }
             quickStatsStrip(session: session)
             SleepModeEntryCard(
                 subtitle: sleepModeViewModel.entrySubtitle,
@@ -381,6 +384,38 @@ struct SleepTabView: View {
                 .font(.system(size: 9, weight: .medium, design: .rounded))
                 .foregroundStyle(BetterColors.subtext)
         }
+    }
+
+    private func bodyClockAlignmentPill(_ alignment: BodyClockSleepAlignment) -> some View {
+        HStack(spacing: BetterSpacing.small) {
+            Image(systemName: bodyClockAlignmentIcon(alignment.category))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(bodyClockAlignmentColor(alignment.category))
+                .frame(width: 28, height: 28)
+                .background(bodyClockAlignmentColor(alignment.category).opacity(0.16), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(bodyClockAlignmentTitle(alignment.category))
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(BetterColors.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                Text(bodyClockAlignmentDeltaText(alignment))
+                    .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(BetterColors.subtext)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: BetterSpacing.small)
+        }
+        .padding(.horizontal, BetterSpacing.medium)
+        .padding(.vertical, 10)
+        .background(BetterColors.cardGradient)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(BetterColors.glassStroke, lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 5)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(bodyClockAlignmentTitle(alignment.category)), \(bodyClockAlignmentDeltaText(alignment))")
     }
 
     // MARK: - Quick Stats Strip
@@ -746,6 +781,51 @@ struct SleepTabView: View {
         case 70...: return "Good"
         case 55...: return "Fair"
         default:    return "Poor"
+        }
+    }
+
+    private func bodyClockAlignmentTitle(_ category: BodyClockAlignmentCategory) -> String {
+        switch category {
+        case .aligned:
+            return "Aligned with your Body Clock"
+        case .slightlyEarly:
+            return "A little early for your Body Clock"
+        case .slightlyLate:
+            return "A little late for your Body Clock"
+        case .early:
+            return "Earlier than your Body Clock"
+        case .late:
+            return "Later than your Body Clock"
+        }
+    }
+
+    private func bodyClockAlignmentDeltaText(_ alignment: BodyClockSleepAlignment) -> String {
+        let minutes = abs(alignment.signedDeltaMinutes)
+        guard minutes > 0 else { return "On time vs Body Clock" }
+
+        let direction = alignment.signedDeltaMinutes < 0 ? "early" : "late"
+        return "\(minutes)m \(direction) vs Body Clock"
+    }
+
+    private func bodyClockAlignmentIcon(_ category: BodyClockAlignmentCategory) -> String {
+        switch category {
+        case .aligned:
+            return "checkmark.circle.fill"
+        case .slightlyEarly, .early:
+            return "sunrise.fill"
+        case .slightlyLate, .late:
+            return "moon.zzz.fill"
+        }
+    }
+
+    private func bodyClockAlignmentColor(_ category: BodyClockAlignmentCategory) -> Color {
+        switch category {
+        case .aligned:
+            return BetterColors.success
+        case .slightlyEarly, .slightlyLate:
+            return BetterColors.cyan
+        case .early, .late:
+            return BetterColors.warning
         }
     }
 
@@ -1902,6 +1982,74 @@ private func formatDuration(_ interval: TimeInterval) -> String {
         vm.selectedBaseline = PreviewSleepData.sampleBaseline
         vm.dataQuality = .detailedStages
         vm.authorizationState = .canQueryHealthData
+        vm.selectedSleepBodyClockAlignment = BodyClockSleepAlignment(
+            actualMidpointMinute: 250,
+            targetMidpointMinute: 240,
+            signedDeltaMinutes: 10,
+            category: .aligned
+        )
+    }()
+
+    NavigationStack {
+        SleepTabView(
+            viewModel: vm,
+            sleepModeViewModel: SleepModeViewModel(
+                scheduleService: env.sleepModeScheduleService,
+                localRepository: env.localRepository
+            )
+        )
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Sleep Tab – Body Clock Early") {
+    let env = AppEnvironment.preview()
+    let vm = SleepDashboardViewModel(
+        syncCoordinator: env.syncCoordinator,
+        localRepository: env.localRepository
+    )
+    let _ = {
+        vm.selectedSession = PreviewSleepData.sampleSession
+        vm.selectedBaseline = PreviewSleepData.sampleBaseline
+        vm.dataQuality = .detailedStages
+        vm.authorizationState = .canQueryHealthData
+        vm.selectedSleepBodyClockAlignment = BodyClockSleepAlignment(
+            actualMidpointMinute: 180,
+            targetMidpointMinute: 240,
+            signedDeltaMinutes: -60,
+            category: .slightlyEarly
+        )
+    }()
+
+    NavigationStack {
+        SleepTabView(
+            viewModel: vm,
+            sleepModeViewModel: SleepModeViewModel(
+                scheduleService: env.sleepModeScheduleService,
+                localRepository: env.localRepository
+            )
+        )
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Sleep Tab – Body Clock Late") {
+    let env = AppEnvironment.preview()
+    let vm = SleepDashboardViewModel(
+        syncCoordinator: env.syncCoordinator,
+        localRepository: env.localRepository
+    )
+    let _ = {
+        vm.selectedSession = PreviewSleepData.sampleSession
+        vm.selectedBaseline = PreviewSleepData.sampleBaseline
+        vm.dataQuality = .detailedStages
+        vm.authorizationState = .canQueryHealthData
+        vm.selectedSleepBodyClockAlignment = BodyClockSleepAlignment(
+            actualMidpointMinute: 300,
+            targetMidpointMinute: 240,
+            signedDeltaMinutes: 60,
+            category: .slightlyLate
+        )
     }()
 
     NavigationStack {

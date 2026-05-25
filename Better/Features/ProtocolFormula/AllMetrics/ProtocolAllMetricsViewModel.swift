@@ -9,14 +9,26 @@ final class ProtocolAllMetricsViewModel {
     /// Version Dive bars + Timeline tiles can share the same enum + color/unit tokens.
     typealias Metric = ProtocolFormulaMetric
 
-    var activeMetric: Metric = .restorativePct
+    var activeMetric: Metric = .restorativePct {
+        didSet {
+            guard activeMetric != oldValue else { return }
+            recomputeChartPoints()
+        }
+    }
     var versions: [ProtocolFormulaVersion] = []
+    /// O(1) version lookup; rebuilt on each `reload()` so chart point
+    /// generation doesn't scan `versions` linearly per snapshot.
+    var versionsByID: [UUID: ProtocolFormulaVersion] = [:]
     var rollups: [ProtocolVersionRollup] = []
     var snapshots: [ProtocolNightMetricSnapshot] = []
     var baseline: ProtocolBaselineSnapshot?
     var bestVersion: ProtocolFormulaBestVersion?
     var errorMessage: String?
     var isLoading = false
+    /// Stored derived state. Was a computed `var` that re-filtered + re-scanned
+    /// `versions` on every SwiftUI body re-evaluation; now refreshed only when
+    /// inputs change.
+    private(set) var chartPoints: [ChartPoint] = []
 
     private let repository: LocalDataRepositoryProtocol
     private let analysisService: ProtocolFormulaAnalysisService
@@ -36,16 +48,18 @@ final class ProtocolAllMetricsViewModel {
         defer { isLoading = false }
         do {
             versions = try await catalogService.ensureCatalogVersions()
+            versionsByID = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0) })
             baseline = try await repository.fetchBaselineSnapshot()
             let hasBaseline = baseline != nil
             let missingFields = baseline?.extendedMetricReadinessSummary ?? "none"
-            rollups = try await analysisService.allRollups()
-            snapshots = try await analysisService.nightlySnapshots(in: Date.distantPast...Date())
+            rollups = try await analysisService.recentRollups()
+            snapshots = try await analysisService.recentNightlySnapshots()
             bestVersion = ProtocolFormulaCatalogService.bestVersion(
                 versions: versions,
                 rollups: rollups,
                 baseline: baseline
             )
+            recomputeChartPoints()
             let versionCount = versions.count
             let rollupCount = rollups.count
             let snapshotCount = snapshots.count
@@ -57,17 +71,22 @@ final class ProtocolAllMetricsViewModel {
         }
     }
 
-    var chartPoints: [ChartPoint] {
-        snapshots.compactMap { snap in
+    private func recomputeChartPoints() {
+        chartPoints = snapshots.compactMap { snap in
             guard let value = activeMetric.value(from: snap),
+                  value.isFinite,
+                  value >= 0,
                   let versionID = snap.versionID,
-                  let version = versions.first(where: { $0.id == versionID }) else { return nil }
+                  let version = versionsByID[versionID] else { return nil }
             return ChartPoint(dateKey: snap.sleepDateKey, value: value, version: version)
         }
     }
 
     var baselineValue: Double? {
-        baseline.flatMap { activeMetric.baselineValue(from: $0) }
+        guard let value = baseline.flatMap({ activeMetric.baselineValue(from: $0) }),
+              value.isFinite,
+              value >= 0 else { return nil }
+        return value
     }
 
     func rollup(for version: ProtocolFormulaVersion) -> ProtocolVersionRollup? {

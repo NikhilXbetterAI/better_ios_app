@@ -7,9 +7,15 @@ import SwiftData
 // Schema V2 adds the four Protocol Formula models. V1 → V2 is purely additive (new
 // tables only — no field changes), so the migration is `.lightweight`.
 //
+// Schema V3 adds `StoredInterventionWindow` (new table) and an optional `versionID:
+// UUID?` column on `StoredProtocolBaselineSnapshot`. Both changes are SwiftData
+// lightweight-eligible (additive + optional). Backfilling `versionID` and emitting
+// windows for legacy versions is handled in app code post-migration via
+// `BackfillCoordinator.runV3Backfill` (idempotent, gated on a UserDefaults flag).
+//
 // Whenever you add or modify a `@Model` class you MUST add a new versioned schema
 // here and append a stage to `BetterMigrationPlan`. Never mutate `BetterSchemaV1` /
-// `BetterSchemaV2` after they ship.
+// `BetterSchemaV2` / `BetterSchemaV3` after they ship.
 
 nonisolated enum BetterSchemaV1: VersionedSchema {
     nonisolated static var versionIdentifier: Schema.Version { .init(1, 0, 0) }
@@ -45,17 +51,29 @@ nonisolated enum BetterSchemaV2: VersionedSchema {
     }
 }
 
+nonisolated enum BetterSchemaV3: VersionedSchema {
+    nonisolated static var versionIdentifier: Schema.Version { .init(3, 0, 0) }
+    nonisolated static var models: [any PersistentModel.Type] {
+        BetterSchemaV2.models + [
+            StoredInterventionWindow.self
+        ]
+    }
+}
+
 nonisolated enum BetterMigrationPlan: SchemaMigrationPlan {
     nonisolated static var schemas: [any VersionedSchema.Type] {
-        [BetterSchemaV1.self, BetterSchemaV2.self]
+        [BetterSchemaV1.self, BetterSchemaV2.self, BetterSchemaV3.self]
     }
     nonisolated static var stages: [MigrationStage] {
-        [.lightweight(fromVersion: BetterSchemaV1.self, toVersion: BetterSchemaV2.self)]
+        [
+            .lightweight(fromVersion: BetterSchemaV1.self, toVersion: BetterSchemaV2.self),
+            .lightweight(fromVersion: BetterSchemaV2.self, toVersion: BetterSchemaV3.self)
+        ]
     }
 }
 
 nonisolated enum BetterPersistenceContainerFactory {
-    private static var currentSchema: Schema { Schema(versionedSchema: BetterSchemaV2.self) }
+    private static var currentSchema: Schema { Schema(versionedSchema: BetterSchemaV3.self) }
 
     /// Builds the live SwiftData container with `BetterMigrationPlan` wired in.
     ///
@@ -73,6 +91,30 @@ nonisolated enum BetterPersistenceContainerFactory {
         )
         applyFileProtection(to: container.configurations.first?.url)
         return container
+    }
+
+    /// Removes the on-disk SwiftData store files so a fresh container can be
+    /// built. Used by the launch recovery path when `makeLiveContainer()`
+    /// throws (typically a migration failure on a partly-corrupted store).
+    /// Destructive — only invoke after the user has explicitly opted in.
+    static func wipeStoreFiles() {
+        let fileManager = FileManager.default
+        guard let appSupport = try? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        ) else { return }
+        // SwiftData's default store name is "default.store" (+ -shm / -wal).
+        let storeURL = appSupport.appendingPathComponent("default.store")
+        let candidates = [
+            storeURL.path,
+            storeURL.path + "-shm",
+            storeURL.path + "-wal"
+        ]
+        for path in candidates where fileManager.fileExists(atPath: path) {
+            try? fileManager.removeItem(atPath: path)
+        }
     }
 
     static func makePreviewContainer() throws -> ModelContainer {
@@ -1000,6 +1042,8 @@ final class StoredProtocolLogEdit {
 @Model
 final class StoredProtocolBaselineSnapshot {
     @Attribute(.unique) var id: UUID
+    /// V3+: per-version baseline. `nil` on V2-migrated rows until backfill runs.
+    var versionID: UUID?
     var frozenAt: Date
     var windowStart: Date
     var windowEnd: Date
@@ -1010,6 +1054,7 @@ final class StoredProtocolBaselineSnapshot {
 
     init(
         id: UUID,
+        versionID: UUID? = nil,
         frozenAt: Date,
         windowStart: Date,
         windowEnd: Date,
@@ -1018,6 +1063,7 @@ final class StoredProtocolBaselineSnapshot {
         bodyData: Data
     ) {
         self.id = id
+        self.versionID = versionID
         self.frozenAt = frozenAt
         self.windowStart = windowStart
         self.windowEnd = windowEnd
@@ -1050,6 +1096,7 @@ final class StoredProtocolBaselineSnapshot {
         )
         self.init(
             id: domain.id,
+            versionID: domain.versionID,
             frozenAt: domain.frozenAt,
             windowStart: domain.windowStart,
             windowEnd: domain.windowEnd,
@@ -1063,6 +1110,7 @@ final class StoredProtocolBaselineSnapshot {
         let body = try PersistenceJSON.decode(ProtocolBaselineSnapshotBody.self, from: bodyData)
         return ProtocolBaselineSnapshot(
             id: id,
+            versionID: versionID,
             frozenAt: frozenAt,
             windowStart: windowStart,
             windowEnd: windowEnd,
@@ -1087,6 +1135,64 @@ final class StoredProtocolBaselineSnapshot {
             stdLatencyMin: body.stdLatencyMin,
             meanSleepScore: body.meanSleepScore,
             stdSleepScore: body.stdSleepScore
+        )
+    }
+}
+
+// MARK: - Intervention window (V3)
+
+@Model
+final class StoredInterventionWindow {
+    @Attribute(.unique) var id: UUID
+    var versionID: UUID
+    var startedAt: Date
+    /// `nil` while the version is the active intervention.
+    var endedAt: Date?
+    /// Raw value of `InterventionWindow.Phase`. Stored as `String` to keep the column
+    /// stable across enum case additions in future schema versions.
+    var phaseRaw: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID,
+        versionID: UUID,
+        startedAt: Date,
+        endedAt: Date?,
+        phaseRaw: String,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.versionID = versionID
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.phaseRaw = phaseRaw
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    convenience init(domain: InterventionWindow) {
+        self.init(
+            id: domain.id,
+            versionID: domain.versionID,
+            startedAt: domain.startedAt,
+            endedAt: domain.endedAt,
+            phaseRaw: domain.phase.rawValue,
+            createdAt: domain.createdAt,
+            updatedAt: domain.updatedAt
+        )
+    }
+
+    func toDomain() -> InterventionWindow {
+        InterventionWindow(
+            id: id,
+            versionID: versionID,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            phase: InterventionWindow.Phase(rawValue: phaseRaw) ?? .active,
+            createdAt: createdAt,
+            updatedAt: updatedAt
         )
     }
 }

@@ -1,0 +1,51 @@
+You are exploring the Better iOS app at the current working directory. READ-ONLY.
+
+Goal: produce a precise file:line manifest for implementing two changes together as `BetterSchemaV3`:
+
+  (A) NEW model `StoredInterventionWindow { id: UUID, versionID: UUID, startedAt: Date, endedAt: Date?, phase: Phase }`
+      where Phase is enum { baseline, intervention, washout, postTrial }.
+      Migration synthesizes one .intervention window per existing ProtocolFormulaVersion:
+        startedAt = version.shippedOn
+        endedAt   = next version's shippedOn (nil for current version)
+        phase     = .intervention
+
+  (B) Add `versionID: UUID` to `ProtocolBaselineSnapshot` (per-version frozen baseline).
+      Migration: existing singleton snapshot gets versionID = the OLDEST ProtocolFormulaVersion's id (V0).
+      Going forward: a fresh snapshot is created on every version transition.
+
+Output a single markdown file at `/tmp/better-schemav3/MANIFEST.md` with these sections:
+
+## 1. Schema files
+- Path of current versioned schema (BetterSchemaV1, V2). Where they're declared. Where the MigrationPlan is. file:line for each.
+
+## 2. ProtocolFormulaVersion
+- Definition file:line. All fields. Where `shippedOn` is set. Every read site (file:line).
+
+## 3. ProtocolBaselineSnapshot
+- Definition file:line. All fields. Where it is created (file:line of every constructor call). Where it is read (every site). Whether it's currently a singleton (one row) or keyed.
+
+## 4. Persistence
+- PersistenceModels.swift: which @Model types are registered in the ModelContainer. file:line of the schema list.
+- LocalDataRepository: methods that touch ProtocolFormulaVersion or ProtocolBaselineSnapshot (file:line).
+
+## 5. Services that consume baselines/versions
+- ProtocolBaselineService: every method, what it does in 1 line, file:line.
+- ProtocolFormulaAnalysisService.rollups: how it currently groups (per-version? global?), file:line.
+- Any other service that reads the singleton baseline.
+
+## 6. UI consumers
+- ProtocolFormulaHomeViewModel, ProtocolVersionDiveViewModel, ProtocolAllMetricsViewModel: where they fetch baseline / current version. file:line each.
+
+## 7. Tests
+- Existing test files that touch ProtocolFormulaVersion or ProtocolBaselineSnapshot. file:line of relevant test methods.
+- Mocks used (MockLocalDataRepository).
+
+## 8. Migration plan sketch
+- For BetterSchemaV3, list the migration stage's `willMigrate` / `didMigrate` operations needed for both (A) and (B) in plain English.
+- Identify any encrypted-JSON columns that need shape changes (PersistenceJSON encode/decode sites).
+
+## 9. Risk flags
+- Any code that ASSUMES the baseline is a singleton (e.g. `.first`, `.fetchOne()`, count==1 invariants). file:line.
+- Any code that reads `ProtocolFormulaVersion.shippedOn` ordering and could break if windows are introduced.
+
+Use rg / find / read aggressively. Cite ABSOLUTE file paths from this worktree (/private/tmp/better-schemav3/...). Do NOT modify any file. Do NOT create any file other than MANIFEST.md.

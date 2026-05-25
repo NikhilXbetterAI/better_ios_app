@@ -42,7 +42,7 @@ struct ChronotypeInsightCardView: View {
                 .shadow(color: BetterColors.cyan.opacity(0.35), radius: 12, x: 0, y: 6)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Chronotype")
+                Text("Body Clock")
                     .font(BetterTypography.subheadline)
                     .foregroundStyle(BetterColors.text)
                 Text("\(result.validNightCount) valid wearable nights")
@@ -52,7 +52,7 @@ struct ChronotypeInsightCardView: View {
 
             Spacer()
 
-            confidenceBadge(result.estimate?.confidence)
+            readinessBadge(result.estimate?.bodyClockReadiness)
         }
     }
 
@@ -64,7 +64,7 @@ struct ChronotypeInsightCardView: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: BetterSpacing.small) {
-                    Text(estimate.bucket.displayName)
+                    Text(estimate.bucket.bodyClockDisplayName)
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundStyle(BetterColors.text)
                         .lineLimit(2)
@@ -86,7 +86,7 @@ struct ChronotypeInsightCardView: View {
                     }
                     .font(.system(size: 14, weight: .semibold, design: .rounded).monospacedDigit())
 
-                    Text("Corrected midpoint and ideal sleep window from recent wearable sleep timing.")
+                    Text("Your Body Clock is estimated from recent wearable sleep timing.")
                         .font(BetterTypography.caption)
                         .foregroundStyle(BetterColors.subtext)
                         .fixedSize(horizontal: false, vertical: true)
@@ -107,7 +107,7 @@ struct ChronotypeInsightCardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Chronotype \(estimate.bucket.displayName), corrected midpoint \(formatMinute(estimate.correctedMidpointMinute)), optimal window \(formatWindow(estimate.optimalSleepWindow))"
+            "Body Clock \(estimate.bucket.bodyClockDisplayName), corrected midpoint \(formatMinute(estimate.correctedMidpointMinute)), optimal window \(formatWindow(estimate.optimalSleepWindow))"
         )
         .popover(item: $activeTimingInfo, arrowEdge: .bottom) { info in
             timingPopover(info: info)
@@ -141,13 +141,13 @@ struct ChronotypeInsightCardView: View {
         }
     }
 
-    private func confidenceBadge(_ confidence: ComparisonConfidence?) -> some View {
-        Text(confidence?.displayName ?? "Building")
+    private func readinessBadge(_ readiness: BodyClockReadiness?) -> some View {
+        Text(readinessDisplayName(readiness))
             .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .foregroundStyle(confidenceColor(confidence))
+            .foregroundStyle(readinessColor(readiness))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(confidenceColor(confidence).opacity(0.13), in: Capsule())
+            .background(readinessColor(readiness).opacity(0.13), in: Capsule())
     }
 
     private func legendDot(_ color: Color, _ label: String) -> some View {
@@ -202,7 +202,7 @@ struct ChronotypeInsightCardView: View {
         }
 
         guard !labels.isEmpty else {
-            return "Chronotype will appear after enough valid weekday and weekend sleep data is available."
+            return "Body Clock will appear after enough valid weekday and weekend sleep data is available."
         }
 
         return "Need at least \(labels.joined(separator: ", "))."
@@ -244,7 +244,7 @@ private enum TimingInfo: String, Identifiable {
         case .weekendMidpoint:
             "This is the middle of your sleep on weekends."
         case .sleepAverage:
-            "This is your average sleep duration across the nights used in the chronotype calculation."
+            "This is your average sleep duration across the nights used for your Body Clock."
         }
     }
 }
@@ -412,33 +412,46 @@ private struct ChronotypeSleepWindowArc: Shape {
 }
 
 private extension ChronotypeInsightCardView {
-    func confidenceColor(_ confidence: ComparisonConfidence?) -> Color {
-        switch confidence {
-        case .high:
+    func readinessDisplayName(_ readiness: BodyClockReadiness?) -> String {
+        switch readiness {
+        case .highConfidence:
+            "High confidence"
+        case .stable:
+            "Stable"
+        case .preview:
+            "Preview"
+        case nil:
+            "Building"
+        }
+    }
+
+    func readinessColor(_ readiness: BodyClockReadiness?) -> Color {
+        switch readiness {
+        case .highConfidence:
             BetterColors.success
-        case .medium:
+        case .stable:
             BetterColors.brand
-        case .low:
+        case .preview:
             BetterColors.warning
-        case .unavailable, nil:
+        case nil:
             BetterColors.subtext
         }
     }
 }
 
 private extension ChronotypeBucket {
-    var displayName: String {
+    var bodyClockDisplayName: String {
         switch self {
         case .early:
-            "Early"
+            "Early Body Clock"
         case .earlyIntermediate:
-            "Early-intermediate"
+            "Early-intermediate Body Clock"
         case .intermediate:
-            "Intermediate"
+            "Intermediate Body Clock"
         case .lateIntermediate:
-            "Late-intermediate"
+            "Late-intermediate Body Clock"
         case .late:
-            "Late"
+            "Late Body Clock"
         }
     }
 }
@@ -497,6 +510,7 @@ private func sweepDegrees(from startMinute: Int, to endMinute: Int) -> Double {
                 excludedNightCount: 3,
                 excludedCountsByReason: [:],
                 confidence: .high,
+                bodyClockReadiness: .highConfidence,
                 optimalSleepWindow: SleepWindowRecommendation(startMinute: 44, endMinute: 419, duration: 6.25 * 3_600)
             ),
             includedNights: [],

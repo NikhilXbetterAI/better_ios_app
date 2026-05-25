@@ -686,9 +686,31 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         guard snapshot.validNightCount > 0 else {
             throw ProtocolFormulaRepositoryError.baselineSnapshotEmpty
         }
-        // Only one baseline row is ever persisted — replace any existing.
-        for existing in try modelContext.fetch(FetchDescriptor<StoredProtocolBaselineSnapshot>()) {
+        // V3: per-version baselines. Upsert keyed by `versionID` when present;
+        // legacy nil-keyed rows upsert within their own slot. Additionally,
+        // any row sharing the same `id` is removed — handles the V3 backfill
+        // case where the legacy singleton row is re-keyed to the active version.
+        let snapshotID = snapshot.id
+        let idDescriptor = FetchDescriptor<StoredProtocolBaselineSnapshot>(
+            predicate: #Predicate { row in row.id == snapshotID }
+        )
+        for existing in try modelContext.fetch(idDescriptor) {
             modelContext.delete(existing)
+        }
+        if let versionID = snapshot.versionID {
+            let descriptor = FetchDescriptor<StoredProtocolBaselineSnapshot>(
+                predicate: #Predicate { row in row.versionID == versionID }
+            )
+            for existing in try modelContext.fetch(descriptor) {
+                modelContext.delete(existing)
+            }
+        } else {
+            let descriptor = FetchDescriptor<StoredProtocolBaselineSnapshot>(
+                predicate: #Predicate { row in row.versionID == nil }
+            )
+            for existing in try modelContext.fetch(descriptor) {
+                modelContext.delete(existing)
+            }
         }
         modelContext.insert(try StoredProtocolBaselineSnapshot(domain: snapshot))
         try modelContext.save()
@@ -700,6 +722,58 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         )
         descriptor.fetchLimit = 1
         return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
+    }
+
+    func fetchBaselineSnapshot(versionID: UUID) async throws -> ProtocolBaselineSnapshot? {
+        var descriptor = FetchDescriptor<StoredProtocolBaselineSnapshot>(
+            predicate: #Predicate { row in row.versionID == versionID },
+            sortBy: [SortDescriptor(\.frozenAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first.flatMap { try? $0.toDomain() }
+    }
+
+    func deleteBaselineSnapshot() async throws {
+        for existing in try modelContext.fetch(FetchDescriptor<StoredProtocolBaselineSnapshot>()) {
+            modelContext.delete(existing)
+        }
+        try modelContext.save()
+    }
+
+    // MARK: - Intervention windows (V3)
+
+    func fetchInterventionWindows() async throws -> [InterventionWindow] {
+        let descriptor = FetchDescriptor<StoredInterventionWindow>(
+            sortBy: [SortDescriptor(\.startedAt)]
+        )
+        return try modelContext.fetch(descriptor).map { $0.toDomain() }
+    }
+
+    func saveInterventionWindow(_ window: InterventionWindow) async throws {
+        let id = window.id
+        let descriptor = FetchDescriptor<StoredInterventionWindow>(
+            predicate: #Predicate { row in row.id == id }
+        )
+        if let existing = try modelContext.fetch(descriptor).first {
+            existing.versionID = window.versionID
+            existing.startedAt = window.startedAt
+            existing.endedAt = window.endedAt
+            existing.phaseRaw = window.phase.rawValue
+            existing.updatedAt = window.updatedAt
+        } else {
+            modelContext.insert(StoredInterventionWindow(domain: window))
+        }
+        try modelContext.save()
+    }
+
+    func deleteInterventionWindow(id: UUID) async throws {
+        let descriptor = FetchDescriptor<StoredInterventionWindow>(
+            predicate: #Predicate { row in row.id == id }
+        )
+        for row in try modelContext.fetch(descriptor) {
+            modelContext.delete(row)
+        }
+        try modelContext.save()
     }
 
     func pruneDataOlderThan(days: Int) async throws {
@@ -762,6 +836,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.delete(model: StoredProtocolNightLog.self)
         try modelContext.delete(model: StoredProtocolLogEdit.self)
         try modelContext.delete(model: StoredProtocolBaselineSnapshot.self)
+        try modelContext.delete(model: StoredInterventionWindow.self)
 
         // Clear health-sensitive profile fields; keep non-sensitive preferences.
         for profile in try modelContext.fetch(FetchDescriptor<StoredUserProfile>()) {
@@ -858,6 +933,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         )
         sleepModeSessionDescriptor.fetchLimit = 1
         let latestSleepModeSession = try modelContext.fetch(sleepModeSessionDescriptor).first
+        let protocolBaseline = try? await fetchBaselineSnapshot()
 
         return LocalDataInventory(
             sleepSessionCount: sessions.count,
@@ -877,7 +953,9 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             protocolFormulaVersionCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolFormulaVersion>()),
             protocolNightLogCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolNightLog>()),
             protocolLogEditCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolLogEdit>()),
-            protocolBaselineSnapshotCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolBaselineSnapshot>())
+            protocolBaselineSnapshotCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolBaselineSnapshot>()),
+            protocolBaselineValidNightCount: protocolBaseline?.validNightCount,
+            protocolBaselineIsInsufficient: protocolBaseline?.isInsufficient
         )
     }
 }

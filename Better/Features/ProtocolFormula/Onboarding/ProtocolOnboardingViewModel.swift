@@ -18,16 +18,19 @@ final class ProtocolOnboardingViewModel {
     private let baselineService: ProtocolBaselineService
     private let catalogService: ProtocolFormulaCatalogService
     private let calendar: Calendar
+    private let historicalRefresh: (() async -> Void)?
 
     init(
         localRepository: LocalDataRepositoryProtocol,
         baselineService: ProtocolBaselineService? = nil,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        historicalRefresh: (() async -> Void)? = nil
     ) {
         self.localRepository = localRepository
         self.baselineService = baselineService ?? ProtocolBaselineService(repository: localRepository)
         self.catalogService = ProtocolFormulaCatalogService(repository: localRepository, calendar: calendar)
         self.calendar = calendar
+        self.historicalRefresh = historicalRefresh
         self.displayedMonth = Self.startOfMonth(for: Date(), calendar: calendar)
     }
 
@@ -36,13 +39,18 @@ final class ProtocolOnboardingViewModel {
         // are persisted until `finish()` calls `seedHistory`. This avoids
         // fabricating shippedOn dates for versions the user never paints.
         versions = ProtocolFormulaCatalog.specs.map { spec in
+            // `shippedOn` is intentionally `.distantPast` — these are display-only
+            // rows. The real `shippedOn` is derived from the earliest user-painted
+            // date in `ProtocolFormulaCatalogService.seedHistory`. If you see
+            // .distantPast leaking into a persisted version row, that is a bug:
+            // upsertVersion should never be called from this in-memory list.
             ProtocolFormulaVersion(
                 id: spec.id,
                 displayLabel: spec.label,
                 ordinalLabel: spec.label,
                 formulaText: spec.formulaText,
                 components: [],
-                shippedOn: Date(),
+                shippedOn: .distantPast,
                 colorHex: spec.colorHex,
                 isActive: false
             )
@@ -143,6 +151,7 @@ final class ProtocolOnboardingViewModel {
             try await catalogService.seedHistory(seed)
             versions = try await catalogService.loadExistingVersions(currentVersionID: currentVersionID)
             if let firstKey = paintedDateKeysByVersionID.values.flatMap({ $0 }).min() {
+                await historicalRefresh?()
                 _ = try await baselineService.freezeBaseline(beforeSleepDateKey: firstKey)
             }
             isCompleted = true

@@ -52,7 +52,7 @@ struct ImpactMetricDetailSheet: View {
     }
 
     private func formatted(_ value: Double?) -> String {
-        guard let v = value else { return "—" }
+        guard let v = value, v.isFinite else { return "—" }
         switch metric.unit {
         case "%":   return "\(Int(v.rounded()))%"
         case "pts": return "\(Int(v.rounded()))pts"
@@ -70,7 +70,7 @@ struct ImpactMetricDetailSheet: View {
         let direction = isGood ? "better" : "worse"
         let fmtDelta: String = {
             if metric.unit == "%" {
-                return "\(sign)\(String(format: "%.1f", delta))%"
+                return "\(sign)\(String(format: "%.1f", delta)) percentage points"
             } else if metric.unit == "pts" {
                 return "\(sign)\(Int(delta.rounded()))pts"
             } else {
@@ -108,7 +108,7 @@ struct ImpactMetricDetailSheet: View {
                         if let delta = pair.delta {
                             let sign = delta >= 0 ? "+" : ""
                             let isGood = (delta > 0) != metric.betterIsLower
-                            Text("\(sign)\(formatted(pair.delta ?? 0))")
+                            Text(deltaBadgeText(delta, sign: sign))
                                 .font(.title3.weight(.black).monospacedDigit())
                                 .foregroundStyle(isGood ? ProtocolPalette.goodColor : ProtocolPalette.badColor)
                                 .padding(.horizontal, 12)
@@ -210,6 +210,21 @@ struct ImpactMetricDetailSheet: View {
             baselineValue: value(for: metric).baseline,
             compact: true
         )
+    }
+
+    private func deltaBadgeText(_ delta: Double, sign: String) -> String {
+        guard delta.isFinite else { return "—" }
+        switch metric.unit {
+        case "%":
+            return "\(sign)\(String(format: "%.1f", delta))pp"
+        case "pts":
+            return "\(sign)\(Int(delta.rounded()))pts"
+        default:
+            let h = Int(abs(delta)) / 60
+            let m = Int(abs(delta)) % 60
+            let abs = h > 0 ? "\(h)h \(m)m" : "\(m)m"
+            return "\(delta >= 0 ? "+" : "-")\(abs)"
+        }
     }
 }
 

@@ -513,6 +513,9 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         let zipText = String(decoding: try Data(contentsOf: zipURL), as: UTF8.self)
         XCTAssertTrue(zipText.contains("chronotype_summary.csv"))
         XCTAssertTrue(zipText.contains("corrected_midpoint_min"))
+        XCTAssertTrue(zipText.contains("body_clock_readiness"))
+        XCTAssertTrue(zipText.contains("body_clock_alignment_status"))
+        XCTAssertTrue(zipText.contains("body_clock_alignment_delta_min"))
         XCTAssertTrue(zipText.contains(package.chronotypeResult?.status.rawValue ?? ""))
     }
 

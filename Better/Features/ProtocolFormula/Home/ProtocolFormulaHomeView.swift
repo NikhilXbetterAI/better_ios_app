@@ -24,6 +24,16 @@ struct ProtocolFormulaHomeView: View {
                 if viewModel.showFirstSwitchHint {
                     hintCard
                 }
+
+                if let error = viewModel.errorMessage {
+                    Text(error)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(ProtocolPalette.badColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(ProtocolPalette.badColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(ProtocolPalette.badColor.opacity(0.2), lineWidth: 1))
+                }
                 
                 if let active = viewModel.activeVersion {
                     switch viewModel.segment {
@@ -167,7 +177,7 @@ struct ProtocolFormulaHomeView: View {
                     color: color,
                     size: 96,
                     restorativeMin: snapshot?.restorativeSleepMinutes,
-                    totalInBedMin: snapshot.map { ($0.totalSleepMinutes ?? 0) + ($0.awakeMinutes ?? 0) }
+                    totalInBedMin: snapshot?.restorativeDenominatorMinutes
                 )
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Total Restorative Sleep %")
@@ -180,7 +190,7 @@ struct ProtocolFormulaHomeView: View {
                             .foregroundStyle(ProtocolPalette.dimText)
 
                         if let snap = snapshot, let restMin = snap.restorativeSleepMinutes {
-                            let tibMin = (snap.totalSleepMinutes ?? 0) + (snap.awakeMinutes ?? 0)
+                            let tibMin = snap.restorativeDenominatorMinutes ?? ((snap.totalSleepMinutes ?? 0) + (snap.awakeMinutes ?? 0))
                             let restH = Int(restMin) / 60; let restM = Int(restMin) % 60
                             let tibH = Int(tibMin) / 60; let tibM = Int(tibMin) % 60
                             let restStr = restH > 0 ? "\(restH)h \(restM)m" : "\(restM)m"
@@ -243,7 +253,8 @@ struct ProtocolFormulaHomeView: View {
         let sign = delta >= 0 ? "+" : ""
         let color: Color = delta >= 0 ? ProtocolPalette.goodColor : ProtocolPalette.badColor
         let direction = delta >= 0 ? "higher" : "lower"
-        let formatted = "\(sign)\(String(format: "%.1f", delta))\(unit)"
+        let displayUnit = unit == "%" ? "pp" : unit
+        let formatted = "\(sign)\(String(format: "%.1f", delta))\(displayUnit)"
         return HStack(spacing: 5) {
             Text(formatted)
                 .font(.system(size: 13, weight: .black).monospacedDigit())
@@ -308,28 +319,9 @@ struct ProtocolFormulaHomeView: View {
         [.restorativePct, .deep, .rem, .awake, .duration]
     }
 
-    private func impactPair(for metric: ProtocolFormulaMetric) -> (you: Double?, baseline: Double?, delta: Double?, unit: String) {
-        guard let impact = viewModel.impact else { return (nil, nil, nil, metric.unit) }
-        switch metric {
-        case .restorativePct:
-            return (impact.versionMeanRestorativePctOfInBed, impact.baselineMeanRestorativePctOfInBed, impact.deltaRestorativePctOfInBed, "%")
-        case .deep:
-            return (impact.versionMeanDeepMin, impact.baselineMeanDeepMin, impact.deltaDeepMin, "m")
-        case .rem:
-            return (impact.versionMeanRemMin, impact.baselineMeanRemMin, impact.deltaRemMin, "m")
-        case .duration:
-            return (impact.versionMeanTotalSleepMin, impact.baselineMeanTotalSleepMin, impact.deltaTotalSleepMin, "m")
-        case .longestBlock:
-            return (impact.versionMeanLongestRestorativeBlockMin, impact.baselineMeanLongestRestorativeBlockMin, impact.deltaLongestRestorativeBlockMin, "m")
-        case .restorativeMin:
-            return (impact.versionMeanRestorativeMin, impact.baselineMeanRestorativeMin, impact.deltaRestorativeMin, "m")
-        case .awake:
-            return (impact.versionMeanAwakeMin, impact.baselineMeanAwakeMin, impact.deltaAwakeMin, "m")
-        case .latency:
-            return (impact.versionMeanLatencyMin, impact.baselineMeanLatencyMin, impact.deltaLatencyMin, "m")
-        case .score:
-            return (impact.versionMeanSleepScore, impact.baselineMeanSleepScore, impact.deltaSleepScore, "pts")
-        }
+    private func impactPair(for metric: ProtocolFormulaMetric) -> ProtocolFormulaHomeViewModel.ImpactPair {
+        viewModel.impactPairs[metric]
+            ?? ProtocolFormulaHomeViewModel.ImpactPair(you: nil, baseline: nil, delta: nil, unit: metric.unit)
     }
 
     private var impactComparisonCard: some View {
@@ -657,7 +649,7 @@ struct ProtocolFormulaHomeView: View {
         let points = viewModel.recentSnapshots.compactMap { snap -> PvRestoreSpark.SparkPoint? in
             guard let val = snap.restorativePctOfInBed,
                   let verID = snap.versionID,
-                  let ver = viewModel.versions.first(where: { $0.id == verID }) else { return nil }
+                  let ver = viewModel.versionsByID[verID] else { return nil }
             return PvRestoreSpark.SparkPoint(
                 dateKey: snap.sleepDateKey,
                 value: val,
@@ -731,7 +723,7 @@ struct ProtocolFormulaHomeView: View {
                     if let impact = viewModel.impact, !impact.isLowData {
                         if let deltaPct = impact.deltaRestorativePctOfInBed {
                             let sign = deltaPct >= 0 ? "+" : ""
-                            Text("\(active.resolvedLabel) averages \(sign)\(deltaPct, format: .number.precision(.fractionLength(1)))% restorative sleep lift vs baseline.")
+                            Text("\(active.resolvedLabel) averages \(sign)\(deltaPct, format: .number.precision(.fractionLength(1))) pp restorative sleep vs baseline.")
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(ProtocolPalette.mutedText)
                         }
@@ -946,8 +938,11 @@ struct ProtocolFormulaHomeView: View {
         case .ready: return "Comparing vs baseline…"
         case .needsMoreNights(let n):
             return n == 1 ? "1 more night to compare" : "\(n) more nights to compare"
-        case .baselineInsufficient:
-            return "Baseline still building — log more sleep nights"
+        case .baselineBuilding(let valid, let required):
+            if let readiness = viewModel.baselineReadiness {
+                return "Found \(valid)/\(required) qualifying staged-sleep nights in the 90-day pre-protocol window (\(readiness.totalCachedNightCount) cached)."
+            }
+            return "Baseline building: \(valid)/\(required) qualifying staged-sleep nights"
         case .baselineMissingMetricData(let missing):
             return "Baseline missing metric data: \(missing.joined(separator: ", "))"
         case .baselineMissing:
@@ -962,8 +957,11 @@ struct ProtocolFormulaHomeView: View {
         case .needsMoreNights(let n):
             let label = active.resolvedLabel
             return n == 1 ? "1 more \(label) night to calculate lift." : "\(n) more \(label) nights to calculate lift."
-        case .baselineInsufficient:
-            return "Baseline still building — needs more qualifying sleep nights."
+        case .baselineBuilding(let valid, let required):
+            if let readiness = viewModel.baselineReadiness {
+                return "Baseline building — \(valid)/\(required) qualifying staged-sleep nights in the 90-day pre-protocol window (\(readiness.totalCachedNightCount) cached)."
+            }
+            return "Baseline building — \(valid)/\(required) qualifying staged-sleep nights."
         case .baselineMissingMetricData(let missing):
             return "Baseline is missing metric fields: \(missing.joined(separator: ", "))."
         case .baselineMissing:
