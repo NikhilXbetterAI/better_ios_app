@@ -6,31 +6,36 @@ final class BetterUITests: XCTestCase {
     }
 
     @MainActor
-    func testShellRendersFiveTabs() throws {
+    func testShellRendersPrimaryTabs() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting"]
         app.launch()
 
-        // All five tabs are present
-        for tab in ["Sleep", "Insights", "Protocol", "Biology", "Activity"] {
+        // Primary tabs are present
+        for tab in ["Sleep", "Insights", "Protocol"] {
             XCTAssertTrue(
                 app.tabBars.buttons[tab].waitForExistence(timeout: 5),
                 "Expected root tab '\(tab)' to exist"
             )
         }
+        XCTAssertFalse(app.tabBars.buttons["Biology"].exists)
+        XCTAssertFalse(app.tabBars.buttons["Activity"].exists)
 
         // Sleep tab shows the real dashboard (BETTER SLEEP header label)
         XCTAssertTrue(app.staticTexts["BETTER SLEEP"].waitForExistence(timeout: 5))
 
-        // Root tabs render their real headers.
+        // Root tabs render their real headers. The Protocol tab can render either its
+        // dashboard ("Protocol") or its onboarding ("Sleep Protocol Tracking") depending
+        // on whether any formula versions exist in the preview store.
         app.tabBars.buttons["Insights"].tap()
         XCTAssertTrue(app.staticTexts["Insights"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Protocol"].tap()
-        XCTAssertTrue(app.staticTexts["Protocol"].waitForExistence(timeout: 3))
-        app.tabBars.buttons["Biology"].tap()
-        XCTAssertTrue(app.staticTexts["Biology"].waitForExistence(timeout: 3))
-        app.tabBars.buttons["Activity"].tap()
-        XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 3))
+        let protocolHeader = app.staticTexts["Protocol"]
+        let protocolOnboardingHeader = app.staticTexts["Sleep Protocol Tracking"]
+        XCTAssertTrue(
+            protocolHeader.waitForExistence(timeout: 3) || protocolOnboardingHeader.waitForExistence(timeout: 3),
+            "Expected either the Protocol dashboard or its onboarding screen to appear"
+        )
     }
 
     @MainActor
@@ -56,8 +61,11 @@ final class BetterUITests: XCTestCase {
         XCTAssertFalse(app.buttons["onboarding.back"].exists)
         XCTAssertEqual(primaryButton.label, "Continue")
 
+        // The first tap on .health triggers connectHealth() but stays on the step;
+        // the user must tap a second time to advance once authorization completes.
         primaryButton.tap()
-        XCTAssertTrue(app.staticTexts["Set your sleep goal"].waitForExistence(timeout: 3))
+        primaryButton.tap()
+        XCTAssertTrue(app.staticTexts["Set your sleep goal"].waitForExistence(timeout: 5))
         XCTAssertEqual(primaryButton.label, "Continue")
         primaryButton.tap()
 

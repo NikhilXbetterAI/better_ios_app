@@ -468,8 +468,11 @@ final class LocalDataRepositoryTests: XCTestCase {
 
         await viewModel.selectDate("2026-05-05")
 
-        XCTAssertEqual(viewModel.recentSessions.count, 30)
-        XCTAssertEqual(viewModel.recentSessions.first?.sleepDateKey, "2026-04-06")
+        // SleepDashboardViewModel.loadRecentSessions now uses a 60-day window
+        // (limit: 59 plus the selected session, .suffix(60)). With 35 fabricated
+        // sessions ending 2026-05-05, all 35 are returned.
+        XCTAssertEqual(viewModel.recentSessions.count, 35)
+        XCTAssertEqual(viewModel.recentSessions.first?.sleepDateKey, "2026-04-01")
         XCTAssertEqual(viewModel.recentSessions.last?.sleepDateKey, "2026-05-05")
     }
 

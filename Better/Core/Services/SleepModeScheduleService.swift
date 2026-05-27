@@ -144,6 +144,21 @@ final class SleepModeScheduleService {
             .first { $0.contains(now) }
     }
 
+    /// Whether the Sleep dashboard launcher button should be shown. True when
+    /// the user is currently inside their configured Sleep Mode interval, or
+    /// when local time is ≥ 20:00 — i.e. the button is hidden during the day
+    /// and surfaces only when the action is actually relevant.
+    nonisolated static func shouldShowLauncher(
+        schedule: SleepModeSchedule,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        if currentInterval(for: schedule, now: now, calendar: calendar) != nil {
+            return true
+        }
+        return calendar.component(.hour, from: now) >= 20
+    }
+
     nonisolated static func scheduleSummary(
         for schedule: SleepModeSchedule,
         now: Date = Date(),

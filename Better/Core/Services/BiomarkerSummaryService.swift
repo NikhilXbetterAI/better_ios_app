@@ -160,7 +160,7 @@ nonisolated struct BiomarkerDiagnosticReport: Identifiable, Sendable, Hashable {
         lines.append("Sleep sources: \(sourceList(sleepSources))")
         lines.append("")
         lines.append("Cached session biometrics")
-        lines.append("Overnight low HR used by Sleep tab RHR: \(Self.format(cachedBiometrics?.heartRateMinimum, unit: "bpm"))")
+        lines.append("Resting heart rate used by Sleep tab RHR: \(Self.format(cachedBiometrics?.heartRateMinimum, unit: "bpm"))")
         lines.append("HRV average: \(Self.format(cachedBiometrics?.hrvAverage, unit: "ms"))")
         lines.append("SpO2 average: \(Self.format(cachedBiometrics?.oxygenSaturationAverage.map { $0 * 100 }, unit: "%"))")
         lines.append("Respiratory average: \(Self.format(cachedBiometrics?.respiratoryRateAverage, unit: "br/min"))")
@@ -177,7 +177,7 @@ nonisolated struct BiomarkerDiagnosticReport: Identifiable, Sendable, Hashable {
         lines.append("Notes")
         lines.append("Apple Health does not expose per-type read authorization status to apps. Empty counts can mean the source did not write that type, the user denied Better read access, or samples arrived outside the sleep window.")
         // Sleep-tab RHR is intentionally based on the overnight minimum heart rate, not HealthKit restingHeartRate.
-        lines.append("The Sleep tab RHR value currently comes from overnight heart-rate minimum, not HealthKit restingHeartRate.")
+        lines.append("The Sleep tab Resting heart rate value currently comes from overnight heart-rate minimum, not HealthKit restingHeartRate.")
         return lines.joined(separator: "\n")
     }
 

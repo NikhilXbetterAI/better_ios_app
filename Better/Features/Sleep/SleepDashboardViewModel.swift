@@ -9,6 +9,7 @@ final class SleepDashboardViewModel {
     private let processor: SleepDataProcessor
     private let insightService: SleepInsightService
     private let chronotypeService: ChronotypeCalculationService
+    private let biomarkerBaselineService: BiomarkerBaselineService?
     private let calendar: Calendar
     private var requestedHistoricalKeys = Set<String>()
 
@@ -28,6 +29,10 @@ final class SleepDashboardViewModel {
     var sleepInsights: [SleepInsight] = []
     var bodyClockResult: ChronotypeCalculationResult?
     var selectedSleepBodyClockAlignment: BodyClockSleepAlignment?
+    var biomarkerBaseline: BiomarkerBaseline?
+    var biomarkerReactions: [BiomarkerKey: SleepBiomarkerReaction] = [:]
+    var biomarkerReadiness: [BiomarkerKey: BiomarkerBaselineReadiness] = [:]
+    var biomarkerProvenance: [BiomarkerKey: BiomarkerProvenance] = [:]
 
     var isViewingToday: Bool {
         selectedSleepDateKey == SleepDateKey.today(calendar: calendar)
@@ -41,6 +46,12 @@ final class SleepDashboardViewModel {
         case 10..<15: return "usable"
         default: return "reliable"
         }
+    }
+
+    /// True when the dashboard-specific 30/60 baseline doesn't have enough
+    /// valid nights to render a "vs your usual sleep" comparison.
+    var baselineIsBuilding: Bool {
+        (selectedBaseline?.validNights ?? 0) < BaselineEngine.dashboardMinimumValidNights
     }
 
     /// Derived from current session + baseline data.  Non-nil when the data state
@@ -73,6 +84,7 @@ final class SleepDashboardViewModel {
         processor: SleepDataProcessor = SleepDataProcessor(),
         insightService: SleepInsightService = SleepInsightService(),
         chronotypeService: ChronotypeCalculationService = ChronotypeCalculationService(),
+        biomarkerBaselineService: BiomarkerBaselineService? = nil,
         calendar: Calendar = .current
     ) {
         self.syncCoordinator = syncCoordinator
@@ -80,6 +92,7 @@ final class SleepDashboardViewModel {
         self.processor = processor
         self.insightService = insightService
         self.chronotypeService = chronotypeService
+        self.biomarkerBaselineService = biomarkerBaselineService
         self.calendar = calendar
         let todayKey = SleepDateKey.today(calendar: calendar)
         self.selectedSleepDateKey = todayKey
@@ -164,6 +177,7 @@ final class SleepDashboardViewModel {
             dataQuality = selectedSession?.dataQuality ?? .noData
             authorizationState = syncCoordinator.authorizationState
             lastSyncedAt = syncCoordinator.lastSyncedAt
+            await refreshBiomarkerBaseline()
             await loadMonthSummaries()
         } catch {
             errorMessage = error.localizedDescription
@@ -172,27 +186,65 @@ final class SleepDashboardViewModel {
 }
 
 private extension SleepDashboardViewModel {
+    /// Pulls the cached biomarker baseline (recompute if stale) and recomputes
+    /// tonight's reaction map. Safe to call after `selectedSession` lands.
+    func refreshBiomarkerBaseline() async {
+        let baseline = await biomarkerBaselineService?.currentBaseline()
+        let bio = selectedSession?.biometrics
+        var reactions: [BiomarkerKey: SleepBiomarkerReaction] = [:]
+        var readiness: [BiomarkerKey: BiomarkerBaselineReadiness] = [:]
+        var provenance: [BiomarkerKey: BiomarkerProvenance] = [:]
+        for key in BiomarkerKey.allCases {
+            let tonight: Double? = {
+                switch key {
+                case .rhr:    return bio?.heartRateMinimum
+                case .hrv:    return bio?.hrvAverage
+                case .spo2:   return bio?.oxygenSaturationAverage.map { $0 * 100 }
+                case .breath: return bio?.respiratoryRateAverage
+                }
+            }()
+            readiness[key] = baseline?.readiness(for: key) ?? .unavailable(minimumCount: 5)
+            provenance[key] = BiomarkerProvenance.make(
+                key: key,
+                samples: bio?.samples ?? [],
+                fallbackSources: selectedSession?.sources ?? [],
+                hasValue: tonight != nil
+            )
+            if let reaction = SleepBiomarkerReaction.make(key: key, tonight: tonight, baseline: baseline) {
+                reactions[key] = reaction
+            }
+        }
+        self.biomarkerBaseline = baseline
+        self.biomarkerReactions = reactions
+        self.biomarkerReadiness = readiness
+        self.biomarkerProvenance = provenance
+    }
+
     func baseline(asOfSleepDateKey key: String, windowDays: Int) async throws -> SleepBaseline {
-        let effectiveWindowDays = SyncCoordinator.clampedBaselineWindowDays(windowDays)
+        // The dashboard uses a dedicated 30-day primary / 60-day fallback
+        // selector — the user's `profile.baselineWindowDays` is ignored here on
+        // purpose (it still drives Trends and other consumers).
+        _ = windowDays
         let selectedDate = SleepDateKey.date(from: key, calendar: calendar) ?? Date()
+        let fetchWindowDays = BaselineEngine.dashboardFallbackWindow
         let baselineStart = calendar.date(
             byAdding: .day,
-            value: -effectiveWindowDays,
+            value: -fetchWindowDays,
             to: selectedDate
-        ) ?? selectedDate.addingTimeInterval(Double(-effectiveWindowDays) * 86_400)
+        ) ?? selectedDate.addingTimeInterval(Double(-fetchWindowDays) * 86_400)
         let previousSessions = try await localRepository.fetchCachedSessions(
             from: baselineStart,
             to: selectedDate
         )
-        let selection = BaselineEngine(processor: processor, calendar: calendar).selectBaseline(
+        let selection = BaselineEngine(processor: processor, calendar: calendar).selectDashboardBaseline(
             from: previousSessions.filter { $0.sleepDateKey < key },
-            generatedAt: SleepDateKey.date(from: key, calendar: calendar) ?? Date()
+            generatedAt: selectedDate
         )
 
-        return selection.activeBaseline ?? selection.stableBaseline ?? processor.computeBaseline(
+        return selection.activeBaseline ?? processor.computeBaseline(
             from: [],
-            windowDays: effectiveWindowDays,
-            generatedAt: SleepDateKey.date(from: key, calendar: calendar) ?? Date()
+            windowDays: BaselineEngine.dashboardPrimaryWindow,
+            generatedAt: selectedDate
         )
     }
 
@@ -233,7 +285,7 @@ private extension SleepDashboardViewModel {
     }
 
     func loadRecentSessions(endingAt key: String, selectedSession: SleepSession?) async throws -> [SleepSession] {
-        var sessions = try await localRepository.fetchSessions(beforeSleepDateKey: key, limit: 29)
+        var sessions = try await localRepository.fetchSessions(beforeSleepDateKey: key, limit: 59)
             .filter { BaselineEngine.isValidNight($0, calendar: calendar) }
 
         if let selectedSession,
@@ -244,7 +296,7 @@ private extension SleepDashboardViewModel {
         return Array(
             sessions
                 .sorted { $0.sleepDateKey < $1.sleepDateKey }
-                .suffix(30)
+                .suffix(60)
         )
     }
 

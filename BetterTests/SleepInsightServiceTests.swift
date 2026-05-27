@@ -21,7 +21,20 @@ final class SleepInsightServiceTests: XCTestCase {
 
         let insights = service.insights(session: session, baseline: baseline, recentSessions: [session])
 
-        XCTAssertTrue(insights.contains { $0.category == .baselineBuilding })
+        let baselineInsight = insights.first { $0.category == .baselineBuilding }
+        XCTAssertEqual(baselineInsight?.body, "Log 2 more valid nights to unlock baseline comparisons.")
+        XCTAssertEqual(baselineInsight?.metricDelta?.value, 3.0)
+    }
+
+    func testFiveValidNightsUnlockBaselineInsights() {
+        let service = SleepInsightService()
+        let session = Self.session(totalSleep: 7 * 3_600, efficiency: 0.84)
+        let baseline = Self.baseline(validNights: 5, totalSleepAverage: 8 * 3_600, efficiencyAverage: 0.90)
+
+        let insights = service.insights(session: session, baseline: baseline, recentSessions: [session])
+
+        XCTAssertFalse(insights.contains { $0.category == .baselineBuilding })
+        XCTAssertTrue(insights.contains { $0.category == .duration })
     }
 
     func testNonCausalLanguage() {
@@ -107,4 +120,3 @@ extension SleepInsightServiceTests {
         )
     }
 }
-

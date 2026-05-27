@@ -21,6 +21,12 @@ nonisolated struct BaselineEngine: Sendable {
     static let minimumValidSleepDuration: TimeInterval = 2 * 3_600
     static let maximumValidSleepDuration: TimeInterval = 14 * 3_600
 
+    // Sleep dashboard uses a separate 30/60 window selector. See CLAUDE.md
+    // invariant #3 — Trends / Protocol / Research / CSV still use the 14/7 path.
+    static let dashboardPrimaryWindow = 30
+    static let dashboardFallbackWindow = 60
+    static let dashboardMinimumValidNights = 5
+
     private let processor: SleepDataProcessor
     private let calendar: Calendar
     private let logger = Logger(subsystem: "Better", category: "BaselineEngine")
@@ -75,6 +81,57 @@ nonisolated struct BaselineEngine: Sendable {
             recentBaseline: recent,
             primaryBaseline: primary,
             stableBaseline: stable,
+            confidence: confidence,
+            validNightCount: validSessions.count,
+            excludedNightCount: excludedCount,
+            windowUsed: active?.windowDays
+        )
+    }
+
+    /// Sleep-dashboard-only baseline selector: 30-day primary, 60-day fallback,
+    /// requires ≥ 5 valid nights in either window. Caller is expected to pass
+    /// sessions covering at least the last 60 days before `generatedAt`.
+    func selectDashboardBaseline(
+        from sessions: [SleepSession],
+        generatedAt: Date = Date()
+    ) -> BaselineSelection {
+        let evaluated = sessions.map { ($0, Self.isValidNight($0, calendar: calendar)) }
+        let validSessions = evaluated
+            .filter(\.1)
+            .map(\.0)
+            .sorted { $0.sleepDateKey < $1.sleepDateKey }
+        let excludedCount = evaluated.count - validSessions.count
+
+        let cutoff30 = calendar.date(byAdding: .day, value: -Self.dashboardPrimaryWindow, to: generatedAt) ?? generatedAt
+        let cutoff60 = calendar.date(byAdding: .day, value: -Self.dashboardFallbackWindow, to: generatedAt) ?? generatedAt
+
+        func inWindow(_ session: SleepSession, since cutoff: Date) -> Bool {
+            guard let date = SleepDateKey.date(from: session.sleepDateKey, calendar: calendar) else { return false }
+            return date >= cutoff
+        }
+
+        let in30 = validSessions.filter { inWindow($0, since: cutoff30) }
+        let in60 = validSessions.filter { inWindow($0, since: cutoff60) }
+
+        let primary: SleepBaseline? = in30.count >= Self.dashboardMinimumValidNights
+            ? processor.computeBaseline(from: in30, windowDays: Self.dashboardPrimaryWindow, generatedAt: generatedAt)
+            : nil
+        let fallback: SleepBaseline? = (primary == nil && in60.count >= Self.dashboardMinimumValidNights)
+            ? processor.computeBaseline(from: in60, windowDays: Self.dashboardFallbackWindow, generatedAt: generatedAt)
+            : nil
+
+        let active = primary ?? fallback
+        let confidence = Self.confidence(validNightCount: validSessions.count)
+
+        logger.debug(
+            "Dashboard baseline selected window=\(active?.windowDays ?? 0, privacy: .public) in30=\(in30.count, privacy: .public) in60=\(in60.count, privacy: .public)"
+        )
+
+        return BaselineSelection(
+            activeBaseline: active,
+            recentBaseline: nil,
+            primaryBaseline: primary,
+            stableBaseline: fallback,
             confidence: confidence,
             validNightCount: validSessions.count,
             excludedNightCount: excludedCount,

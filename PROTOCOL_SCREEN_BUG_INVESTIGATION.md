@@ -44,6 +44,38 @@ Scope: investigation, fix plan, and implementation tracking for the Protocol scr
 
 ## Key Findings
 
+### P0: Correct Source Can Still Show Onboarding/Old-Looking Protocol UI
+
+Evidence:
+
+- `RootTabView` is correctly wired to `ProtocolFormulaTabView`; no active source path uses the retired legacy `ProtocolTabView`.
+- After `git fetch --all --prune`, local `main`, `Dev`, `origin/main`, and `origin/Dev` all resolve to `032d307`.
+- `stash@{0}` contains no Protocol UI delta except an unrelated `RootTabView` Sleep Dashboard dependency line.
+- `stash@{3}` is older than current schema-v3 Protocol code and would delete newer Protocol model fields if applied wholesale.
+- Current `ProtocolFormulaHomeView.swift` already contains the newer `Last night | Tonight` segmented UI, Tonight action flow, All Metrics, Timeline, and Version Dive navigation.
+- The actual runtime gate in `ProtocolFormulaTabView` only checked `UserDefaults` key `better.protocol.formula.historyOnboardingCompleted`; it did not check whether Protocol Formula versions/logs already existed.
+
+Why this can look like "old UI":
+
+- If app data/UserDefaults was reset, migrated, or reinstalled while protocol rows still exist, the missing UserDefaults flag forces `ProtocolOnboardingView`.
+- `ProtocolOnboardingView` starts with `Sleep Protocol Tracking` and `Paint history ranges`, which can look like an older setup UI even though the source is not using `ProtocolTabView`.
+- This is a state-gating bug, not a lost branch or missing `Dev/main` change.
+
+Implemented fix:
+
+1. Added `ProtocolFormulaOnboardingGate.shouldShowOnboarding(...)`.
+2. The gate now skips onboarding when the repository already has Protocol Formula versions or night logs, and repairs the missing completion flag.
+3. If inventory cannot be read, the gate fails safe by not forcing the user into history painting.
+4. Added focused tests for:
+   - existing Protocol data with missing flag skips onboarding and repairs the flag
+   - empty Protocol data with missing flag shows onboarding
+   - completed flag skips onboarding
+
+Safe recovery rule:
+
+- Do not restore Protocol files from `stash@{3}` or old local refs wholesale. They are behind schema-v3 and can remove newer Protocol fields.
+- Preserve current Sleep Dashboard/backend work. Build verification required restoring small missing model/service helpers that the current Sleep Dashboard files and tests already referenced.
+
 ### P0: Percent Delta Is Displayed Ambiguously As Percent Improvement
 
 Evidence:

@@ -87,9 +87,9 @@ struct HealthKitFallbackBannerView: View {
         }
         .padding(BetterSpacing.large)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color.black, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(BetterColors.border, lineWidth: 1)
         )
     }
@@ -182,9 +182,9 @@ struct HealthKitPermissionBannerView: View {
             }
         }
         .padding(BetterSpacing.large)
-        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color.black, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(BetterColors.brand.opacity(0.3), lineWidth: 1)
         )
     }
@@ -222,9 +222,9 @@ struct HealthKitPermissionBannerView: View {
         }
         .padding(BetterSpacing.large)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color.black, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(BetterColors.border, lineWidth: 1)
         )
     }

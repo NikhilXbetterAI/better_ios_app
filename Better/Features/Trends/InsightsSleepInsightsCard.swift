@@ -86,23 +86,33 @@ struct InsightsSleepInsightsCard: View {
 
     // MARK: - Delta Chip
 
+    @ViewBuilder
     private func deltaChip(_ delta: SleepMetricDelta) -> some View {
-        let isPositive = delta.value > 0
-        let color: Color = isPositive ? BetterColors.success : BetterColors.warning
-        let symbol = isPositive ? "+" : ""
-        let unitSuffix: String = {
-            switch delta.unit {
-            case "minutes": return "m"
-            case "percentagePoints": return "pp"
-            default: return ""
-            }
-        }()
-        return Text("\(symbol)\(Int(delta.value.rounded()))\(unitSuffix)")
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.14), in: Capsule())
+        if delta.unit == "nights" {
+            Text("\(Int(delta.value.rounded())) nights")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(BetterColors.brand)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(BetterColors.brand.opacity(0.14), in: Capsule())
+        } else {
+            let isPositive = delta.value > 0
+            let color: Color = isPositive ? BetterColors.success : BetterColors.warning
+            let symbol = isPositive ? "+" : ""
+            let unitSuffix: String = {
+                switch delta.unit {
+                case "minutes": return "m"
+                case "percentagePoints": return "pp"
+                default: return ""
+                }
+            }()
+            Text("\(symbol)\(Int(delta.value.rounded()))\(unitSuffix)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.14), in: Capsule())
+        }
     }
 
     // MARK: - Helpers

@@ -197,6 +197,15 @@ nonisolated struct SleepSession: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+extension SleepSession {
+    /// Canonical wake time for display.
+    /// Prefer `inBedEndDate` (the moment the user got out of bed) over
+    /// `endDate` (last detected sleep sample). Using `endDate` can produce
+    /// an earlier timestamp when the last stage ends before the user
+    /// physically woke up, causing inconsistencies between cards. (Bug A2)
+    nonisolated var displayWakeDate: Date { inBedEndDate ?? endDate }
+}
+
 nonisolated struct SleepDaySummary: Codable, Hashable, Sendable, Identifiable {
     var id: String { sleepDateKey }
     var sleepDateKey: String

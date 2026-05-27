@@ -103,7 +103,8 @@ nonisolated enum SleepContinuityCalculator {
             longestBlockDuration: longest.sleepDuration,
             longestBlockIndex: longest.index,
             meaningfulAwakeningCount: meaningfulAwakeningCount,
-            continuityCategory: category(for: longest.sleepDuration)
+            continuityCategory: category(for: longest.sleepDuration),
+            longestBlock: longest
         )
     }
 

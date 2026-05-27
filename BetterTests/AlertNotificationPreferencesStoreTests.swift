@@ -18,7 +18,7 @@ final class AlertNotificationPreferencesStoreTests: XCTestCase {
         XCTAssertTrue(loaded.alertGenerationSettings.localNotificationsEnabled)
         XCTAssertEqual(
             loaded.alertGenerationSettings.notificationEnabledKinds,
-            AlertGenerationSettings.default.notificationEnabledKinds.union(loaded.smartAlertSettings.enabledKinds)
+            loaded.smartAlertSettings.enabledKinds.union([.baselineAvailable, .protocolPattern])
         )
     }
 

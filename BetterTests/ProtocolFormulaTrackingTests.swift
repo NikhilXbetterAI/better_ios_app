@@ -466,6 +466,58 @@ final class ProtocolFormulaHomeViewModelTests: XCTestCase {
     }
 }
 
+@MainActor
+final class ProtocolFormulaOnboardingGateTests: XCTestCase {
+    func testExistingProtocolDataSkipsOnboardingAndRepairsMissingFlag() async throws {
+        let repo = ProtocolFormulaMemoryRepo()
+        let version = makeVersion(label: "V1", shippedOn: date(2026, 5, 1), active: true)
+        try await repo.saveFormulaVersion(version)
+
+        let defaults = makeProtocolFormulaDefaults(name: #function)
+        defer { defaults.removePersistentDomain(forName: "ProtocolFormulaOnboardingGateTests.\(#function)") }
+
+        let shouldShow = await ProtocolFormulaOnboardingGate.shouldShowOnboarding(
+            userDefaults: defaults,
+            repository: repo
+        )
+
+        XCTAssertFalse(shouldShow)
+        XCTAssertTrue(defaults.bool(forKey: ProtocolFormulaHistoryOnboardingStorage.completedKey))
+    }
+
+    func testEmptyProtocolDataShowsOnboardingWhenFlagMissing() async {
+        let defaults = makeProtocolFormulaDefaults(name: #function)
+        defer { defaults.removePersistentDomain(forName: "ProtocolFormulaOnboardingGateTests.\(#function)") }
+
+        let shouldShow = await ProtocolFormulaOnboardingGate.shouldShowOnboarding(
+            userDefaults: defaults,
+            repository: ProtocolFormulaMemoryRepo()
+        )
+
+        XCTAssertTrue(shouldShow)
+    }
+
+    func testCompletedFlagSkipsOnboarding() async {
+        let defaults = makeProtocolFormulaDefaults(name: #function)
+        defer { defaults.removePersistentDomain(forName: "ProtocolFormulaOnboardingGateTests.\(#function)") }
+        defaults.set(true, forKey: ProtocolFormulaHistoryOnboardingStorage.completedKey)
+
+        let shouldShow = await ProtocolFormulaOnboardingGate.shouldShowOnboarding(
+            userDefaults: defaults,
+            repository: ProtocolFormulaMemoryRepo()
+        )
+
+        XCTAssertFalse(shouldShow)
+    }
+
+    private func makeProtocolFormulaDefaults(name: String) -> UserDefaults {
+        let suiteName = "ProtocolFormulaOnboardingGateTests.\(name)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }
+}
+
 // MARK: - 2. ProtocolBaselineService tests
 
 final class ProtocolBaselineServiceTests: XCTestCase {

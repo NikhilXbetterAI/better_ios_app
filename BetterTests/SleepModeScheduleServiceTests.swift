@@ -102,7 +102,9 @@ final class SleepModeScheduleServiceTests: XCTestCase {
 
         await service.loadSchedule()
 
-        XCTAssertTrue(service.shouldAutoEnterForeground(now: Self.date("2026-05-04T23:00:00Z")))
+        // shouldAutoEnterForeground only fires within the first 45 minutes of the scheduled
+        // window's start, to avoid auto-entering when the user opens the app long after bedtime.
+        XCTAssertTrue(service.shouldAutoEnterForeground(now: Self.date("2026-05-04T22:15:00Z")))
     }
 }
 

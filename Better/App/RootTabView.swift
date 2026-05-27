@@ -20,7 +20,8 @@ struct RootTabView: View {
         self.environment = environment
         _sleepViewModel = State(initialValue: SleepDashboardViewModel(
             syncCoordinator: environment.syncCoordinator,
-            localRepository: environment.localRepository
+            localRepository: environment.localRepository,
+            biomarkerBaselineService: environment.biomarkerBaselineService
         ))
         _trendsViewModel = State(initialValue: TrendsViewModel(
             localRepository: environment.localRepository

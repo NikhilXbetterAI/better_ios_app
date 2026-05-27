@@ -250,9 +250,9 @@ struct StageDurationCompositionView: View {
             Spacer(minLength: 0)
             VStack(spacing: 0) {
                 stageSegment(duration: point.awakeDuration, maxHeight: maxHeight, color: BetterColors.stageAwake)
-                stageSegment(duration: point.remDuration, maxHeight: maxHeight, color: BetterColors.stageREM)
                 stageSegment(duration: point.coreDuration, maxHeight: maxHeight, color: BetterColors.stageCore)
                 stageSegment(duration: point.deepDuration, maxHeight: maxHeight, color: BetterColors.stageDeep)
+                stageSegment(duration: point.remDuration, maxHeight: maxHeight, color: BetterColors.stageREM)
             }
             .frame(width: barWidth * scale, height: barHeight)
             .clipShape(RoundedRectangle(cornerRadius: isSelected ? 8 : 4, style: .continuous))
@@ -312,10 +312,10 @@ struct StageDurationCompositionView: View {
                     }
                     .font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
 
-                    tooltipRow("Deep", duration: selectedPoint.deepDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageDeep)
-                    tooltipRow("Core", duration: selectedPoint.coreDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageCore)
-                    tooltipRow("REM", duration: selectedPoint.remDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageREM)
                     tooltipRow("Awake", duration: selectedPoint.awakeDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageAwake)
+                    tooltipRow("Light", duration: selectedPoint.coreDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageCore)
+                    tooltipRow("Deep", duration: selectedPoint.deepDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageDeep)
+                    tooltipRow("REM", duration: selectedPoint.remDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageREM)
                 }
                 .padding(10)
                 .frame(width: 164, alignment: .leading)
@@ -411,10 +411,10 @@ struct StageDurationCompositionView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: BetterSpacing.small) {
-                stagePill("Deep", duration: selectedPoint?.deepDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageDeep)
-                stagePill("Core", duration: selectedPoint?.coreDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageCore)
-                stagePill("REM", duration: selectedPoint?.remDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageREM)
                 stagePill("Awake", duration: selectedPoint?.awakeDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageAwake)
+                stagePill("Light", duration: selectedPoint?.coreDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageCore)
+                stagePill("Deep", duration: selectedPoint?.deepDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageDeep)
+                stagePill("REM", duration: selectedPoint?.remDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageREM)
             }
         }
         .padding(BetterSpacing.medium)
