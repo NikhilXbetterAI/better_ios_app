@@ -169,7 +169,7 @@ struct SleepTabView: View {
                     }
                     .padding(.top, BetterSpacing.small)
 
-                    plainContinuityCard(session: session)
+                    LongestSleepBlockCard(session: session)
 
                     if let fallback = viewModel.healthKitFallbackState {
                         HealthKitFallbackBannerView(state: fallback)
@@ -182,8 +182,6 @@ struct SleepTabView: View {
                     if let error = viewModel.errorMessage {
                         errorFooter(message: error)
                     }
-
-                    Spacer(minLength: 140)
                 }
                 .padding(.horizontal, BetterSpacing.screen)
                 .padding(.top, BetterSpacing.medium)
@@ -191,6 +189,7 @@ struct SleepTabView: View {
             }
         }
         .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+        .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 120) }
         .safeAreaInset(edge: .top, spacing: 0) {
             // Bug fix: status-bar text was bleeding through the hero chip strip
             // mid-scroll. A thin material strip at the top safe-area inset acts
@@ -495,17 +494,17 @@ struct SleepTabView: View {
                 .font(BetterTypography.subheadline)
                 .foregroundStyle(BetterColors.text)
             HStack(spacing: 16) {
-                scoreBreakdownPill(label: "Total sleep", value: "\(score.duration)/50")
+                scoreBreakdownPill(label: "Duration", value: "\(score.duration)/50")
                 Rectangle()
                     .fill(BetterColors.border)
                     .frame(width: 1, height: 20)
-                scoreBreakdownPill(label: "Timing", value: "\(score.bedtime)/30")
+                scoreBreakdownPill(label: "Bedtime", value: "\(score.bedtime)/30")
                 Rectangle()
                     .fill(BetterColors.border)
                     .frame(width: 1, height: 20)
-                scoreBreakdownPill(label: "Interruptions", value: "\(score.interruptions)/20")
+                scoreBreakdownPill(label: "Continuity", value: "\(score.interruptions)/20")
             }
-            Text("Score = duration up to 50 pts, bedtime timing up to 30 pts, and awake time up to 20 pts. Duration uses your sleep goal. Bedtime timing unlocks after 5 valid baseline nights.")
+            Text("Duration counts up to 50 points against your sleep goal. Bedtime consistency adds up to 30 points once your personal baseline is ready (5 nights). Continuity adds up to 20 points based on time awake overnight.")
                 .font(BetterTypography.micro)
                 .foregroundStyle(BetterColors.subtext)
                 .fixedSize(horizontal: false, vertical: true)
@@ -648,18 +647,18 @@ struct SleepTabView: View {
         let stageText: String = {
             switch session.dataQuality {
             case .detailedStages:
-                return "sleep stages estimated"
+                return "stages estimated by device"
             case .mixedSources:
-                return "mixed sleep sources"
+                return "combined sleep sources"
             case .unspecifiedSleepOnly:
-                return "sleep stages limited"
+                return "limited stage data"
             case .inBedOnly:
-                return "in-bed data only"
+                return "in-bed time only"
             case .noData:
                 return "no sleep data"
             }
         }()
-        let syncedText = viewModel.lastSyncedAt.map { "synced \($0.formatted(date: .omitted, time: .shortened))" } ?? "sync pending"
+        let syncedText = viewModel.lastSyncedAt.map { "synced \($0.formatted(date: .omitted, time: .shortened))" } ?? "syncing latest data"
         let text = "\(source) · \(stageText) · \(syncedText)"
 
         return HStack(spacing: 6) {
@@ -1319,7 +1318,7 @@ private enum SleepVitalTab: String, CaseIterable {
         case .rhr:    return "bpm"
         case .hrv:    return "ms"
         case .spo2:   return "%"
-        case .breath: return "br/min"
+        case .breath: return "breaths/min"
         }
     }
 
@@ -1594,7 +1593,7 @@ private struct SleepBiomarkerReactionsCard: View {
             }
             Spacer(minLength: 8)
             if let baseline {
-                Text("vs your usual · \(baseline.windowDays)d")
+                Text("vs your usual · \(baseline.windowDays)-night avg")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(BetterColors.subtext)
                     .padding(.horizontal, 8).padding(.vertical, 4)
@@ -2164,9 +2163,18 @@ private struct SingleBiomarkerChartView: View {
     private var footerGrid: some View {
         HStack(spacing: BetterSpacing.small) {
             statTile("Average", value: average.map { formattedValue($0) } ?? "--")
-            statTile("Best", value: bestValue.map { formattedValue($0) } ?? "--")
+            statTile(bestLabel, value: bestValue.map { formattedValue($0) } ?? "--")
             statTile("Range", value: rangeText)
             statTile("Nights", value: "\(points.count)/\(timeline.dayCount)")
+        }
+    }
+
+    private var bestLabel: String {
+        switch tab {
+        case .rhr:    return "Lowest"
+        case .hrv:    return "Highest"
+        case .spo2:   return "Highest"
+        case .breath: return "Optimal"
         }
     }
 
@@ -2889,9 +2897,18 @@ private struct SleepBiometricFocusCard: View {
     private var footerGrid: some View {
         HStack(spacing: BetterSpacing.small) {
             statTile("Average", value: average.map { formattedValue($0) } ?? "--")
-            statTile("Best", value: bestValue.map { formattedValue($0) } ?? "--")
+            statTile(bestLabel, value: bestValue.map { formattedValue($0) } ?? "--")
             statTile("Range", value: rangeText)
             statTile("Nights", value: "\(points.count)/\(timeline.dayCount)")
+        }
+    }
+
+    private var bestLabel: String {
+        switch selected {
+        case .rhr:    return "Lowest"
+        case .hrv:    return "Highest"
+        case .spo2:   return "Highest"
+        case .breath: return "Optimal"
         }
     }
 

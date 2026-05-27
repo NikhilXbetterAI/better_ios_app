@@ -5,6 +5,8 @@ struct ChronotypeInsightCardView: View {
 
     @State private var didAppear = false
     @State private var activeTimingInfo: TimingInfo?
+    @State private var isShowingDetail = false
+    @State private var highlightedMetric: TimingInfo? = nil
 
     var body: some View {
         BetterHealthCard {
@@ -17,6 +19,15 @@ struct ChronotypeInsightCardView: View {
                     insufficientContent
                 }
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if result.estimate != nil {
+                isShowingDetail = true
+            }
+        }
+        .sheet(isPresented: $isShowingDetail) {
+            ChronotypeDetailExplorationView(result: result)
         }
         .onAppear {
             withAnimation(.spring(response: 0.8, dampingFraction: 0.82).delay(0.08)) {
@@ -42,9 +53,16 @@ struct ChronotypeInsightCardView: View {
                 .shadow(color: BetterColors.cyan.opacity(0.35), radius: 12, x: 0, y: 6)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Body Clock")
-                    .font(BetterTypography.subheadline)
-                    .foregroundStyle(BetterColors.text)
+                HStack(spacing: 4) {
+                    Text("Body Clock")
+                        .font(BetterTypography.subheadline)
+                        .foregroundStyle(BetterColors.text)
+                    if result.estimate != nil {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(BetterColors.mutedText.opacity(0.6))
+                    }
+                }
                 Text("\(result.validNightCount) valid wearable nights")
                     .font(BetterTypography.caption)
                     .foregroundStyle(BetterColors.subtext)
@@ -59,9 +77,13 @@ struct ChronotypeInsightCardView: View {
     private func estimateContent(_ estimate: ChronotypeEstimate) -> some View {
         VStack(alignment: .leading, spacing: BetterSpacing.large) {
             HStack(alignment: .center, spacing: BetterSpacing.large) {
-                ChronotypeClockView(estimate: estimate, isAnimated: didAppear)
-                    .frame(width: 136, height: 136)
-                    .accessibilityHidden(true)
+                ChronotypeClockView(
+                    estimate: estimate,
+                    isAnimated: didAppear,
+                    highlightedMetric: highlightedMetric
+                )
+                .frame(width: 136, height: 136)
+                .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: BetterSpacing.small) {
                     Text(estimate.bucket.bodyClockDisplayName)
@@ -104,6 +126,28 @@ struct ChronotypeInsightCardView: View {
                 legendDot(BetterColors.warning, "Weekdays")
                 legendDot(BetterColors.success, "Weekends")
             }
+
+            // Explanatory directive button to click for details
+            Button {
+                isShowingDetail = true
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Explore Details & Calculation Insights")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                    Image(systemName: "arrow.up.backward.and.arrow.down.forward")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundStyle(BetterColors.brandLight)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(BetterColors.cardSecondary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(BetterColors.border, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.top, BetterSpacing.small)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
@@ -112,6 +156,11 @@ struct ChronotypeInsightCardView: View {
         .popover(item: $activeTimingInfo, arrowEdge: .bottom) { info in
             timingPopover(info: info)
                 .presentationCompactAdaptation(.popover)
+        }
+        .onChange(of: activeTimingInfo) { oldValue, newValue in
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                highlightedMetric = newValue
+            }
         }
     }
 
@@ -252,6 +301,7 @@ private enum TimingInfo: String, Identifiable {
 private struct ChronotypeClockView: View {
     let estimate: ChronotypeEstimate
     let isAnimated: Bool
+    let highlightedMetric: TimingInfo?
 
     var body: some View {
         GeometryReader { proxy in
@@ -281,37 +331,50 @@ private struct ChronotypeClockView: View {
                         .rotationEffect(.degrees(Double(hour) / 24 * 360))
                 }
 
+                let isArcHighlighted = highlightedMetric == .optimalWindow || highlightedMetric == .sleepAverage
+                let isAnyHighlighted = highlightedMetric != nil
+                let arcOpacity = isArcHighlighted ? 1.0 : (isAnyHighlighted ? 0.18 : 1.0)
+                let arcGlow = isArcHighlighted ? 14.0 : 8.0
+
                 ChronotypeSleepWindowArc(window: estimate.optimalSleepWindow, progress: isAnimated ? 1 : 0)
                     .stroke(
                         AngularGradient(
                             colors: [BetterColors.brandLight, BetterColors.cyan, BetterColors.brandLight],
                             center: .center
                         ),
-                        style: StrokeStyle(lineWidth: 9, lineCap: .round)
+                        style: StrokeStyle(lineWidth: isArcHighlighted ? 12 : 9, lineCap: .round)
                     )
-                    .shadow(color: BetterColors.cyan.opacity(0.5), radius: 8)
+                    .shadow(color: BetterColors.cyan.opacity(isArcHighlighted ? 0.75 : 0.5), radius: arcGlow)
+                    .opacity(arcOpacity)
                     .padding(8)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.7), value: highlightedMetric)
 
                 marker(
                     minute: estimate.workdayMidpointMinute,
                     color: BetterColors.warning,
                     center: center,
                     radius: radius - 7,
-                    size: 9
+                    baseSize: 9,
+                    isHighlighted: highlightedMetric == .weekdayMidpoint,
+                    isAnyHighlighted: isAnyHighlighted
                 )
                 marker(
                     minute: estimate.freeDayMidpointMinute,
                     color: BetterColors.success,
                     center: center,
                     radius: radius - 7,
-                    size: 9
+                    baseSize: 9,
+                    isHighlighted: highlightedMetric == .weekendMidpoint,
+                    isAnyHighlighted: isAnyHighlighted
                 )
                 marker(
                     minute: estimate.correctedMidpointMinute,
                     color: BetterColors.cyan,
                     center: center,
                     radius: radius - 18,
-                    size: 13
+                    baseSize: 13,
+                    isHighlighted: highlightedMetric == .correctedMidpoint,
+                    isAnyHighlighted: isAnyHighlighted
                 )
 
                 VStack(spacing: 2) {
@@ -326,14 +389,26 @@ private struct ChronotypeClockView: View {
         }
     }
 
-    private func marker(minute: Int, color: Color, center: CGPoint, radius: CGFloat, size: CGFloat) -> some View {
+    private func marker(
+        minute: Int,
+        color: Color,
+        center: CGPoint,
+        radius: CGFloat,
+        baseSize: CGFloat,
+        isHighlighted: Bool,
+        isAnyHighlighted: Bool
+    ) -> some View {
+        let size = isHighlighted ? baseSize * 1.5 : baseSize
+        let opacity = isHighlighted ? 1.0 : (isAnyHighlighted ? 0.25 : 1.0)
         let point = pointForMinute(minute, center: center, radius: radius)
         return Circle()
             .fill(color)
             .frame(width: size, height: size)
-            .overlay(Circle().stroke(BetterColors.text.opacity(0.82), lineWidth: 1.5))
-            .shadow(color: color.opacity(0.72), radius: 8)
+            .overlay(Circle().stroke(BetterColors.text.opacity(isHighlighted ? 0.95 : 0.82), lineWidth: isHighlighted ? 2.5 : 1.5))
+            .shadow(color: color.opacity(isHighlighted ? 0.95 : 0.72), radius: isHighlighted ? 12 : 8)
+            .opacity(opacity)
             .position(isAnimated ? point : center)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: highlightedMetric)
     }
 }
 
@@ -435,23 +510,6 @@ private extension ChronotypeInsightCardView {
             BetterColors.warning
         case nil:
             BetterColors.subtext
-        }
-    }
-}
-
-private extension ChronotypeBucket {
-    var bodyClockDisplayName: String {
-        switch self {
-        case .early:
-            "Early Body Clock"
-        case .earlyIntermediate:
-            "Early-intermediate Body Clock"
-        case .intermediate:
-            "Intermediate Body Clock"
-        case .lateIntermediate:
-            "Late-intermediate Body Clock"
-        case .late:
-            "Late Body Clock"
         }
     }
 }
