@@ -25,10 +25,9 @@ final class ProtocolFormulaSetupViewModel {
     func reload() async {
         do {
             versions = try await catalogService.ensureCatalogVersions()
-            let logs = try await localRepository.fetchNightLogs(from: "0000-00-00", to: "9999-12-31")
             var locks: [UUID: Bool] = [:]
             for v in versions {
-                let hasLogs = logs.contains { $0.versionID == v.id }
+                let hasLogs = try await localRepository.hasNightLogs(forVersionID: v.id)
                 let placeholderAwaitingBackfill = v.isImportedPlaceholder && v.formulaText.isEmpty
                 locks[v.id] = hasLogs && !placeholderAwaitingBackfill
             }
@@ -79,6 +78,19 @@ final class ProtocolFormulaSetupViewModel {
             errorMessage = "This version is locked — create a new version instead."
         } catch {
             errorMessage = "Couldn't save: \(error.localizedDescription)"
+        }
+    }
+
+    /// Marks `version` as the active formula. The repository's active-singleton
+    /// enforcement automatically clears `isActive` on every other row.
+    func setActive(_ version: ProtocolFormulaVersion) async {
+        var updated = version
+        updated.isActive = true
+        do {
+            try await localRepository.saveFormulaVersion(updated)
+            await reload()
+        } catch {
+            errorMessage = "Couldn't set as current: \(error.localizedDescription)"
         }
     }
 

@@ -298,7 +298,6 @@ struct ProtocolTimelineView: View {
                         awakeMin: rollup.meanAwakeMin ?? 0,
                         totalSleepMin: rollup.meanTotalSleepMin ?? 0,
                         height: 10,
-                        color: color,
                         showLabels: true
                     )
                     let base = viewModel.baseline

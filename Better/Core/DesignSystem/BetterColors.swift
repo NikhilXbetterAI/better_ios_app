@@ -1,16 +1,16 @@
 import SwiftUI
 
 enum BetterColors {
-    static let background = Color(hex: "#07070F")
-    static let backgroundElevated = Color(hex: "#10111B")
-    static let card = Color(hex: "#1C1E2E")
-    static let cardSecondary = Color(hex: "#232538")
-    static let cardTertiary = Color(hex: "#2B3042")
+    static let background = Color(hex: "#000000")
+    static let backgroundElevated = Color(hex: "#080808")
+    static let card = Color(hex: "#0C0C0C")
+    static let cardSecondary = Color(hex: "#141414")
+    static let cardTertiary = Color(hex: "#1C1C1C")
     static let brand = Color(hex: "#6366F1")
     static let brandLight = Color(hex: "#818CF8")
     static let text = Color.white
-    static let subtext = Color(hex: "#9A9AA7")
-    static let mutedText = Color(hex: "#666979")
+    static let subtext = Color(hex: "#B6B7C4")
+    static let mutedText = Color(hex: "#8E92A4")
     static let border = Color.white.opacity(0.08)
 
     // Style board tokens from the designer export.
@@ -57,8 +57,8 @@ enum BetterColors {
         LinearGradient(colors: [Color.white.opacity(0.14), Color.white.opacity(0.04)], startPoint: .top, endPoint: .bottom)
     }
     static let stageDeep = Color(hex: "#7C3AED")
-    static let stageCore = Color(hex: "#38C7FF")
-    static let stageREM = Color(hex: "#9ADFFF")
+    static let stageCore = Color(hex: "#007AFF")
+    static let stageREM = Color(hex: "#38C7FF")
     static let stageAwake = Color(hex: "#FF8A4C")
     // Semantic metric colors
     static let success = Color(hex: "#32D74B")

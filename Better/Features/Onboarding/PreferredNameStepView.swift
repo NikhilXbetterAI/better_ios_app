@@ -83,7 +83,10 @@ struct PreferredNameStepView: View {
     private var binding: Binding<String> {
         Binding(
             get: { displayName ?? "" },
-            set: { displayName = $0 }
+            set: { newValue in
+                let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+                displayName = trimmed.isEmpty ? nil : trimmed
+            }
         )
     }
 }

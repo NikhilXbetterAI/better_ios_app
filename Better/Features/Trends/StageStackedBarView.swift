@@ -3,7 +3,6 @@ import SwiftUI
 struct StageDurationCompositionView: View {
     let points: [StageCompositionPoint]
     let selectedWindow: TrendWindow
-    let onSelectWindow: (TrendWindow) -> Void
 
     @State private var selectedDateKey: String?
 
@@ -33,7 +32,6 @@ struct StageDurationCompositionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.large) {
             header
-            windowSelector
 
             if sortedPoints.isEmpty {
                 emptyState
@@ -92,34 +90,6 @@ struct StageDurationCompositionView: View {
         }
     }
 
-    private var windowSelector: some View {
-        HStack(spacing: BetterSpacing.small) {
-            ForEach(TrendWindow.allCases) { window in
-                Button {
-                    withAnimation(.snappy(duration: 0.28)) {
-                        selectedDateKey = nil
-                    }
-                    onSelectWindow(window)
-                } label: {
-                    Text(window.displayName)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(selectedWindow == window ? BetterColors.text : BetterColors.subtext)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(
-                            selectedWindow == window
-                                ? BetterColors.brand
-                                : BetterColors.cardSecondary,
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(4)
-        .background(BetterColors.backgroundElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.small) {
             Image(systemName: "moon.zzz.fill")
@@ -156,6 +126,7 @@ struct StageDurationCompositionView: View {
                         ZStack(alignment: .bottomLeading) {
                             horizontalGrid(height: plotSize.height, width: contentWidth)
                             bars(width: contentWidth, height: plotSize.height)
+                                .drawingGroup()
                             selectedTooltip(width: contentWidth, height: plotSize.height)
                         }
                         .frame(width: contentWidth, height: plotSize.height)
@@ -165,8 +136,9 @@ struct StageDurationCompositionView: View {
                     }
                     .contentShape(Rectangle())
                     .gesture(
-                        DragGesture(minimumDistance: 0)
+                        DragGesture(minimumDistance: 8)
                             .onChanged { value in
+                                guard abs(value.translation.width) > abs(value.translation.height) else { return }
                                 updateSelection(at: value.location.x, width: contentWidth)
                             }
                     )
@@ -202,8 +174,8 @@ struct StageDurationCompositionView: View {
             return CGFloat(max(sortedPoints.count, 7)) * 38
         case .month:
             return CGFloat(max(sortedPoints.count, 30)) * 12
-        case .twoMonths:
-            return CGFloat(max(sortedPoints.count, 60)) * 9
+        case .threeMonths:
+            return CGFloat(max(sortedPoints.count, 90)) * 6.5
         }
     }
 
@@ -221,8 +193,11 @@ struct StageDurationCompositionView: View {
                     isSelected: point.dateKey == selectedPoint?.dateKey
                 )
                 .onTapGesture {
-                    withAnimation(.snappy(duration: 0.22)) {
-                        selectedDateKey = point.dateKey
+                    if selectedDateKey != point.dateKey {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            selectedDateKey = point.dateKey
+                        }
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     }
                 }
             }
@@ -237,8 +212,8 @@ struct StageDurationCompositionView: View {
             return 12
         case .month:
             return 5
-        case .twoMonths:
-            return 3
+        case .threeMonths:
+            return 2
         }
     }
 
@@ -250,9 +225,9 @@ struct StageDurationCompositionView: View {
             Spacer(minLength: 0)
             VStack(spacing: 0) {
                 stageSegment(duration: point.awakeDuration, maxHeight: maxHeight, color: BetterColors.stageAwake)
-                stageSegment(duration: point.remDuration, maxHeight: maxHeight, color: BetterColors.stageREM)
                 stageSegment(duration: point.coreDuration, maxHeight: maxHeight, color: BetterColors.stageCore)
                 stageSegment(duration: point.deepDuration, maxHeight: maxHeight, color: BetterColors.stageDeep)
+                stageSegment(duration: point.remDuration, maxHeight: maxHeight, color: BetterColors.stageREM)
             }
             .frame(width: barWidth * scale, height: barHeight)
             .clipShape(RoundedRectangle(cornerRadius: isSelected ? 8 : 4, style: .continuous))
@@ -312,10 +287,10 @@ struct StageDurationCompositionView: View {
                     }
                     .font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
 
-                    tooltipRow("Deep", duration: selectedPoint.deepDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageDeep)
-                    tooltipRow("Core", duration: selectedPoint.coreDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageCore)
-                    tooltipRow("REM", duration: selectedPoint.remDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageREM)
                     tooltipRow("Awake", duration: selectedPoint.awakeDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageAwake)
+                    tooltipRow("Light", duration: selectedPoint.coreDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageCore)
+                    tooltipRow("Deep", duration: selectedPoint.deepDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageDeep)
+                    tooltipRow("REM", duration: selectedPoint.remDuration, total: selectedPoint.totalStageDuration, color: BetterColors.stageREM)
                 }
                 .padding(10)
                 .frame(width: 164, alignment: .leading)
@@ -382,14 +357,21 @@ struct StageDurationCompositionView: View {
         guard !sortedPoints.isEmpty else { return }
         let count = sortedPoints.count
         guard count > 1 else {
-            selectedDateKey = sortedPoints[0].dateKey
+            if selectedDateKey != sortedPoints[0].dateKey {
+                selectedDateKey = sortedPoints[0].dateKey
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
             return
         }
         let clampedX = min(max(0, x), width)
         let rawIndex = (clampedX / max(width, 1)) * CGFloat(count - 1)
         let index = min(max(Int(rawIndex.rounded()), 0), count - 1)
-        withAnimation(.snappy(duration: 0.18)) {
-            selectedDateKey = sortedPoints[index].dateKey
+        let newKey = sortedPoints[index].dateKey
+        if selectedDateKey != newKey {
+            withAnimation(.snappy(duration: 0.18)) {
+                selectedDateKey = newKey
+            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
     }
 
@@ -411,10 +393,10 @@ struct StageDurationCompositionView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: BetterSpacing.small) {
-                stagePill("Deep", duration: selectedPoint?.deepDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageDeep)
-                stagePill("Core", duration: selectedPoint?.coreDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageCore)
-                stagePill("REM", duration: selectedPoint?.remDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageREM)
                 stagePill("Awake", duration: selectedPoint?.awakeDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageAwake)
+                stagePill("Light", duration: selectedPoint?.coreDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageCore)
+                stagePill("Deep", duration: selectedPoint?.deepDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageDeep)
+                stagePill("REM", duration: selectedPoint?.remDuration ?? 0, total: selectedPoint?.totalStageDuration ?? 0, color: BetterColors.stageREM)
             }
         }
         .padding(BetterSpacing.medium)

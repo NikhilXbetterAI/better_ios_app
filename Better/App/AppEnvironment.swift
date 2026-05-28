@@ -14,6 +14,7 @@ final class AppEnvironment {
     let sleepModeScheduleService: SleepModeScheduleService
     let sleepModeCoordinator: SleepModeCoordinator
     let redLightFilterService: RedLightFilterService
+    let biomarkerBaselineService: BiomarkerBaselineService
 
     init(
         modelContainer: ModelContainer,
@@ -26,7 +27,8 @@ final class AppEnvironment {
         sleepModeNotificationService: SleepModeNotificationService,
         sleepModeScheduleService: SleepModeScheduleService,
         sleepModeCoordinator: SleepModeCoordinator,
-        redLightFilterService: RedLightFilterService
+        redLightFilterService: RedLightFilterService,
+        biomarkerBaselineService: BiomarkerBaselineService
     ) {
         self.modelContainer = modelContainer
         self.syncCoordinator = syncCoordinator
@@ -39,6 +41,7 @@ final class AppEnvironment {
         self.sleepModeScheduleService = sleepModeScheduleService
         self.sleepModeCoordinator = sleepModeCoordinator
         self.redLightFilterService = redLightFilterService
+        self.biomarkerBaselineService = biomarkerBaselineService
     }
 
     /// Runs the one-shot legacy ProtocolAdherence → Protocol Formula migration if needed.
@@ -81,6 +84,8 @@ final class AppEnvironment {
         sleepModeScheduleService.onForegroundActivation = { [sleepModeCoordinator] presentation in
             sleepModeCoordinator.activePresentation = presentation
         }
+        let biomarkerBaselineService = BiomarkerBaselineService(repository: localRepo)
+        coordinator.setBiomarkerBaselineService(biomarkerBaselineService)
         return AppEnvironment(
             modelContainer: container,
             syncCoordinator: coordinator,
@@ -92,7 +97,8 @@ final class AppEnvironment {
             sleepModeNotificationService: sleepModeNotificationService,
             sleepModeScheduleService: sleepModeScheduleService,
             sleepModeCoordinator: sleepModeCoordinator,
-            redLightFilterService: RedLightFilterService()
+            redLightFilterService: RedLightFilterService(),
+            biomarkerBaselineService: biomarkerBaselineService
         )
     }
 
@@ -133,6 +139,8 @@ private extension AppEnvironment {
         sleepModeScheduleService.onForegroundActivation = { [sleepModeCoordinator] presentation in
             sleepModeCoordinator.activePresentation = presentation
         }
+        let biomarkerBaselineService = BiomarkerBaselineService(repository: localRepo)
+        coordinator.setBiomarkerBaselineService(biomarkerBaselineService)
         return AppEnvironment(
             modelContainer: container,
             syncCoordinator: coordinator,
@@ -144,7 +152,8 @@ private extension AppEnvironment {
             sleepModeNotificationService: sleepModeNotificationService,
             sleepModeScheduleService: sleepModeScheduleService,
             sleepModeCoordinator: sleepModeCoordinator,
-            redLightFilterService: RedLightFilterService()
+            redLightFilterService: RedLightFilterService(),
+            biomarkerBaselineService: biomarkerBaselineService
         )
     }
 }

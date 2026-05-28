@@ -19,6 +19,7 @@ nonisolated enum SleepAlertKind: String, Codable, CaseIterable, Hashable, Sendab
     case recoveryTrend
     case baselineAvailable
     case protocolPattern
+    case sleepDriftDown
 
     var id: String { rawValue }
 
@@ -60,6 +61,8 @@ nonisolated enum SleepAlertKind: String, Codable, CaseIterable, Hashable, Sendab
             "Baseline Available"
         case .protocolPattern:
             "Protocol Pattern"
+        case .sleepDriftDown:
+            "Sleep Trending Shorter"
         }
     }
 }

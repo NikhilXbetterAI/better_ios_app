@@ -133,8 +133,10 @@ final class AlertGenerationServiceTests: XCTestCase {
 
         let requests = await scheduler.requests()
         XCTAssertEqual(requests.count, 1)
-        XCTAssertEqual(requests[0].title, "Sleep analysis ready")
-        XCTAssertTrue(requests[0].body.contains("2 sleep insights"))
+        // The morning digest now uses a score-bucketed title and an alert-count body.
+        // Session score 55 falls into the "Fair night" bucket, with two notifiable insights.
+        XCTAssertEqual(requests[0].title, "Fair night — score 55")
+        XCTAssertTrue(requests[0].body.contains("2 insights are ready"))
     }
 
     func testAnalysisReadyNotificationSchedulesWhenEnabled() async throws {
@@ -167,8 +169,10 @@ final class AlertGenerationServiceTests: XCTestCase {
 
         let requests = await scheduler.requests()
         XCTAssertEqual(requests.count, 1)
-        XCTAssertEqual(requests[0].title, "Sleep analysis ready")
-        XCTAssertEqual(requests[0].body, "Your sleep dashboard has been updated.")
+        // Score 88 lands in the "Great night" bucket; only one notifiable alert (analysis ready)
+        // so the digest body uses the single-alert "Tap to see your analysis." copy.
+        XCTAssertEqual(requests[0].title, "Great night — score 88")
+        XCTAssertEqual(requests[0].body, "You slept 8h 0m. Tap to see your analysis.")
     }
 }
 

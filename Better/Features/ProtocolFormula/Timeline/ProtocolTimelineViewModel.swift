@@ -61,7 +61,9 @@ final class ProtocolTimelineViewModel {
             Self.logger.debug("timeline reload baseline exists=\(baselineExists, privacy: .public) missing=\(baselineMissing, privacy: .public)")
             let rollups = try await analysisService.recentRollups()
             let rollupByVersion = ProtocolFormulaDeduping.rollupsByVersion(rollups, context: "timeline")
-            let logs = try await repository.fetchNightLogs(from: "0000-00-00", to: "9999-12-31")
+            let earliestVersionDate = versions.map(\.shippedOn).min() ?? Date.distantPast
+            let startKey = SleepDateKey.calendarDateKey(for: earliestVersionDate)
+            let logs = try await repository.fetchNightLogs(from: startKey, to: "9999-12-31")
             let timelineLogs = logs.filter { $0.status != .unknown }
             let logsByVersion = Dictionary(grouping: timelineLogs, by: { $0.versionID })
             let addinsByVersion = Dictionary(grouping: timelineLogs, by: { $0.versionID })

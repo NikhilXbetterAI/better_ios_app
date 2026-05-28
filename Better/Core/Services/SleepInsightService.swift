@@ -38,6 +38,8 @@ nonisolated struct SleepInsight: Codable, Hashable, Sendable, Identifiable {
 }
 
 nonisolated struct SleepInsightService: Sendable {
+    private static let minimumBaselineNights = BaselineEngine.dashboardMinimumValidNights
+
     init() {}
 
     func insights(
@@ -61,16 +63,20 @@ nonisolated struct SleepInsightService: Sendable {
             ]
         }
 
-        if let baseline, baseline.validNights >= 7 {
+        if let baseline, baseline.validNights >= Self.minimumBaselineNights {
             insights.append(contentsOf: baselineInsights(session: session, baseline: baseline))
             insights.append(contentsOf: consistencyInsights(baseline: baseline))
         } else {
             let nights = baseline?.validNights ?? recentSessions.filter { BaselineEngine.isValidNight($0) }.count
+            let needed = max(0, Self.minimumBaselineNights - nights)
+            let body = needed > 0
+                ? "Log \(needed) more valid night\(needed == 1 ? "" : "s") to unlock baseline comparisons."
+                : "Baseline comparisons unlock after \(Self.minimumBaselineNights) valid nights."
             insights.append(
                 SleepInsight(
                     id: "baseline-building",
                     title: "Baseline is still building",
-                    body: "A few more valid nights will make your sleep comparisons more accurate.",
+                    body: body,
                     category: .baselineBuilding,
                     priority: 90,
                     confidence: BaselineEngine.confidence(validNightCount: nights),

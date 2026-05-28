@@ -118,6 +118,11 @@ final class SettingsViewModel {
         isLoading = false
     }
 
+    func triggerSync() async {
+        await syncCoordinator.performLaunchSync()
+        await loadSettings()
+    }
+
     func loadResearchInsight(now: Date = Date()) async {
         do {
             let start = Calendar.current.date(byAdding: .day, value: -30, to: now)

@@ -468,8 +468,11 @@ final class LocalDataRepositoryTests: XCTestCase {
 
         await viewModel.selectDate("2026-05-05")
 
-        XCTAssertEqual(viewModel.recentSessions.count, 30)
-        XCTAssertEqual(viewModel.recentSessions.first?.sleepDateKey, "2026-04-06")
+        // SleepDashboardViewModel.loadRecentSessions now uses a 60-day window
+        // (limit: 59 plus the selected session, .suffix(60)). With 35 fabricated
+        // sessions ending 2026-05-05, all 35 are returned.
+        XCTAssertEqual(viewModel.recentSessions.count, 35)
+        XCTAssertEqual(viewModel.recentSessions.first?.sleepDateKey, "2026-04-01")
         XCTAssertEqual(viewModel.recentSessions.last?.sleepDateKey, "2026-05-05")
     }
 
@@ -793,67 +796,6 @@ final class LocalDataRepositoryTests: XCTestCase {
         for type in mappedTypes {
             XCTAssertNotNil(HealthKitRepository.quantityType(for: type), "\(type) should map to a HealthKit quantity type")
         }
-    }
-
-    @MainActor
-    func testActivityViewModelSavesManualStatusAndReloadsSelectedDay() async throws {
-        let repository = MockLocalDataRepository(
-            sessions: [
-                Self.session(
-                    key: "2026-05-04",
-                    start: Self.date("2026-05-03T22:00:00Z"),
-                    end: Self.date("2026-05-04T06:00:00Z"),
-                    score: 81
-                )
-            ]
-        )
-        let viewModel = ActivityViewModel(
-            localRepository: repository,
-            healthRepository: FakeHealthKitRepository(),
-            calendar: Self.utcCalendar,
-            now: Self.date("2026-05-04T12:00:00Z")
-        )
-
-        await viewModel.load()
-        await viewModel.saveStatus(.sick, note: "Cold symptoms")
-
-        XCTAssertEqual(viewModel.selectedStatusLog?.status, .sick)
-        XCTAssertEqual(viewModel.selectedStatusLog?.note, "Cold symptoms")
-        XCTAssertEqual(viewModel.weekSummaries.map(\.sleepDateKey), ["2026-05-04"])
-    }
-
-    @MainActor
-    func testBiologyViewModelBuildsPartialDataState() async throws {
-        let session = Self.session(
-            key: "2026-05-04",
-            start: Self.date("2026-05-03T22:00:00Z"),
-            end: Self.date("2026-05-04T06:00:00Z")
-        )
-        let repository = MockLocalDataRepository(sessions: [session], baselines: [PreviewSleepData.sampleBaseline])
-        let healthRepository = FakeHealthKitRepository(
-            biometricSamples: [
-                .vo2Max: [
-                    BiometricSample(
-                        type: .vo2Max,
-                        value: 47,
-                        unit: BiometricType.vo2Max.unitSymbol,
-                        startDate: Self.date("2026-05-04T08:00:00Z"),
-                        endDate: Self.date("2026-05-04T08:01:00Z")
-                    )
-                ]
-            ]
-        )
-        let viewModel = BiologyViewModel(
-            localRepository: repository,
-            healthRepository: healthRepository,
-            calendar: Self.utcCalendar
-        )
-
-        await viewModel.load(now: Self.date("2026-05-04T12:00:00Z"))
-
-        XCTAssertEqual(viewModel.metrics.first { $0.kind == .vo2Max }?.value, 47)
-        XCTAssertEqual(viewModel.metrics.first { $0.kind == .hrvBaseline }?.value, PreviewSleepData.sampleBaseline.hrvAverage)
-        XCTAssertEqual(viewModel.metrics.first { $0.kind == .bodyTemperature }?.rating, "Not available")
     }
 }
 

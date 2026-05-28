@@ -4,80 +4,61 @@ struct TrendsTabView: View {
     @Bindable var viewModel: TrendsViewModel
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                backgroundLayer(screenHeight: geometry.size.height)
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: BetterSpacing.section) {
-                        header
+        ZStack {
+            backgroundLayer
+            ScrollView(.vertical, showsIndicators: false) {
+                if viewModel.isLoading && viewModel.sessions.isEmpty {
+                    TrendsDashboardSkeletonView()
+                        .padding(.horizontal, BetterSpacing.screen)
+                } else {
+                LazyVStack(alignment: .leading, spacing: BetterSpacing.section) {
+                    header
 
-                        TrendWindowPickerView(selection: $viewModel.selectedWindow) { window in
-                            Task { await viewModel.selectWindow(window) }
-                        }
+                    comparisonBanner
 
-                        // Overview — score sparkline + period summary
-                        InsightsOverviewCard(
-                            sessions: viewModel.sessions,
-                            scoreSparklineValues: viewModel.scoreSparklineValues,
-                            avgScore: viewModel.avgScoreInPeriod,
-                            avgDurationHours: viewModel.avgDurationHours,
-                            bestScore: viewModel.bestSleepSession.map { Int(viewModel.healthScore(for: $0).rounded()) },
-                            comparisonSummary: viewModel.comparisonSummary
+                    InsightsOverviewCard(
+                        sessions: viewModel.sessions,
+                        scoreSparklineValues: viewModel.scoreSparklineValues,
+                        avgScore: viewModel.avgScoreInPeriod,
+                        avgDurationHours: viewModel.avgDurationHours,
+                        comparisonSummary: viewModel.comparisonSummary
+                    )
+
+                    SleepRhythmCard(
+                        chronotypeResult: viewModel.chronotypeResult,
+                        baseline: viewModel.baseline
+                    )
+
+                    if viewModel.weekdaySessionCount + viewModel.weekendSessionCount >= 4 {
+                        InsightsWeekdayWeekendCard(
+                            weekdayAvgHours: viewModel.weekdayAvgHours,
+                            weekendAvgHours: viewModel.weekendAvgHours,
+                            weekdayCount: viewModel.weekdaySessionCount,
+                            weekendCount: viewModel.weekendSessionCount
                         )
-
-                        if let chronotypeResult = viewModel.chronotypeResult {
-                            ChronotypeInsightCardView(result: chronotypeResult)
-                        }
-
-                        // Sleep insights (moved from Sleep dashboard)
-                        InsightsSleepInsightsCard(insights: viewModel.latestSessionInsights)
-
-                        // Trend chart section
-                        trendChartSection
-
-                        // Bedtime pattern (requires baseline)
-                        if let baseline = viewModel.baseline, baseline.validNights >= 7 {
-                            InsightsBedtimeCard(baseline: baseline)
-                        }
-
-                        // Best night card
-                        if let best = viewModel.bestSleepSession {
-                            InsightsBestSleepCard(
-                                session: best,
-                                score: Int(viewModel.healthScore(for: best).rounded()),
-                                windowLabel: viewModel.selectedWindow.displayName
-                            )
-                        }
-
-                        // Weekday vs weekend
-                        if viewModel.weekdaySessionCount + viewModel.weekendSessionCount >= 4 {
-                            InsightsWeekdayWeekendCard(
-                                weekdayAvgHours: viewModel.weekdayAvgHours,
-                                weekendAvgHours: viewModel.weekendAvgHours,
-                                weekdayCount: viewModel.weekdaySessionCount,
-                                weekendCount: viewModel.weekendSessionCount
-                            )
-                        }
-
-                        // Stage composition over time
-                        stageSection
-
-                        // Baseline comparison chart
-                        BaselineComparisonChartView(
-                            baseline: viewModel.baseline,
-                            latestSession: viewModel.sessions.last
-                        )
-
-                        Spacer(minLength: 110)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, BetterSpacing.screen)
+
+                    InsightsExplorerView(viewModel: viewModel)
+
+                    stageSection
+
+                    InsightsSleepInsightsCard(insights: viewModel.latestSessionInsights)
+
+                    Spacer(minLength: 140)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, BetterSpacing.screen)
+                } // end else (skeleton guard)
             }
             .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         }
         .navigationTitle("Insights")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                windowPickerToolbarItem
+            }
+        }
         .task {
             await viewModel.onAppear()
         }
@@ -86,16 +67,41 @@ struct TrendsTabView: View {
         }
     }
 
+    // MARK: - Navigation Bar Window Picker
+
+    private var windowPickerToolbarItem: some View {
+        HStack(spacing: 2) {
+            ForEach(TrendWindow.allCases) { window in
+                let isSelected = viewModel.selectedWindow == window
+                Button {
+                    Task { await viewModel.selectWindow(window) }
+                } label: {
+                    Text(window.displayName)
+                        .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                        .foregroundStyle(isSelected ? BetterColors.brand : BetterColors.subtext)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(
+                            isSelected ? BetterColors.brand.opacity(0.12) : Color.clear,
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .animation(.easeInOut(duration: 0.18), value: isSelected)
+            }
+        }
+    }
+
     // MARK: - Background
 
-    private func backgroundLayer(screenHeight: CGFloat) -> some View {
+    private var backgroundLayer: some View {
         ZStack {
             BetterColors.background
             RadialGradient(
                 colors: [BetterColors.brand.opacity(0.08), .clear],
                 center: .init(x: 0.5, y: 0.0),
                 startRadius: 0,
-                endRadius: screenHeight * 0.5
+                endRadius: 400
             )
         }
         .ignoresSafeArea()
@@ -116,42 +122,40 @@ struct TrendsTabView: View {
                 .font(BetterTypography.footnote)
                 .foregroundStyle(BetterColors.subtext)
         }
-        .padding(.top, 52)
+        .padding(.top, 24)
     }
 
-    // MARK: - Trend Chart Section
+    // MARK: - Comparison Banner
 
-    private var trendChartSection: some View {
-        BetterHealthCard {
-            VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                // Section header
-                HStack(spacing: BetterSpacing.small) {
-                    Image(systemName: "chart.xyaxis.line")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(BetterColors.brand, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    Text("Sleep Trends")
-                        .font(BetterTypography.subheadline)
-                        .foregroundStyle(BetterColors.text)
+    @ViewBuilder
+    private var comparisonBanner: some View {
+        if let summary = viewModel.comparisonSummary {
+            let delta = summary.currentAverage - summary.previousAverage
+            let isZero = abs(delta) < 0.01
+            let iconName: String = isZero ? "minus" : (delta > 0 ? "arrow.up" : "arrow.down")
+            let iconColor: Color = isZero ? BetterColors.subtext : (delta > 0 ? BetterColors.success : BetterColors.warning)
+            let formattedDelta = formatSignedMetricDelta(delta)
+            let formattedUsual = formatMetricValue(summary.previousAverage)
+
+            BetterHealthCard {
+                HStack(alignment: .center, spacing: BetterSpacing.medium) {
+                    Image(systemName: iconName)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(iconColor)
+                        .frame(width: 36, height: 36)
+                        .background(iconColor.opacity(0.15), in: Circle())
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("You slept \(formattedDelta) \(delta >= 0 ? "more" : "less") than your \(viewModel.selectedWindow.displayName) average (\(formattedUsual) usual).")
+                            .font(BetterTypography.subheadline)
+                            .foregroundStyle(BetterColors.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(summary.currentValidNights) nights tracked")
+                            .font(BetterTypography.caption)
+                            .foregroundStyle(BetterColors.subtext)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                TrendMetricSelectorView(selection: $viewModel.selectedMetric) { metric in
-                    viewModel.selectMetric(metric)
-                }
-
-                TrendLineChartView(
-                    points: viewModel.chartPoints,
-                    metric: viewModel.selectedMetric,
-                    protocolStatus: viewModel.adherenceByDateKey,
-                    protocolStartDate: viewModel.protocolStartDate
-                )
-
-                if hasTakenNights || hasNotTakenNights {
-                    ProtocolChartLegend(hasTaken: hasTakenNights, hasNotTaken: hasNotTakenNights)
-                }
-
-                summaryStrip
             }
         }
     }
@@ -162,60 +166,48 @@ struct TrendsTabView: View {
         StageDurationCompositionView(
             points: viewModel.stageCompositionPoints,
             selectedWindow: viewModel.selectedWindow
-        ) { window in
-            Task {
-                await viewModel.selectWindow(window)
-            }
-        }
-    }
-
-    // MARK: - Summary Strip
-
-    private var summaryStrip: some View {
-        HStack(spacing: BetterSpacing.small) {
-            summaryCell("This Period", value: currentNightsText, color: BetterColors.brand)
-            summaryCell("Change", value: changeText, color: changeColor)
-            summaryCell("Previous", value: previousNightsText, color: BetterColors.hrv)
-        }
-    }
-
-    private func summaryCell(_ label: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.xSmall) {
-            Text(label.uppercased())
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-                .tracking(0.8)
-            Text(value)
-                .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
-                .foregroundStyle(color)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(BetterSpacing.medium)
-        .background(BetterColors.cardSecondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        )
     }
 
     // MARK: - Computed Helpers
 
-    private var hasTakenNights: Bool {
-        viewModel.adherenceByDateKey.values.contains(true)
-    }
-    private var hasNotTakenNights: Bool {
-        viewModel.adherenceByDateKey.values.contains(false)
-    }
-
-    private var changeText: String {
-        guard let change = viewModel.weekOverWeekChange else { return "--" }
-        return String(format: "%+.0f%%", change * 100)
-    }
     private var changeColor: Color {
         guard let change = viewModel.weekOverWeekChange else { return BetterColors.subtext }
         return change >= 0 ? BetterColors.success : BetterColors.warning
     }
-    private var currentNightsText: String {
-        viewModel.comparisonSummary.map { "\($0.currentValidNights)n" } ?? "\(viewModel.sessions.count)n"
+
+    private func formatMetricValue(_ value: Double) -> String {
+        switch viewModel.selectedMetric {
+        case .totalSleep, .longestRestorativeBlock, .deepSleep, .remSleep:
+            String(format: "%.1fh", value)
+        case .score:
+            String(format: "%.0f pts", value)
+        case .hrv:
+            String(format: "%.0f ms", value)
+        case .waso, .latency:
+            String(format: "%.0f min", value)
+        case .respiratoryRate:
+            String(format: "%.1f br/min", value)
+        case .oxygenSaturation:
+            String(format: "%.0f%%", value)
+        }
     }
-    private var previousNightsText: String {
-        viewModel.comparisonSummary.map { "\($0.previousValidNights)n" } ?? "--"
+
+    private func formatSignedMetricDelta(_ delta: Double) -> String {
+        switch viewModel.selectedMetric {
+        case .totalSleep, .longestRestorativeBlock, .deepSleep, .remSleep:
+            return String(format: "%+.1fh", delta)
+        case .score:
+            return String(format: "%+.0f pts", delta)
+        case .hrv:
+            return String(format: "%+.0f ms", delta)
+        case .waso, .latency:
+            return String(format: "%+.0f min", delta)
+        case .respiratoryRate:
+            return String(format: "%+.1f br/min", delta)
+        case .oxygenSaturation:
+            return String(format: "%+.0f%%", delta)
+        }
     }
 }
 

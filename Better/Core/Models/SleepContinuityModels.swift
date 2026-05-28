@@ -79,13 +79,18 @@ nonisolated struct SleepContinuitySummary: Codable, Hashable, Sendable {
     var longestBlockIndex: Int?
     var meaningfulAwakeningCount: Int
     var continuityCategory: SleepContinuityCategory
+    /// The full block object for the longest uninterrupted stretch.
+    /// `nil` only for the `.unavailable` sentinel; always populated by
+    /// `SleepContinuityCalculator`. Wall-clock span = `longestBlock.endDate - longestBlock.startDate`.
+    var longestBlock: SleepContinuityBlock?
 
     static let unavailable = SleepContinuitySummary(
         blocks: [],
         longestBlockDuration: 0,
         longestBlockIndex: nil,
         meaningfulAwakeningCount: 0,
-        continuityCategory: .unavailable
+        continuityCategory: .unavailable,
+        longestBlock: nil
     )
 }
 

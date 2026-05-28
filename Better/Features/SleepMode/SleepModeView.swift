@@ -4,6 +4,7 @@ import UIKit
 struct SleepModeView: View {
     @Bindable var viewModel: SleepModeViewModel
     var redLightService: RedLightFilterService? = nil
+    var onEditSchedule: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var moonFloating = false
     @State private var showRedSetup = false
@@ -56,6 +57,22 @@ struct SleepModeView: View {
     private var introContent: some View {
         VStack(spacing: BetterSpacing.xLarge) {
             topBar(title: "Start Sleep Mode", subtitle: "Wind down without adding stimulation")
+
+            if onEditSchedule != nil {
+                HStack {
+                    Spacer()
+                    Button("Edit schedule") {
+                        dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            onEditSchedule?()
+                        }
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(BetterColors.brand)
+                }
+                .padding(.horizontal, BetterSpacing.screen)
+                .padding(.top, -BetterSpacing.medium)
+            }
 
             Spacer(minLength: 12)
 

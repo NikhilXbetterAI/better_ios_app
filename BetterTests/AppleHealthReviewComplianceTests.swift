@@ -56,10 +56,14 @@ final class AppleHealthReviewComplianceTests: XCTestCase {
         XCTAssertFalse(combined.contains("buttonLabel: \"Connect\""))
         XCTAssertFalse(healthStep.contains("Skip for now"))
         XCTAssertFalse(healthStep.contains("Settings"))
-        XCTAssertTrue(assessmentIntro.contains("Skip for now"))
-        XCTAssertTrue(assessmentIntro.contains("Continue"))
-        XCTAssertTrue(onboardingFlow.contains("case .notifications: true"))
+        // The shared "Skip for now" / "Continue" CTAs now live in OnboardingFlowView's bottom chrome,
+        // gated by step.canSkip / resolvedPrimaryTitle, so the strings appear there rather than in
+        // SleepAssessmentIntroStepView itself.
+        XCTAssertTrue(onboardingFlow.contains("Skip for now"))
+        XCTAssertTrue(onboardingFlow.contains("\"Continue\""))
+        XCTAssertTrue(onboardingFlow.contains(".assessmentIntro, .notifications: true"))
         XCTAssertFalse(onboardingFlow.contains("case .health, .notifications: true"))
+        XCTAssertFalse(onboardingFlow.contains("case .health, .assessmentIntro, .notifications: true"))
     }
 
     func testPrivacyPolicyAffordancesAreVisibleOutsideCrowdedCopyRows() throws {

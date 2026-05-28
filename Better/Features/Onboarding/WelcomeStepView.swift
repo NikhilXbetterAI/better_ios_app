@@ -12,17 +12,18 @@ struct WelcomeStepView: View {
                 // ── Hero ──────────────────────────────────────────────────────
                 heroArea
                     .frame(height: screenHeight * 0.42)
+                    .accessibilityHidden(true)
 
                 // ── Text ──────────────────────────────────────────────────────
                 VStack(spacing: BetterSpacing.medium) {
                     Text("Better sleep starts\nwith your baseline")
-                        .font(BetterTypography.boardDisplay)
+                        .font(BetterTypography.display)
                         .foregroundStyle(BetterColors.text)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text("Use Apple Health data and log your nights. Once your baseline is ready, you'll see exactly how your habits affect your sleep.")
-                        .font(BetterTypography.boardBody)
+                        .font(BetterTypography.body)
                         .foregroundStyle(BetterColors.subtext)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -32,9 +33,21 @@ struct WelcomeStepView: View {
 
                 // ── Mini feature cards ────────────────────────────────────────
                 HStack(spacing: BetterSpacing.medium) {
-                    OnboardingMiniCard(icon: "heart.text.square.fill", label: "Stays\nlocal")
-                    OnboardingMiniCard(icon: "magnifyingglass",         label: "Finds\nlinks")
-                    OnboardingMiniCard(icon: "shield.fill",             label: "Not\nmedical")
+                    OnboardingMiniCard(
+                        icon: "heart.text.square.fill",
+                        label: "Stays\nlocal",
+                        accessibilityLabel: "Data stays on this device"
+                    )
+                    OnboardingMiniCard(
+                        icon: "magnifyingglass",
+                        label: "Finds\nlinks",
+                        accessibilityLabel: "Finds links between habits and sleep"
+                    )
+                    OnboardingMiniCard(
+                        icon: "shield.fill",
+                        label: "Not\nmedical",
+                        accessibilityLabel: "Not medical advice"
+                    )
                 }
                 .padding(.horizontal, BetterSpacing.screen)
                 .padding(.top, BetterSpacing.xLarge)
@@ -54,17 +67,17 @@ struct WelcomeStepView: View {
         ZStack {
             // Outer ring
             Circle()
-                .stroke(BetterColors.boardDeepCobaltBlue.opacity(0.18), lineWidth: 1.5)
+                .stroke(BetterColors.brand.opacity(0.18), lineWidth: 1.5)
                 .frame(width: 220, height: 220)
 
             // Medium ring
             Circle()
-                .stroke(BetterColors.boardBrand03.opacity(0.18), lineWidth: 1)
+                .stroke(BetterColors.brandLight.opacity(0.18), lineWidth: 1)
                 .frame(width: 160, height: 160)
 
             // Inner filled circle
             Circle()
-                .fill(BetterColors.boardBackgroundSecondary.opacity(0.18))
+                .fill(BetterColors.card)
                 .frame(width: 112, height: 112)
 
             // Orbiting dots
@@ -72,7 +85,7 @@ struct WelcomeStepView: View {
                 let angle = Angle.degrees(startDeg + orbitAngle)
                 let radius: CGFloat = 72
                 Circle()
-                    .fill(BetterColors.boardBrand03.opacity(0.72))
+                    .fill(BetterColors.brand)
                     .frame(width: 8, height: 8)
                     .offset(
                         x: radius * cos(angle.radians),
@@ -83,7 +96,7 @@ struct WelcomeStepView: View {
             // Moon symbol
             Image(systemName: "moon.stars.fill")
                 .font(.system(size: 60, weight: .semibold))
-                .foregroundStyle(BetterColors.boardHighlightGradient)
+                .foregroundStyle(BetterColors.brandGradient)
         }
         .offset(y: floatOffset)
     }
@@ -105,27 +118,30 @@ struct WelcomeStepView: View {
 private struct OnboardingMiniCard: View {
     let icon: String
     let label: String
+    let accessibilityLabel: String
 
     var body: some View {
         VStack(spacing: BetterSpacing.small) {
             Image(systemName: icon)
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(BetterColors.boardHighlightGradient)
+                .foregroundStyle(BetterColors.brandGradient)
                 .frame(width: 44, height: 44)
-                .background(BetterColors.boardDeepCobaltBlue.opacity(0.88), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(BetterColors.brand.opacity(0.16), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Text(label)
-                .font(BetterTypography.boardMonoLabel)
-                .foregroundStyle(BetterColors.boardGrey1)
+                .font(BetterTypography.caption)
+                .foregroundStyle(BetterColors.text)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, BetterSpacing.medium)
-        .background(BetterColors.boardHeroGradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(BetterColors.glassStroke, lineWidth: 1)
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

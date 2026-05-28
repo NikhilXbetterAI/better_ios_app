@@ -3,6 +3,7 @@ import SwiftUI
 struct BetterHealthCard<Content: View>: View {
     var cornerRadius: CGFloat = 24
     var padding: CGFloat = BetterSpacing.large
+    var isNested: Bool = false
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -11,12 +12,12 @@ struct BetterHealthCard<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(BetterColors.cardGradient)
-                    .shadow(color: .black.opacity(0.36), radius: 20, x: 0, y: 12)
+                    .fill(isNested ? AnyShapeStyle(BetterColors.cardSecondary) : AnyShapeStyle(BetterColors.cardGradient))
+                    .shadow(color: isNested ? .clear : Color.black.opacity(0.48), radius: isNested ? 0 : 24, x: 0, y: isNested ? 0 : 10)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(BetterColors.glassStroke, lineWidth: 1)
+                    .stroke(isNested ? AnyShapeStyle(BetterColors.border.opacity(0.4)) : AnyShapeStyle(BetterColors.glassStroke), lineWidth: 1.2)
             )
     }
 }

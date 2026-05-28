@@ -28,6 +28,8 @@ struct TrendMetricSelectorView: View {
                 }
             }
         }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .scrollClipDisabled(false)
     }
 }
 

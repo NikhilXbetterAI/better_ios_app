@@ -186,7 +186,7 @@ final class BiomarkerSummaryServiceTests: XCTestCase {
 
         let report = try await service.latestNightReport(now: now)
 
-        XCTAssertTrue(report.plainText.contains("Overnight low HR used by Sleep tab RHR: 44 bpm"))
+        XCTAssertTrue(report.plainText.contains("Resting heart rate used by Sleep tab RHR: 44 bpm"))
         XCTAssertTrue(report.plainText.contains("not HealthKit restingHeartRate"))
         XCTAssertEqual(report.metric(for: .restingHeartRate)?.expandedWindow.count, 1)
     }

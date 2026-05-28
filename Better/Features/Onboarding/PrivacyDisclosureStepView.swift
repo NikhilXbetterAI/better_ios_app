@@ -14,6 +14,7 @@ struct PrivacyDisclosureStepView: View {
                 // ── Hero: Shield with lock ─────────────────────────────────────
                 heroArea
                     .frame(height: screenHeight * 0.36)
+                    .accessibilityHidden(true)
 
                 // ── Text ──────────────────────────────────────────────────────
                 VStack(spacing: BetterSpacing.small) {

@@ -476,7 +476,7 @@ nonisolated enum ProtocolFormulaMetric: String, CaseIterable, Identifiable, Send
     var fullLabel: String {
         switch self {
         case .restorativeMin: "Restorative Sleep"
-        case .restorativePct: "Total Restorative Sleep %"
+        case .restorativePct: "Restorative %"
         case .longestBlock: "Longest Restorative Block"
         case .deep: "Deep Sleep"
         case .rem: "REM Sleep"
@@ -497,7 +497,7 @@ nonisolated enum ProtocolFormulaMetric: String, CaseIterable, Identifiable, Send
 
     var deltaUnit: String {
         switch self {
-        case .restorativePct: "pp"
+        case .restorativePct: "%"
         case .score: "pts"
         default: "m"
         }
@@ -510,7 +510,7 @@ nonisolated enum ProtocolFormulaMetric: String, CaseIterable, Identifiable, Send
         case .longestBlock: "#C084FC"
         case .deep: "#818CF8"
         case .rem: "#F472B6"
-        case .awake: "#FBBF24"
+        case .awake: "#FB923C"
         case .duration: "#67E8F9"
         case .latency: "#FB923C"
         case .score: "#A3E635"

@@ -205,6 +205,50 @@ These remain as `!ProtocolFormulaFlag.isEnabled()` legacy code paths in `RootTab
 
 ---
 
+## Phase 6 — UX fixes (2026-05-28)
+
+### Feature flag retired
+
+The `better.protocol.useFormulaTrackingUI` flag and `ProtocolFormulaFlag.swift` have been removed. `RootTabView` now unconditionally routes the Protocol tab to `ProtocolFormulaTabView`. The legacy `ProtocolTabView` / `ProtocolViewModel` code paths remain in the repo but are unreachable.
+
+### Home screen: last-night metrics grid added to HOME A layout
+
+`lastNightMetricsGrid` was implemented in Phase 3 (2×2 `LazyVGrid` of `ProtocolMetricComparisonStrip` cards: deep / REM / awake / total sleep vs frozen baseline via `lastNightVsBaselineDeltas`) but was never placed in the view body. It is now rendered in HOME A immediately below `lastNightHeroCard`.
+
+### Home screen: formula taken/not-taken badge
+
+The subtle version chip / dim "No formula taken" text in `lastNightHeroCard` is replaced with a colour-coded status badge:
+- **Taken** → `checkmark.circle.fill` in `ProtocolPalette.goodColor` + `VersionChip`
+- **Not logged** → `questionmark.circle.fill` in `.orange` + "Not logged" text
+
+### Home screen: quick nav always visible
+
+`quickNavRow` (Timeline / All Metrics / Version Dive / Edit Log tiles) was the last item inside the `if let active = viewModel.activeVersion` guard. Users with no active formula never saw it and had to use the `...` toolbar menu. The row now lives **outside** the guard at the bottom of the `VStack` and renders unconditionally.
+
+### Home screen: one-tap formula picker replaces dead-end "No formula yet" card
+
+When `activeVersion == nil` but `viewModel.versions` is non-empty (formulas exist but none is marked current — e.g. after onboarding seeded history), the home screen now shows:
+
+> **"Which formula are you on?"**  
+> Each existing formula rendered as a tappable card (label + formula text + version colour). One tap calls `viewModel.setActive(_:)` and the home screen refreshes into the normal data view.
+
+The old "Add a formula" CTA is still shown when `versions.isEmpty`.
+
+### `setActive` added to both view models
+
+| File | Method |
+|------|--------|
+| `Home/ProtocolFormulaHomeViewModel.swift` | `func setActive(_ version: ProtocolFormulaVersion) async` — sets `isActive = true`, saves, calls `refresh()`. |
+| `FormulaSetup/ProtocolFormulaSetupViewModel.swift` | `func setActive(_ version: ProtocolFormulaVersion) async` — same, calls `reload()`. |
+
+Both rely on the existing active-singleton enforcement in `LocalDataRepository.saveFormulaVersion` (lines 570–576) which automatically clears `isActive` on all other rows when a version is saved with `isActive: true`.
+
+### Formula setup: "Set as Current" button
+
+`ProtocolFormulaSetupView.versionRow` now shows a **"Set as Current"** button (in the version's accent colour) for any formula that is not already active. Tapping it calls `viewModel.setActive(version)`. Previously the view was purely read-only with no activation affordance.
+
+---
+
 ## Critical invariants — preserved
 
 1. **Unknown ≠ not-taken** — missing log = `.unknown`, never coerced
@@ -268,11 +312,14 @@ Better/App/
 
 - Build: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Better -configuration Debug -destination "generic/platform=iOS Simulator" build` → **BUILD SUCCEEDED**
 - Manual verification path (recommended next):
-  1. Enable the flag in Settings → "Protocol Formula Tracking"
-  2. Confirm onboarding → mark tonight → review last-night impact card
-  3. Visit Timeline, All Metrics, Version Dive from the Protocol tab ellipsis menu
-  4. Edit a past night via Edit log → confirm impact card refreshes
-  5. Export research CSV from Settings → confirm 4 new formula columns at the end of `nightly_research_rows.csv`
+  1. Protocol tab loads directly (no flag needed)
+  2. If formulas exist but none is active → "Which formula are you on?" picker appears → tap one → home loads with data
+  3. HOME A: confirm restorative % hero → metrics grid (deep/REM/awake/duration vs baseline) → quick-nav tiles → impact card
+  4. HOME B: confirm quick-nav tiles appear before the trend chart
+  5. Last-night hero card shows green ✓ + version chip if formula was logged, orange ? + "Not logged" if not
+  6. Timeline, All Metrics, Version Dive reachable via home tiles (no `...` menu required)
+  7. Edit a past night via Edit log → confirm impact card refreshes
+  8. Export research CSV from Settings → confirm 4 new formula columns at the end of `nightly_research_rows.csv`
 
 ---
 

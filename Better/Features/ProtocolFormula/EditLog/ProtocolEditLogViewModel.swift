@@ -8,6 +8,8 @@ final class ProtocolEditLogViewModel {
     var logs: [String: ProtocolNightLog] = [:]
     var versions: [ProtocolFormulaVersion] = []
     var selectedDateKey: String?
+    var selectedDateKeys: Set<String> = []
+    var isMultiSelectMode: Bool = false
     var draftStatus: ProtocolFormulaNightStatus = .unknown
     var draftVersionID: UUID?
     var draftAddins: [ProtocolFormulaComponent] = []
@@ -180,6 +182,135 @@ final class ProtocolEditLogViewModel {
 
     func removeDraftAddin(_ addin: ProtocolFormulaComponent) {
         draftAddins.removeAll { $0.id == addin.id }
+    }
+
+    // MARK: - Multi-select and Supplement helpers
+
+    func toggleDateSelection(_ key: String) {
+        if selectedDateKeys.contains(key) {
+            selectedDateKeys.remove(key)
+        } else {
+            selectedDateKeys.insert(key)
+        }
+        if selectedDateKeys.count == 1, let only = selectedDateKeys.first {
+            select(dateKey: only)
+        } else {
+            selectedDateKey = nil
+        }
+    }
+
+    func toggleMultiSelectMode() {
+        isMultiSelectMode.toggle()
+        if !isMultiSelectMode {
+            selectedDateKeys.removeAll()
+        } else if let selected = selectedDateKey {
+            selectedDateKeys.insert(selected)
+        }
+    }
+
+    func markSelectedDatesTaken(versionID: UUID) async {
+        let version = versions.first(where: { $0.id == versionID })
+        let hash = version.map(ProtocolFormulaHashing.snapshotHash(for:)) ?? ProtocolNightLog.importedPlaceholderHash
+        
+        for key in selectedDateKeys.sorted() {
+            let existing = logs[key]
+            let beforeData = existing.flatMap { try? JSONEncoder().encode($0) }
+            let nextLog = ProtocolNightLog(
+                id: existing?.id ?? UUID(),
+                sleepDateKey: key,
+                versionID: versionID,
+                status: .taken,
+                addins: existing?.addins ?? [],
+                takenAt: existing?.takenAt ?? Date(),
+                note: existing?.note,
+                formulaSnapshotHash: hash,
+                createdAt: existing?.createdAt ?? Date(),
+                updatedAt: Date()
+            )
+            do {
+                try await localRepository.saveNightLog(nextLog)
+                let edit = ProtocolLogEdit(
+                    nightLogID: nextLog.id,
+                    sleepDateKey: key,
+                    beforeData: beforeData,
+                    afterData: (try? JSONEncoder().encode(nextLog)) ?? Data(),
+                    editedAt: Date(),
+                    reason: nil
+                )
+                try await localRepository.saveLogEdit(edit)
+            } catch {
+                errorMessage = "Couldn't save for \(key): \(error.localizedDescription)"
+                break
+            }
+        }
+        selectedDateKeys.removeAll()
+        isMultiSelectMode = false
+        await reload()
+    }
+
+    func markSelectedDatesSkipped() async {
+        guard let active = activeVersion else { return }
+        let hash = ProtocolFormulaHashing.snapshotHash(for: active)
+        
+        for key in selectedDateKeys.sorted() {
+            let existing = logs[key]
+            let beforeData = existing.flatMap { try? JSONEncoder().encode($0) }
+            let nextLog = ProtocolNightLog(
+                id: existing?.id ?? UUID(),
+                sleepDateKey: key,
+                versionID: active.id,
+                status: .skipped,
+                addins: [],
+                takenAt: nil,
+                note: nil,
+                formulaSnapshotHash: hash,
+                createdAt: existing?.createdAt ?? Date(),
+                updatedAt: Date()
+            )
+            do {
+                try await localRepository.saveNightLog(nextLog)
+                let edit = ProtocolLogEdit(
+                    nightLogID: nextLog.id,
+                    sleepDateKey: key,
+                    beforeData: beforeData,
+                    afterData: (try? JSONEncoder().encode(nextLog)) ?? Data(),
+                    editedAt: Date(),
+                    reason: nil
+                )
+                try await localRepository.saveLogEdit(edit)
+            } catch {
+                errorMessage = "Couldn't save for \(key): \(error.localizedDescription)"
+                break
+            }
+        }
+        selectedDateKeys.removeAll()
+        isMultiSelectMode = false
+        await reload()
+    }
+
+    var recentAddins: [ProtocolFormulaComponent] {
+        var seenNames = Set<String>()
+        var result = [ProtocolFormulaComponent]()
+        let sortedLogs = logs.values.sorted { $0.sleepDateKey > $1.sleepDateKey }
+        for log in sortedLogs {
+            for addin in log.addins {
+                let lowercased = addin.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !seenNames.contains(lowercased) {
+                    seenNames.insert(lowercased)
+                    result.append(addin)
+                    if result.count >= 6 {
+                        return result
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    func addQuickAddin(_ addin: ProtocolFormulaComponent) {
+        if !draftAddins.contains(where: { $0.name.caseInsensitiveCompare(addin.name) == .orderedSame }) {
+            draftAddins.append(ProtocolFormulaComponent(name: addin.name, role: .addin))
+        }
     }
 
     // MARK: - Calendar helpers

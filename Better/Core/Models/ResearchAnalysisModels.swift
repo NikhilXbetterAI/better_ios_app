@@ -180,6 +180,9 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
     var formulaNightStatus: String?
     /// Restorative % of in-bed time — nil unless dataQuality is detailed or mixed.
     var restorativePctOfInBed: Double?
+    /// Restorative component of HealthSleepScoreEstimator (0-20 pts).
+    /// Nil for partial sessions with no stage data.
+    var sleepScoreRestorative: Int?
 
     init(
         sleepDateKey: String,
@@ -261,7 +264,8 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         formulaVersionLabel: String? = nil,
         formulaVersionID: String? = nil,
         formulaNightStatus: String? = nil,
-        restorativePctOfInBed: Double? = nil
+        restorativePctOfInBed: Double? = nil,
+        sleepScoreRestorative: Int? = nil
     ) {
         self.sleepDateKey = sleepDateKey
         self.sleepStart = sleepStart
@@ -344,6 +348,7 @@ nonisolated struct NightlyResearchRow: Codable, Hashable, Sendable, Identifiable
         self.formulaVersionID = formulaVersionID
         self.formulaNightStatus = formulaNightStatus
         self.restorativePctOfInBed = restorativePctOfInBed
+        self.sleepScoreRestorative = sleepScoreRestorative
     }
 }
 

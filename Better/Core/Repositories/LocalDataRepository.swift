@@ -669,6 +669,16 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.save()
     }
 
+    func hasNightLogs(forVersionID id: UUID) async throws -> Bool {
+        let idString = id.uuidString
+        let descriptor = FetchDescriptor<StoredProtocolNightLog>(
+            predicate: #Predicate { log in log.versionIDString == idString }
+        )
+        let count = try modelContext.fetchCount(descriptor)
+        return count > 0
+    }
+
+
     func saveLogEdit(_ edit: ProtocolLogEdit) async throws {
         modelContext.insert(StoredProtocolLogEdit(domain: edit))
         try modelContext.save()
@@ -849,16 +859,28 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
     }
 
     func migrateToEncryptedStorage() async throws {
+        let batchSize = 100
+
         // Sleep sessions — re-encode all JSON blob fields via PersistenceJSON (which now encrypts).
-        for session in try modelContext.fetch(FetchDescriptor<StoredSleepSession>()) {
-            await Task.yield()
-            guard let domain = try? session.toDomain() else { continue }
-            session.qualityScoreData = try PersistenceJSON.encode(domain.qualityScore)
-            session.stagesData = try PersistenceJSON.encode(domain.stages)
-            session.sourcesData = try PersistenceJSON.encode(domain.sources)
-            if let biometrics = domain.biometrics {
-                session.biometricsData = try PersistenceJSON.encode(biometrics)
+        var sessionOffset = 0
+        while true {
+            var descriptor = FetchDescriptor<StoredSleepSession>()
+            descriptor.fetchLimit = batchSize
+            descriptor.fetchOffset = sessionOffset
+            let sessions = try modelContext.fetch(descriptor)
+            if sessions.isEmpty { break }
+            for session in sessions {
+                await Task.yield()
+                guard let domain = try? session.toDomain() else { continue }
+                session.qualityScoreData = try PersistenceJSON.encode(domain.qualityScore)
+                session.stagesData = try PersistenceJSON.encode(domain.stages)
+                session.sourcesData = try PersistenceJSON.encode(domain.sources)
+                if let biometrics = domain.biometrics {
+                    session.biometricsData = try PersistenceJSON.encode(biometrics)
+                }
             }
+            try modelContext.save()
+            sessionOffset += sessions.count
         }
 
         // Sleep Mode blobs.
@@ -870,17 +892,38 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             guard let domain = try? schedule.toDomain() else { continue }
             schedule.scheduleData = try PersistenceJSON.encode(domain)
         }
-        for session in try modelContext.fetch(FetchDescriptor<StoredSleepModeSession>()) {
-            await Task.yield()
-            guard let domain = try? session.toDomain() else { continue }
-            session.sessionData = try PersistenceJSON.encode(domain)
+
+        var sleepModeOffset = 0
+        while true {
+            var descriptor = FetchDescriptor<StoredSleepModeSession>()
+            descriptor.fetchLimit = batchSize
+            descriptor.fetchOffset = sleepModeOffset
+            let sessions = try modelContext.fetch(descriptor)
+            if sessions.isEmpty { break }
+            for session in sessions {
+                await Task.yield()
+                guard let domain = try? session.toDomain() else { continue }
+                session.sessionData = try PersistenceJSON.encode(domain)
+            }
+            try modelContext.save()
+            sleepModeOffset += sessions.count
         }
 
         // Nightly biometric summaries.
-        for summary in try modelContext.fetch(FetchDescriptor<StoredNightlyBiometricSummary>()) {
-            await Task.yield()
-            guard let domain = try? summary.toDomain() else { continue }
-            summary.samplesData = try PersistenceJSON.encode(domain.samples)
+        var biometricOffset = 0
+        while true {
+            var descriptor = FetchDescriptor<StoredNightlyBiometricSummary>()
+            descriptor.fetchLimit = batchSize
+            descriptor.fetchOffset = biometricOffset
+            let summaries = try modelContext.fetch(descriptor)
+            if summaries.isEmpty { break }
+            for summary in summaries {
+                await Task.yield()
+                guard let domain = try? summary.toDomain() else { continue }
+                summary.samplesData = try PersistenceJSON.encode(domain.samples)
+            }
+            try modelContext.save()
+            biometricOffset += summaries.count
         }
 
         // User profile — onboarding assessment answers.
@@ -901,12 +944,24 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             let rewritten = try StoredProtocolFormulaVersion(domain: domain, ordinalIndex: row.ordinalIndex)
             row.bodyData = rewritten.bodyData
         }
-        for row in try modelContext.fetch(FetchDescriptor<StoredProtocolNightLog>()) {
-            await Task.yield()
-            guard let domain = try? row.toDomain() else { continue }
-            let rewritten = try StoredProtocolNightLog(domain: domain)
-            row.bodyData = rewritten.bodyData
+
+        var nightLogOffset = 0
+        while true {
+            var descriptor = FetchDescriptor<StoredProtocolNightLog>()
+            descriptor.fetchLimit = batchSize
+            descriptor.fetchOffset = nightLogOffset
+            let rows = try modelContext.fetch(descriptor)
+            if rows.isEmpty { break }
+            for row in rows {
+                await Task.yield()
+                guard let domain = try? row.toDomain() else { continue }
+                let rewritten = try StoredProtocolNightLog(domain: domain)
+                row.bodyData = rewritten.bodyData
+            }
+            try modelContext.save()
+            nightLogOffset += rows.count
         }
+
         for row in try modelContext.fetch(FetchDescriptor<StoredProtocolBaselineSnapshot>()) {
             guard let domain = try? row.toDomain() else { continue }
             let rewritten = try StoredProtocolBaselineSnapshot(domain: domain)
@@ -916,11 +971,21 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.save()
     }
 
+
     func fetchDataInventory() async throws -> LocalDataInventory {
-        let sessionDescriptor = FetchDescriptor<StoredSleepSession>(
+        let sleepSessionCount = try modelContext.fetchCount(FetchDescriptor<StoredSleepSession>())
+
+        var oldestDescriptor = FetchDescriptor<StoredSleepSession>(
             sortBy: [SortDescriptor(\.startDate)]
         )
-        let sessions = try modelContext.fetch(sessionDescriptor)
+        oldestDescriptor.fetchLimit = 1
+        let oldestSession = try modelContext.fetch(oldestDescriptor).first
+
+        var newestDescriptor = FetchDescriptor<StoredSleepSession>(
+            sortBy: [SortDescriptor(\.startDate, order: .reverse)]
+        )
+        newestDescriptor.fetchLimit = 1
+        let newestSession = try modelContext.fetch(newestDescriptor).first
 
         var contextDescriptor = FetchDescriptor<StoredSleepContextEntry>(
             sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
@@ -936,7 +1001,7 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         let protocolBaseline = try? await fetchBaselineSnapshot()
 
         return LocalDataInventory(
-            sleepSessionCount: sessions.count,
+            sleepSessionCount: sleepSessionCount,
             baselineCount: try modelContext.fetchCount(FetchDescriptor<StoredBaseline>()),
             alertCount: try modelContext.fetchCount(FetchDescriptor<StoredAlert>()),
             protocolAdherenceCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolAdherence>()),
@@ -948,8 +1013,8 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             contextEntryCount: contextCount,
             lastContextEntryDate: latestContextEntry?.updatedAt,
             lastSleepModeSessionDate: latestSleepModeSession?.startedAt,
-            oldestSessionDate: sessions.first?.startDate,
-            newestSessionDate: sessions.last?.startDate,
+            oldestSessionDate: oldestSession?.startDate,
+            newestSessionDate: newestSession?.startDate,
             protocolFormulaVersionCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolFormulaVersion>()),
             protocolNightLogCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolNightLog>()),
             protocolLogEditCount: try modelContext.fetchCount(FetchDescriptor<StoredProtocolLogEdit>()),

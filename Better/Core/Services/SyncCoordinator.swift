@@ -27,6 +27,7 @@ final class SyncCoordinator {
     private let alertService: AlertGenerationService
     private let notificationPreferencesStore: AlertNotificationPreferencesStoring
     private let calendar: Calendar
+    private var biomarkerBaselineService: BiomarkerBaselineService?
     private let logger = Logger(subsystem: "Better", category: "SyncCoordinator")
     private var observationTask: Task<Void, Never>?
 
@@ -53,6 +54,13 @@ final class SyncCoordinator {
         self.alertService = alertService
         self.notificationPreferencesStore = notificationPreferencesStore
         self.calendar = calendar
+    }
+
+    /// Wires the dashboard biomarker baseline service so post-sync runs can
+    /// invalidate its cache. Optional — set after construction from
+    /// `AppEnvironment` to avoid a circular DI dependency.
+    func setBiomarkerBaselineService(_ service: BiomarkerBaselineService) {
+        self.biomarkerBaselineService = service
     }
 
     func requestHealthAuthorization() async {
@@ -317,6 +325,14 @@ private extension SyncCoordinator {
             try await localRepository.saveAlerts(alerts)
         }
         try await saveMetadataDate(endDate, for: Self.lastDailyProcessingMetadataKey)
+
+        // Refresh the cached dashboard biomarker baseline once daily processing
+        // ran. The service itself short-circuits if the cache is still fresh,
+        // but a successful sync that lands new sessions is the one moment where
+        // a force-recompute is unambiguously worthwhile.
+        if let biomarkerBaselineService {
+            await biomarkerBaselineService.recompute(now: endDate)
+        }
     }
 
     func attachBiometrics(to session: SleepSession) async throws -> SleepSession {

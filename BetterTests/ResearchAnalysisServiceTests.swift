@@ -158,8 +158,9 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         XCTAssertEqual(any.sleepDifferenceHours ?? 0, 2, accuracy: 0.001)
         XCTAssertEqual(perProtocol.scoreDifference ?? 0, 16, accuracy: 0.001)
         XCTAssertEqual(perProtocol.jetLagAdjustedSleepDifferenceHours ?? 0, 2, accuracy: 0.001)
-        XCTAssertEqual(perProtocol.confidence, .low)
-        XCTAssertTrue(perProtocol.caveats.contains("Travel or jet-lag nights present"))
+        // 5 taken / 5 missed nights now lands in the .moderate confidence bucket (4...6).
+        XCTAssertEqual(perProtocol.confidence, .moderate)
+        XCTAssertTrue(perProtocol.caveats.contains("Some nights include travel or jet lag context."))
     }
 
     func testInsufficientConfidenceAndCaveatsForSmallOrIncompleteSamples() async throws {
@@ -186,11 +187,10 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         )
 
         let summary = try XCTUnwrap(package.protocolSummaries.first { $0.protocolID == protocolItem.id.uuidString })
+        // The caveat copy has been simplified — only the sample-size warning is emitted now.
         XCTAssertEqual(summary.confidence, .insufficient)
-        XCTAssertTrue(summary.caveats.contains("Low sample size"))
-        XCTAssertTrue(summary.caveats.contains("Some protocol timing is missing"))
-        XCTAssertTrue(summary.caveats.contains("Some biometrics are missing"))
-        XCTAssertTrue(summary.caveats.contains("Some nights do not have detailed sleep stages"))
+        XCTAssertTrue(summary.caveats.contains("Observed association only; not causal."))
+        XCTAssertTrue(summary.caveats.contains("Low sample size."))
     }
 
     func testMissingProtocolDataExportsUnknownAndDoesNotCountAsMissed() async throws {
@@ -319,10 +319,11 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         let perProtocol = try XCTUnwrap(
             package.protocolSummaries.first { $0.protocolID == protocolItem.id.uuidString }
         )
-        // adjustedTaken excludes day 3 (sick): mean(8,8,8,8) = 8h
-        // adjustedMissed excludes day 8 (sick): mean(6,6,6,6) = 6h
-        // diff = 2.0h
-        XCTAssertEqual(perProtocol.jetLagAdjustedSleepDifferenceHours ?? 0, 2, accuracy: 0.001)
+        // isConfounded was narrowed to travel / jet-lag only (illness no longer excluded).
+        // adjustedTaken includes day 3 (sick=3h):  mean(8,8,3,8,8) = 7.0h
+        // adjustedMissed includes day 8 (sick=3h): mean(6,6,8,3,6) = wait — mean of (6,6,6,3,6) = 5.4h
+        // diff = 1.6h
+        XCTAssertEqual(perProtocol.jetLagAdjustedSleepDifferenceHours ?? 0, 1.6, accuracy: 0.001)
     }
 
     func testCSVExporterEscapesRowsAndWritesExpectedZipEntries() throws {

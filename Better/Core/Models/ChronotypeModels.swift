@@ -223,3 +223,20 @@ nonisolated struct ChronotypeCalculationResult: Codable, Hashable, Sendable {
         self.windowEnd = windowEnd
     }
 }
+
+extension ChronotypeBucket {
+    var bodyClockDisplayName: String {
+        switch self {
+        case .early:
+            "Early Body Clock"
+        case .earlyIntermediate:
+            "Early-intermediate Body Clock"
+        case .intermediate:
+            "Intermediate Body Clock"
+        case .lateIntermediate:
+            "Late-intermediate Body Clock"
+        case .late:
+            "Late Body Clock"
+        }
+    }
+}

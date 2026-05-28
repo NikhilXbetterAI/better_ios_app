@@ -21,5 +21,11 @@ enum ProtocolPalette {
     static let borderColor = Color.white.opacity(0.09)
     static let borderStrColor = Color.white.opacity(0.16)
     static let brandColor = Color(hex: "#67E8F9")
+
+    // Unified sleep stage colors — used everywhere stages appear
+    static let deepColor   = Color(hex: "#818CF8")  // Indigo
+    static let remColor    = Color(hex: "#F472B6")  // Pink
+    static let lightColor  = Color(hex: "#60A5FA")  // Blue
+    static let awakeColor  = Color(hex: "#FB923C")  // Orange
 }
 

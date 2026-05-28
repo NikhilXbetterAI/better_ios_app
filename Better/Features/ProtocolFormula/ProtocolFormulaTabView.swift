@@ -110,7 +110,39 @@ struct ProtocolFormulaTabView: View {
         .task {
             guard !didCheckOnboarding else { return }
             didCheckOnboarding = true
-            showOnboarding = !userDefaults.bool(forKey: ProtocolFormulaHistoryOnboardingStorage.completedKey)
+            showOnboarding = await ProtocolFormulaOnboardingGate.shouldShowOnboarding(
+                userDefaults: userDefaults,
+                repository: localRepository
+            )
+        }
+    }
+}
+
+@MainActor
+enum ProtocolFormulaOnboardingGate {
+    static func shouldShowOnboarding(
+        userDefaults: UserDefaults,
+        repository: LocalDataRepositoryProtocol
+    ) async -> Bool {
+        let completedKey = ProtocolFormulaHistoryOnboardingStorage.completedKey
+        guard userDefaults.bool(forKey: completedKey) == false else {
+            return false
+        }
+
+        do {
+            let inventory = try await repository.fetchDataInventory()
+            if inventory.protocolFormulaVersionCount > 0 || inventory.protocolNightLogCount > 0 {
+                userDefaults.set(true, forKey: completedKey)
+                return false
+            }
+            return true
+        } catch {
+            // If inventory cannot be read, avoid sending an existing user into the
+            // history-painting flow where they could duplicate/overwrite protocol setup.
+            if let versions = try? await repository.fetchAllFormulaVersions(), !versions.isEmpty {
+                userDefaults.set(true, forKey: completedKey)
+            }
+            return false
         }
     }
 }

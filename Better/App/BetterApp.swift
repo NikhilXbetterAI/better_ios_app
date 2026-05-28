@@ -1,9 +1,26 @@
 import OSLog
 import SwiftData
 import SwiftUI
+import UIKit
+
+// MARK: - AppDelegate (orientation lock for landscape chart expand)
+
+class AppDelegate: NSObject, UIApplicationDelegate {
+    /// Set to `.landscape` before presenting the chart full-screen cover;
+    /// restore to `.portrait` on dismiss. All other screens stay portrait.
+    static var orientationLock: UIInterfaceOrientationMask = .portrait
+
+    func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        AppDelegate.orientationLock
+    }
+}
 
 @main
 struct BetterApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var bootState: BootState
