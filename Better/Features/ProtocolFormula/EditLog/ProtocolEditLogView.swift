@@ -7,35 +7,43 @@ struct ProtocolEditLogView: View {
     private let weekdays = ["M", "T", "W", "T", "F", "S", "S"]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: BetterSpacing.section) {
-                // Month switcher
-                monthHeader
+        ZStack(alignment: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: BetterSpacing.section) {
+                    // Month switcher
+                    monthHeader
 
-                // Legend
-                legend
+                    // Legend
+                    legend
 
-                // Calendar grid
-                VStack(spacing: 8) {
-                    weekdayHeader
-                    calendarGrid
+                    // Calendar grid
+                    VStack(spacing: 8) {
+                        weekdayHeader
+                        calendarGrid
+                    }
+                    .padding(12)
+                    .background(ProtocolPalette.surfaceColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
+
+                    // Bulk shortcut
+                    if !viewModel.isMultiSelectMode, let active = viewModel.activeVersion, !viewModel.selectableVersions.isEmpty {
+                        bulkActionButton(active: active)
+                    }
+
+                    // Log editor
+                    if !viewModel.isMultiSelectMode, let key = viewModel.selectedDateKey {
+                        editor(for: key)
+                    }
                 }
-                .padding(12)
-                .background(ProtocolPalette.surfaceColor)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
-
-                // Bulk shortcut
-                if let active = viewModel.activeVersion, !viewModel.selectableVersions.isEmpty {
-                    bulkActionButton(active: active)
-                }
-
-                // Log editor
-                if let key = viewModel.selectedDateKey {
-                    editor(for: key)
-                }
+                .padding(BetterSpacing.screen)
             }
-            .padding(BetterSpacing.screen)
+            .contentMargins(.bottom, viewModel.isMultiSelectMode ? 100 : 20, for: .scrollContent)
+            
+            if viewModel.isMultiSelectMode && !viewModel.selectedDateKeys.isEmpty {
+                bulkActionBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .background(ProtocolPalette.backgroundColor.ignoresSafeArea())
         .task { await viewModel.onAppear() }
@@ -58,6 +66,15 @@ struct ProtocolEditLogView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will overwrite any existing logs for the past 7 days with the active formula.")
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(viewModel.isMultiSelectMode ? "Cancel" : "Select") {
+                    withAnimation {
+                        viewModel.toggleMultiSelectMode()
+                    }
+                }
+            }
         }
     }
 
@@ -178,9 +195,16 @@ struct ProtocolEditLogView: View {
                 let key = ProtocolEditLogViewModel.dateKey(for: date)
                 let log = viewModel.logs[key]
                 Button {
-                    viewModel.select(dateKey: key)
+                    if viewModel.isMultiSelectMode {
+                        viewModel.toggleDateSelection(key)
+                    } else {
+                        viewModel.select(dateKey: key)
+                    }
                 } label: {
-                    cell(date: date, log: log, isSelected: viewModel.selectedDateKey == key)
+                    let isSelected = viewModel.isMultiSelectMode
+                        ? viewModel.selectedDateKeys.contains(key)
+                        : viewModel.selectedDateKey == key
+                    cell(date: date, log: log, isSelected: isSelected)
                 }
                 .buttonStyle(.plain)
                 .disabled(ProtocolEditLogViewModel.isFuture(date))
@@ -198,9 +222,18 @@ struct ProtocolEditLogView: View {
         let status = log?.status
 
         return VStack(spacing: 4) {
-            Text("\(day)")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(isFuture ? ProtocolPalette.dimText : BetterColors.text)
+            ZStack(alignment: .topTrailing) {
+                Text("\(day)")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(isFuture ? ProtocolPalette.dimText : BetterColors.text)
+                
+                if viewModel.isMultiSelectMode && isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(ProtocolPalette.goodColor)
+                        .offset(x: 10, y: -2)
+                }
+            }
 
             HStack(spacing: 3) {
                 switch status {
@@ -379,6 +412,30 @@ struct ProtocolEditLogView: View {
                     .buttonStyle(.plain)
             }
             
+            // Supplement quick-add chips
+            let recents = viewModel.recentAddins
+            if !recents.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(recents) { addin in
+                            Button {
+                                viewModel.addQuickAddin(addin)
+                            } label: {
+                                Text("+ \(addin.name)")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(ProtocolPalette.mutedText)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Capsule().fill(Color.white.opacity(0.04)))
+                                    .overlay(Capsule().stroke(ProtocolPalette.borderColor, lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            
             if !viewModel.draftAddins.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -405,7 +462,61 @@ struct ProtocolEditLogView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(ProtocolPalette.addinColor.opacity(0.24), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                .stroke(ProtocolPalette.borderColor, lineWidth: 1)
         )
+    }
+    private var bulkActionBar: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("\(viewModel.selectedDateKeys.count) days selected")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(BetterColors.text)
+                Spacer()
+            }
+            
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(viewModel.selectableVersions) { version in
+                        Button(version.resolvedLabel) {
+                            Task {
+                                await viewModel.markSelectedDatesTaken(versionID: version.id)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text("Mark Taken")
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(Capsule().fill(ProtocolPalette.goodColor))
+                    .foregroundStyle(Color.black)
+                }
+                
+                Button {
+                    Task {
+                        await viewModel.markSelectedDatesSkipped()
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "moon.zzz.fill")
+                        Text("Skipped")
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                    .foregroundStyle(BetterColors.text)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(BetterSpacing.medium)
+        .background(Color.black.opacity(0.85))
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(ProtocolPalette.borderColor, lineWidth: 1))
+        .padding(BetterSpacing.screen)
+        .shadow(color: Color.black.opacity(0.4), radius: 10, y: 5)
     }
 }

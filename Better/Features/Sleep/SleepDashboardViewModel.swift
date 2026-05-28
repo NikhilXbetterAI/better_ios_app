@@ -17,6 +17,7 @@ final class SleepDashboardViewModel {
     var selectedMonth: Date
     var selectedSession: SleepSession?
     var selectedBaseline: SleepBaseline?
+    var selectedContextEntry: SleepContextEntry?
     var recentSessions: [SleepSession] = []
     var selectedMonthSummaries: [SleepDaySummary] = []
     var dataQuality: SleepDataQuality = .noData
@@ -36,6 +37,12 @@ final class SleepDashboardViewModel {
 
     var isViewingToday: Bool {
         selectedSleepDateKey == SleepDateKey.today(calendar: calendar)
+    }
+
+    /// Pre-sorted by ascending end date. Computed once here so views never
+    /// call `.sorted { }` on the raw array (which re-runs O(n log n) on every render).
+    var sortedRecentSessions: [SleepSession] {
+        recentSessions.sorted { $0.endDate < $1.endDate }
     }
 
     var baselineConfidenceLabel: String? {
@@ -69,10 +76,12 @@ final class SleepDashboardViewModel {
             return .noSleepStages
         }
 
-        // Baseline still building.
+        // Baseline still building — use the same threshold as every other
+        // baseline-gated surface so the banner and card agree.
         let nightsLogged = selectedBaseline?.validNights ?? 0
-        if nightsLogged < 7 {
-            return .baselineBuilding(nightsLogged: nightsLogged, nightsNeeded: 7)
+        let needed = BaselineEngine.dashboardMinimumValidNights
+        if nightsLogged < needed {
+            return .baselineBuilding(nightsLogged: nightsLogged, nightsNeeded: needed)
         }
 
         return nil
@@ -154,6 +163,7 @@ final class SleepDashboardViewModel {
             let profile = try await localRepository.fetchProfile()
             let loadedBaseline = try await baseline(asOfSleepDateKey: loadKey, windowDays: profile.baselineWindowDays)
             let loadedRecentSessions = try await loadRecentSessions(endingAt: loadKey, selectedSession: loadedSession)
+            let loadedContextEntry = try await localRepository.fetchContextEntry(forSleepDateKey: loadKey)
             guard selectedSleepDateKey == loadKey else { return }
 
             selectedSession = loadedSession
@@ -161,6 +171,7 @@ final class SleepDashboardViewModel {
             displayName = profile.displayName
             selectedBaseline = loadedBaseline
             recentSessions = loadedRecentSessions
+            selectedContextEntry = loadedContextEntry
             let loadedSleepInsights = try await buildSleepInsights()
             let loadedBodyClockResult = try await loadBodyClockResult(endingAtSleepDateKey: loadKey)
             let loadedBodyClockAlignment = Self.bodyClockAlignment(

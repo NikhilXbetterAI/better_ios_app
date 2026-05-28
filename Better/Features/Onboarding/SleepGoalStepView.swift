@@ -39,6 +39,8 @@ struct SleepGoalStepView: View {
                     Slider(value: $sleepGoalHours, in: 6...10, step: 0.25)
                         .tint(arcColor)
                         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: arcColor == BetterColors.success)
+                        .accessibilityLabel("Sleep goal")
+                        .accessibilityValue("\(String(format: "%.1f", sleepGoalHours)) hours")
 
                     HStack {
                         Text("6h")

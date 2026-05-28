@@ -45,7 +45,7 @@ final class BetterTests: XCTestCase {
     func testAppEnvironmentPreviewBuilds() {
         let environment = AppEnvironment.preview()
         // Verify the primary shell tabs are defined
-        XCTAssertEqual(AppTab.allCases.map(\.title), ["Sleep", "Insights", "Protocol"])
+        XCTAssertEqual(AppTab.allCases.map(\.title), ["Sleep", "Insights", "Protocol", "Settings"])
         // Verify the preview environment exposes the sync coordinator
         XCTAssertNotNil(environment.syncCoordinator)
         // Verify the preview environment exposes disabled background infrastructure.

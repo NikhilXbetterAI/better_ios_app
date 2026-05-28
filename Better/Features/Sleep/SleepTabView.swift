@@ -22,8 +22,13 @@ struct SleepTabView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            // Score computed once here so backgroundLayer and sessionContent
+            // share the same value — not recomputed inside GeometryReader callbacks.
+            let precomputedScore = viewModel.selectedSession.map {
+                healthSleepScore(for: $0)
+            }
             ZStack {
-                backgroundLayer(screenHeight: geometry.size.height)
+                backgroundLayer(screenHeight: geometry.size.height, precomputedScore: precomputedScore)
                 mainContent
             }
         }
@@ -90,11 +95,11 @@ struct SleepTabView: View {
     // MARK: - Background
 
     @ViewBuilder
-    private func backgroundLayer(screenHeight: CGFloat) -> some View {
+    private func backgroundLayer(screenHeight: CGFloat, precomputedScore: HealthSleepScoreEstimate?) -> some View {
         ZStack {
             Color.black
-            if let session = viewModel.selectedSession {
-                let color = scoreColor(healthSleepScore(for: session).overall)
+            if let score = precomputedScore {
+                let color = scoreColor(score.overall)
                 RadialGradient(
                     colors: [color.opacity(0.16), color.opacity(0.05), .clear],
                     center: .init(x: 0.5, y: 0.0),
@@ -129,7 +134,10 @@ struct SleepTabView: View {
                 heroSection(session: session, score: score)
                     .offset(x: swipeDelta * 0.06)
 
-                VStack(spacing: BetterSpacing.medium) {
+                // Cards column — sections are grouped into VStack(spacing:0) so
+                // headers are visually attached to their card (not floating apart).
+                // Sections are separated by BetterSpacing.section (26pt).
+                VStack(spacing: BetterSpacing.section) {
                     SleepModeLauncherView(
                         schedule: sleepModeViewModel.schedule,
                         onOpen: { showSleepMode = true }
@@ -137,46 +145,54 @@ struct SleepTabView: View {
                     .onLongPressGesture(minimumDuration: 0.4) {
                         showSleepModeSchedule = true
                     }
-
-                    HStack {
-                        Text("Sleep Stages")
-                            .font(BetterTypography.title)
-                            .foregroundStyle(BetterColors.text)
-                        Spacer()
-                    }
-                    .padding(.top, BetterSpacing.small)
+                    .frame(maxWidth: .infinity)
 
                     let activeBaseline: SleepBaseline? = {
                         guard let b = viewModel.selectedBaseline,
                               b.validNights >= BaselineEngine.dashboardMinimumValidNights else { return nil }
                         return b
                     }()
-                    SleepStagesCard(
-                        session: session,
-                        baseline: activeBaseline,
-                        recentSessions: viewModel.recentSessions
-                    )
 
-                    if activeBaseline == nil {
-                        baselineNotReadyCard
+                    // Sleep Stages section — header pinned to card
+                    VStack(alignment: .leading, spacing: 8) {
+                        dashboardSectionHeader("Sleep Stages")
+                        SleepStagesCard(
+                            session: session,
+                            baseline: activeBaseline,
+                            recentSessions: viewModel.sortedRecentSessions
+                        )
+                        .frame(maxWidth: .infinity)
+                        if activeBaseline == nil {
+                            baselineNotReadyCard
+                                .frame(maxWidth: .infinity)
+                        }
                     }
 
-                    HStack {
-                        Text("Longest uninterrupted sleep")
-                            .font(BetterTypography.title)
-                            .foregroundStyle(BetterColors.text)
-                        Spacer()
+                    // Longest stretch section
+                    VStack(alignment: .leading, spacing: 8) {
+                        dashboardSectionHeader("Longest Stretch")
+                        LongestSleepBlockCard(session: session)
+                            .frame(maxWidth: .infinity)
                     }
-                    .padding(.top, BetterSpacing.small)
-
-                    LongestSleepBlockCard(session: session)
 
                     if let fallback = viewModel.healthKitFallbackState {
                         HealthKitFallbackBannerView(state: fallback)
+                            .frame(maxWidth: .infinity)
                     }
 
-                    if let biometrics = session.biometrics {
-                        biometricsCard(biometrics: biometrics)
+                    // Biomarkers section — always shown. When the session has no
+                    // HK biometric data (e.g. iPhone-only tracking), we pass an
+                    // empty summary so SleepBiomarkerReactionsCard can render its
+                    // own "no readings captured tonight" state instead of hiding
+                    // the entire section.
+                    let bioForCard = session.biometrics ?? NightlyBiometricSummary(
+                        sleepSessionID: session.id,
+                        sleepDateKey: session.sleepDateKey
+                    )
+                    VStack(alignment: .leading, spacing: 8) {
+                        dashboardSectionHeader("Biomarkers")
+                        biometricsCard(biometrics: bioForCard)
+                            .frame(maxWidth: .infinity)
                     }
 
                     if let error = viewModel.errorMessage {
@@ -321,7 +337,8 @@ struct SleepTabView: View {
     private func scoreRingHero(session: SleepSession, score: HealthSleepScoreEstimate) -> some View {
         let color = scoreColor(score.overall)
         let fillEnd = 0.15 + 0.70 * (Double(score.overall) / 100.0)
-        let isPartial = (viewModel.selectedBaseline?.validNights ?? 0) < 5
+        let isPartial = session.qualityScore.isPartial  // true only when dataQuality == .unspecifiedSleepOnly
+        let baselineBuilding = !isPartial && (viewModel.selectedBaseline?.validNights ?? 0) < BaselineEngine.dashboardMinimumValidNights
 
         return ZStack(alignment: .center) {
             // Soft glow bloom behind the ring
@@ -332,18 +349,19 @@ struct SleepTabView: View {
                     .blur(radius: 40)
             }
 
-            // Tick marks dial between concentric rings
+            // Tick marks dial between concentric rings.
+            // Pre-filtered to exclude the 45°–135° bottom gap (43 ticks vs 60).
+            let tickIndices: [Int] = (0..<60).filter { i in
+                let a = Double(i) * 6.0; return a < 45 || a > 135
+            }
             ZStack {
-                // Ticks matching 240° arc (excluding bottom gap 45° to 135°)
-                ForEach(0..<60) { index in
+                ForEach(tickIndices, id: \.self) { index in
                     let angle = Double(index) * 6.0
-                    if angle < 45 || angle > 135 {
-                        Rectangle()
-                            .fill(Color.white.opacity(index % 5 == 0 ? 0.12 : 0.04))
-                            .frame(width: index % 5 == 0 ? 1.5 : 1, height: index % 5 == 0 ? 8 : 4)
-                            .offset(y: -118)
-                            .rotationEffect(.degrees(angle))
-                    }
+                    Rectangle()
+                        .fill(Color.white.opacity(index % 5 == 0 ? 0.12 : 0.04))
+                        .frame(width: index % 5 == 0 ? 1.5 : 1, height: index % 5 == 0 ? 8 : 4)
+                        .offset(y: -118)
+                        .rotationEffect(.degrees(angle))
                 }
             }
 
@@ -369,13 +387,16 @@ struct SleepTabView: View {
                     .stroke(color.opacity(0.10), style: StrokeStyle(lineWidth: 14, lineCap: .round))
                     .rotationEffect(.degrees(90))
 
-                // Neon blur glow arc
+                // Neon blur glow arc — compositingGroup() isolates the layer so
+                // Core Animation rasterizes it independently, avoiding per-frame
+                // parent-context compositing during the trim animation.
                 Circle()
                     .trim(from: 0.15, to: heroAppeared ? fillEnd : 0.15)
                     .stroke(color, style: StrokeStyle(lineWidth: 14, lineCap: .round))
                     .rotationEffect(.degrees(90))
-                    .blur(radius: 8)
-                    .opacity(reduceMotion ? 0 : 0.28)
+                    .compositingGroup()
+                    .blur(radius: 6)
+                    .opacity(reduceMotion ? 0 : 0.22)
                     .animation(reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.72).delay(0.12), value: heroAppeared)
 
                 // Foreground active progress arc
@@ -405,6 +426,12 @@ struct SleepTabView: View {
                     .shadow(color: reduceMotion ? .clear : color, radius: 4, x: 0, y: 0)
                     .scaleEffect(reduceMotion ? 1.0 : (dotPulse ? 1.35 : 0.95))
                     .opacity(reduceMotion ? 1.0 : (dotPulse ? 1.0 : 0.7))
+                    // Animation scoped directly to this view so it doesn't
+                    // invalidate sibling ring layers on every pulse frame.
+                    .animation(
+                        reduceMotion ? nil : .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                        value: dotPulse
+                    )
                     .offset(x: 106, y: 0)
                     .rotationEffect(.degrees(360.0 * (heroAppeared ? fillEnd : 0.15) + 90.0))
                     .animation(reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.72).delay(0.12), value: heroAppeared)
@@ -441,6 +468,10 @@ struct SleepTabView: View {
                         Text("partial data")
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundStyle(BetterColors.subtext.opacity(0.6))
+                    } else if baselineBuilding {
+                        Text("bedtime score building")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(BetterColors.subtext.opacity(0.5))
                     }
                 }
             }
@@ -449,19 +480,9 @@ struct SleepTabView: View {
         }
         .contentShape(Rectangle())
         .frame(minWidth: 44, minHeight: 44)
-        // Long-press on the ring reveals the duration/bedtime/wakeups breakdown.
-        // (The always-visible "Score details" pill was removed to declutter the hero.)
-        .onLongPressGesture(minimumDuration: 0.4) {
-            #if canImport(UIKit)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            #endif
-            withAnimation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.78)) {
-                showScoreBreakdown = true
-            }
-        }
-        .accessibilityHint("Long-press to see score breakdown")
+        .accessibilityHint("Tap Score details to see breakdown")
         .popover(isPresented: $showScoreBreakdown, arrowEdge: .top) {
-            scoreBreakdownPopover(score: score)
+            scoreBreakdownPopover(score: score, session: session)
                 .presentationCompactAdaptation(.popover)
         }
         .onAppear {
@@ -469,9 +490,9 @@ struct SleepTabView: View {
                 heroAppeared = true
             } else {
                 withAnimation { heroAppeared = true }
-                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                    dotPulse = true
-                }
+                // No withAnimation wrapper — pulse animation is scoped directly
+                // on the dot view via the .animation(value:) modifier above.
+                dotPulse = true
             }
         }
         .onChange(of: viewModel.selectedSleepDateKey) { _, _ in
@@ -488,29 +509,95 @@ struct SleepTabView: View {
     }
 
     @ViewBuilder
-    private func scoreBreakdownPopover(score: HealthSleepScoreEstimate) -> some View {
+    private func scoreBreakdownPopover(score: HealthSleepScoreEstimate, session: SleepSession) -> some View {
+        let hasStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
+        let travelExempt = viewModel.selectedContextEntry?.travel == true
+
         VStack(alignment: .leading, spacing: BetterSpacing.medium) {
             Text("Score details")
                 .font(BetterTypography.subheadline)
                 .foregroundStyle(BetterColors.text)
-            HStack(spacing: 16) {
-                scoreBreakdownPill(label: "Duration", value: "\(score.duration)/50")
-                Rectangle()
-                    .fill(BetterColors.border)
-                    .frame(width: 1, height: 20)
-                scoreBreakdownPill(label: "Bedtime", value: "\(score.bedtime)/30")
-                Rectangle()
-                    .fill(BetterColors.border)
-                    .frame(width: 1, height: 20)
-                scoreBreakdownPill(label: "Continuity", value: "\(score.interruptions)/20")
+
+            // Four-component pill row (detailedStages); three-component when partial
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    scoreBreakdownPill(label: "Duration", value: "\(score.duration)/\(hasStages ? 40 : 50)")
+                    pillDivider
+                    // Bedtime: locked, travel-exempt, or scored
+                    if travelExempt {
+                        HStack(spacing: 4) {
+                            Image(systemName: "airplane").font(.system(size: 9))
+                                .foregroundStyle(BetterColors.brand)
+                            scoreBreakdownPill(label: "Bedtime", value: "exempt")
+                        }
+                    } else if viewModel.baselineIsBuilding {
+                        lockedScorePill(label: "Bedtime", maxPts: 25)
+                    } else {
+                        scoreBreakdownPill(label: "Bedtime", value: "\(score.bedtime)/25")
+                    }
+                    pillDivider
+                    scoreBreakdownPill(label: "Continuity", value: "\(score.interruptions)/\(hasStages ? 15 : 30)")
+                    if hasStages {
+                        pillDivider
+                        scoreBreakdownPill(label: "Restorative", value: "\(score.restorative)/20")
+                    }
+                }
             }
-            Text("Duration counts up to 50 points against your sleep goal. Bedtime consistency adds up to 30 points once your personal baseline is ready (5 nights). Continuity adds up to 20 points based on time awake overnight.")
+
+            // Recovery index row — surfaces deep+REM-weighted SleepQualityScore
+            if hasStages {
+                Divider().padding(.vertical, 2)
+                HStack(spacing: 8) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(BetterColors.stageDeep)
+                    Text("Recovery index")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(BetterColors.subtext)
+                    Spacer()
+                    Text("\(Int(session.qualityScore.overall.rounded()))")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(BetterColors.text)
+                    Text("/ 100  ·  deep+REM weighted")
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(BetterColors.subtext)
+                }
+            }
+
+            Text(hasStages
+                 ? "Duration 40 · Bedtime 25 · Continuity 15 · Restorative 20. Bedtime unlocks after \(BaselineEngine.dashboardMinimumValidNights) nights. Restorative scores deep+REM vs your baseline."
+                 : "Duration 50 · Continuity 30. Stage data unavailable — score is partial.")
                 .font(BetterTypography.micro)
                 .foregroundStyle(BetterColors.subtext)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(BetterSpacing.large)
         .frame(minWidth: 280)
+    }
+
+    private var pillDivider: some View {
+        Rectangle()
+            .fill(BetterColors.border)
+            .frame(width: 1, height: 20)
+    }
+
+    private func lockedScorePill(label: String, maxPts: Int) -> some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 4) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(BetterColors.subtext.opacity(0.5))
+                Text("—/\(maxPts)")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(BetterColors.subtext.opacity(0.5))
+            }
+            Text(label)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext.opacity(0.4))
+            Text("unlocks at \(BaselineEngine.dashboardMinimumValidNights)n")
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.brand.opacity(0.6))
+        }
     }
 
     private func scoreBreakdownPill(label: String, value: String) -> some View {
@@ -562,41 +649,39 @@ struct SleepTabView: View {
         .accessibilityLabel(text)
     }
 
-    /// Compose a soft, plain-language insight from the body-clock midpoint
-    /// alignment and the bedtime shift vs baseline. Returns `nil` when there's
-    /// nothing meaningful to say (no alignment + no baseline shift).
-    private func sleepInsightText(
-        alignment: BodyClockSleepAlignment?,
-        session: SleepSession,
-        baseline: SleepBaseline?
-    ) -> String? {
-        var parts: [String] = []
-
-        if let alignment {
-            let delta = alignment.signedDeltaMinutes
-            let absDelta = abs(delta)
-            if absDelta <= 10 {
-                parts.append("Timing was steady.")
-            } else {
-                let direction = delta < 0 ? "earlier" : "later"
-                let formatted = absDelta >= 60
-                    ? "\(absDelta / 60)h \(absDelta % 60)m"
-                    : "\(absDelta) min"
-                parts.append("Timing was \(formatted) \(direction) than your body clock.")
-            }
+    /// Body-clock alignment sentence (separate from bedtime-vs-baseline).
+    /// Includes a low-confidence caveat when the chronotype estimate is early.
+    private func bodyClockInsightLine(alignment: BodyClockSleepAlignment?) -> String? {
+        guard let alignment else { return nil }
+        let delta = alignment.signedDeltaMinutes
+        let absDelta = abs(delta)
+        var line: String
+        if absDelta <= 10 {
+            line = "Timing was steady vs your body clock."
+        } else {
+            let direction = delta < 0 ? "earlier" : "later"
+            let formatted = absDelta >= 60
+                ? "\(absDelta / 60)h \(absDelta % 60)m"
+                : "\(absDelta)m"
+            line = "Timing was \(formatted) \(direction) than your body clock."
         }
-
-        if let bedtimeDelta = bedtimeShiftMinutes(session: session, baseline: baseline),
-           abs(bedtimeDelta) >= 10 {
-            let direction = bedtimeDelta < 0 ? "earlier" : "later"
-            let absBed = abs(bedtimeDelta)
-            let formatted = absBed >= 60
-                ? "\(absBed / 60)h \(absBed % 60)m"
-                : "\(absBed) min"
-            parts.append("Bedtime was \(formatted) \(direction) than usual.")
+        // Low-confidence caveat — insufficientData or estimated with minimal nights
+        // (freeDayNightCount ≥ 3 is the minimum; estimate can swing ±2h at that level)
+        if let result = viewModel.bodyClockResult,
+           result.status == .estimated, result.freeDayNightCount < 7 {
+            line += " (early estimate)"
         }
+        return line
+    }
 
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    /// Bedtime vs personal baseline sentence. Separate reference point from body clock.
+    private func bedtimeInsightLine(session: SleepSession, baseline: SleepBaseline?) -> String? {
+        guard let bedtimeDelta = bedtimeShiftMinutes(session: session, baseline: baseline),
+              abs(bedtimeDelta) >= 10 else { return nil }
+        let direction = bedtimeDelta < 0 ? "earlier" : "later"
+        let abs = Swift.abs(bedtimeDelta)
+        let formatted = abs >= 60 ? "\(abs / 60)h \(abs % 60)m" : "\(abs)m"
+        return "Bedtime was \(formatted) \(direction) than your usual."
     }
 
     /// Plain-text version of the primary recommendation. Used by `combinedInsightLine`
@@ -617,30 +702,55 @@ struct SleepTabView: View {
         return "Keep timing steady and avoid adding extra variables."
     }
 
-    /// Renders a single combined observation + recommendation line under the
-    /// score ring (the older design stacked these as two separate rows, which
-    /// felt redundant). Emits nothing when there is no observation worth
-    /// surfacing AND no specific recommendation.
+    /// Single observation + recommendation under the score ring.
+    ///
+    /// Shows at most two lines so the hero never looks like a notification stack:
+    ///   Line 1 — the single most relevant observation: body-clock alignment if
+    ///             available, otherwise bedtime-vs-baseline, otherwise nothing.
+    ///   Line 2 — an actionable recommendation (always shown).
+    ///
+    /// Bedtime-vs-baseline is suppressed when a body-clock line is already shown
+    /// because both reference sleep timing from the same night — showing both
+    /// would look like duplicate alerts to the user.
     @ViewBuilder
     private func combinedInsightLine(session: SleepSession, score: HealthSleepScoreEstimate) -> some View {
-        let observation = sleepInsightText(
-            alignment: viewModel.selectedSleepBodyClockAlignment,
-            session: session,
-            baseline: viewModel.selectedBaseline
-        )
-        let recommendation = recommendationText(session: session, score: score)
+        let clockLine = bodyClockInsightLine(alignment: viewModel.selectedSleepBodyClockAlignment)
+        let bedLine   = bedtimeInsightLine(session: session, baseline: viewModel.selectedBaseline)
+        let rec       = recommendationText(session: session, score: score)
         let tint = viewModel.selectedSleepBodyClockAlignment
             .map { bodyClockAlignmentColor($0.category) } ?? scoreColor(score.overall)
-        let combined: String = {
-            if let obs = observation { return "\(obs) \(recommendation)" }
-            return recommendation
-        }()
-        sleepInsightLine(text: combined, tint: tint)
+
+        // Pick the single primary observation: clock wins, bed as fallback.
+        let primaryLine: String? = clockLine ?? bedLine
+        let primaryTint: Color   = clockLine != nil ? tint : BetterColors.warning.opacity(0.85)
+
+        VStack(spacing: 4) {
+            if let primaryLine {
+                sleepInsightLine(text: primaryLine, tint: primaryTint)
+            }
+            sleepInsightLine(text: rec, tint: tint.opacity(0.7))
+        }
     }
 
     // `primaryRecommendationLine` was retired — its text is now folded into
     // `combinedInsightLine` so the hero shows one observation+recommendation
     // line instead of two stacked rows. The text source is `recommendationText`.
+
+    /// Section header used throughout the dashboard. Height is fixed so the
+    /// header is always flush against the card below it — no floating gap.
+    private func dashboardSectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(BetterTypography.title)
+            .foregroundStyle(BetterColors.text)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func dataSourceIcon(for session: SleepSession) -> String {
+        let name = (session.sources.first?.name ?? "").lowercased()
+        if name.contains("watch") { return "applewatch" }
+        if name.contains("iphone") || name.contains("phone") { return "iphone" }
+        return "waveform.path.ecg"   // generic health fallback for third-party or manual
+    }
 
     private func dataSourceLine(session: SleepSession) -> some View {
         let source = session.sources.first?.name ?? "Apple Health"
@@ -662,7 +772,7 @@ struct SleepTabView: View {
         let text = "\(source) · \(stageText) · \(syncedText)"
 
         return HStack(spacing: 6) {
-            Image(systemName: "applewatch")
+            Image(systemName: dataSourceIcon(for: session))
                 .font(.system(size: 11, weight: .semibold))
             Text(text)
                 .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -689,127 +799,6 @@ struct SleepTabView: View {
         if diff > 720 { diff -= 1440 }
         if diff < -720 { diff += 1440 }
         return Int(diff.rounded())
-    }
-
-    private func stageRingsRow(session: SleepSession) -> some View {
-        HStack(spacing: 0) {
-            stageRing(label: "Awake", duration: session.awakeDuration, total: session.totalSleepTime, color: BetterColors.stageAwake)
-            stageRing(label: "Light", duration: session.coreDuration, total: session.totalSleepTime, color: BetterColors.stageCore)
-            stageRing(label: "Deep", duration: session.deepDuration, total: session.totalSleepTime, color: BetterColors.stageDeep)
-            stageRing(label: "REM", duration: session.remDuration, total: session.totalSleepTime, color: BetterColors.stageREM)
-        }
-    }
-
-    private func stageRing(label: String, duration: TimeInterval, total: TimeInterval, color: Color) -> some View {
-        let pct = total > 0 ? min(duration / total, 1.0) : 0.0
-        return VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .stroke(color.opacity(0.16), lineWidth: 6)
-                Circle()
-                    .trim(from: 0, to: heroAppeared ? CGFloat(pct) : 0)
-                    .stroke(
-                        AngularGradient(
-                            colors: [color, color.opacity(0.5)],
-                            center: .center,
-                            startAngle: .degrees(-90),
-                            endAngle: .degrees(270)
-                        ),
-                        style: StrokeStyle(lineWidth: 6, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .animation(.spring(response: 0.8, dampingFraction: 0.72).delay(0.32), value: heroAppeared)
-                Text("\(Int((pct * 100).rounded()))%")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(color)
-            }
-            .frame(width: 68, height: 68)
-            Text(formatDuration(duration))
-                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
-                .foregroundStyle(BetterColors.text)
-            Text(label)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func plainContinuityCard(session: SleepSession) -> some View {
-        let summary = session.continuitySummary
-        let color = continuityColor(for: summary.continuityCategory)
-
-        return VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("LONGEST STRETCH")
-                        .font(BetterTypography.micro)
-                        .foregroundStyle(BetterColors.subtext)
-                        .tracking(1.2)
-                    Text(formatDuration(summary.longestBlockDuration))
-                        .font(.system(size: 38, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(color)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("\(summary.blocks.count)")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(BetterColors.text)
-                    Text("sleep stretch\(summary.blocks.count == 1 ? "" : "es")")
-                        .font(BetterTypography.micro)
-                        .foregroundStyle(BetterColors.subtext)
-                }
-            }
-
-            HStack(alignment: .top, spacing: BetterSpacing.small) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color)
-                    .frame(width: 3)
-                Text(continuityMessage(for: summary))
-                    .font(BetterTypography.caption)
-                    .foregroundStyle(BetterColors.text)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(minHeight: 32, alignment: .leading)
-        }
-        .padding(BetterSpacing.large)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.black)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(BetterColors.glassStroke, lineWidth: 1))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(continuityMessage(for: summary))
-    }
-
-    private func continuityMessage(for summary: SleepContinuitySummary) -> String {
-        switch summary.continuityCategory {
-        case .unavailable:
-            return "Not enough stage data to show your longest sleep stretch."
-        case .exceptional:
-            return "You had a very long stretch of sleep without a meaningful wake-up."
-        case .strong:
-            return "You had one long stretch of sleep before a meaningful wake-up."
-        case .good:
-            return "You had a solid stretch of sleep before waking."
-        case .moderatelyFragmented:
-            return "Your sleep was broken into a few shorter stretches."
-        case .highlyFragmented:
-            return "Your sleep was broken up often overnight."
-        }
-    }
-
-    private func continuityColor(for category: SleepContinuityCategory) -> Color {
-        switch category {
-        case .exceptional, .strong:
-            return BetterColors.success
-        case .good:
-            return BetterColors.brand
-        case .moderatelyFragmented:
-            return BetterColors.warning
-        case .highlyFragmented:
-            return BetterColors.danger
-        case .unavailable:
-            return BetterColors.subtext
-        }
     }
 
     // MARK: - Baseline placeholder
@@ -842,14 +831,10 @@ struct SleepTabView: View {
 
     private func biometricsCard(biometrics: NightlyBiometricSummary) -> some View {
         VStack(alignment: .leading, spacing: BetterSpacing.small) {
-            Text("Biomarkers")
-                .font(BetterTypography.title)
-                .foregroundStyle(BetterColors.text)
-                .padding(.horizontal, 4)
             BiomarkerSourceRow(provenance: viewModel.biomarkerProvenance)
             SleepBiomarkerReactionsCard(
                 biometrics: biometrics,
-                recentSessions: viewModel.recentSessions,
+                recentSessions: viewModel.sortedRecentSessions,
                 baseline: viewModel.biomarkerBaseline,
                 reactions: viewModel.biomarkerReactions,
                 readiness: viewModel.biomarkerReadiness,
@@ -899,6 +884,7 @@ struct SleepTabView: View {
         .accessibilityLabel("Profile")
     }
 
+
     private var profileInitial: String {
         guard let name = viewModel.displayName?.trimmedNonEmpty, let first = name.first else {
             return "B"
@@ -909,7 +895,12 @@ struct SleepTabView: View {
     // MARK: - Score Helpers
 
     private func healthSleepScore(for session: SleepSession) -> HealthSleepScoreEstimate {
-        HealthSleepScoreEstimator.estimate(session: session, baseline: viewModel.selectedBaseline, sleepGoalHours: viewModel.sleepGoalHours)
+        HealthSleepScoreEstimator.estimate(
+            session: session,
+            baseline: viewModel.selectedBaseline,
+            sleepGoalHours: viewModel.sleepGoalHours,
+            contextEntry: viewModel.selectedContextEntry
+        )
     }
 
     private func scoreColor(_ score: Int) -> Color {
@@ -1288,7 +1279,7 @@ private struct SleepLatencyGaugeView: View {
 // MARK: - Sleep Biometric Focus Card
 
 private enum SleepVitalTab: String, CaseIterable {
-    case rhr    = "Low HR"
+    case rhr    = "Min HR"  // "Low HR" reads as bradycardia alert — this is a recovery metric
     case hrv    = "HRV"
     case spo2   = "SpO2"
     case breath = "Breath"
@@ -1364,14 +1355,16 @@ private enum SleepVitalTab: String, CaseIterable {
                 SleepBiometricZone(label: "Optimal",         range: 98...100, color: BetterColors.success),
             ]
         case .breath:
+            // Half-open upper bounds prevent exact-integer values (e.g. 10.0) from
+            // matching two zones and landing in the worse one via .first { }.
             return [
-                SleepBiometricZone(label: "Needs Attention", range: 8...10,   color: BetterColors.danger),
-                SleepBiometricZone(label: "Fair",            range: 10...12,  color: BetterColors.warning),
-                SleepBiometricZone(label: "Normal",          range: 12...14,  color: BetterColors.hrv),
-                SleepBiometricZone(label: "Optimal",         range: 14...16,  color: BetterColors.success),
-                SleepBiometricZone(label: "Normal",          range: 16...18,  color: BetterColors.hrv),
-                SleepBiometricZone(label: "Fair",            range: 18...20,  color: BetterColors.warning),
-                SleepBiometricZone(label: "Needs Attention", range: 20...24,  color: BetterColors.danger),
+                SleepBiometricZone(label: "Needs Attention", range: 8.0...9.999,  color: BetterColors.danger),
+                SleepBiometricZone(label: "Fair",            range: 10.0...11.999, color: BetterColors.warning),
+                SleepBiometricZone(label: "Normal",          range: 12.0...13.999, color: BetterColors.hrv),
+                SleepBiometricZone(label: "Optimal",         range: 14.0...15.999, color: BetterColors.success),
+                SleepBiometricZone(label: "Normal",          range: 16.0...17.999, color: BetterColors.hrv),
+                SleepBiometricZone(label: "Fair",            range: 18.0...19.999, color: BetterColors.warning),
+                SleepBiometricZone(label: "Needs Attention", range: 20.0...24.0,   color: BetterColors.danger),
             ]
         }
     }
@@ -2032,8 +2025,9 @@ private struct SingleBiomarkerChartView: View {
     }
 
     private var points: [SleepBiometricPoint] {
-        let sorted = recentSessions.sorted { $0.endDate < $1.endDate }
-        return sorted.suffix(timeline.dayCount).compactMap { session in
+        // recentSessions is pre-sorted by the view model (sortedRecentSessions)
+        // before being passed in — no re-sort needed here.
+        return recentSessions.suffix(timeline.dayCount).compactMap { session in
             guard let value = tab.value(from: session),
                   let date = SleepDateKey.date(from: session.sleepDateKey)
             else { return nil }
@@ -2647,315 +2641,6 @@ private struct BiomarkerDetailSheet: View {
         case .rhr, .hrv: return String(format: "%.0f", value)
         case .spo2:      return String(format: "%.0f", value)   // whole percent — pulse-ox accuracy is ±2%
         case .breath:    return String(format: "%.1f", value)
-        }
-    }
-}
-
-private struct SleepBiometricFocusCard: View {
-    let biometrics: NightlyBiometricSummary
-    let recentSessions: [SleepSession]
-    var initialTab: SleepVitalTab = .hrv
-    var baseline: BiomarkerBaseline? = nil
-
-    @State private var selected: SleepVitalTab
-    @State private var timeline: SleepBiometricTimeline = .thirtyDays
-    @State private var selectedPointKey: String?
-    @Namespace private var pillNS
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-
-    init(
-        biometrics: NightlyBiometricSummary,
-        recentSessions: [SleepSession],
-        initialTab: SleepVitalTab = .hrv,
-        baseline: BiomarkerBaseline? = nil
-    ) {
-        self.biometrics = biometrics
-        self.recentSessions = recentSessions
-        self.initialTab = initialTab
-        self.baseline = baseline
-        _selected = State(initialValue: initialTab)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            headerRow
-            pillRow
-            valueRow
-            educationPanel
-            SleepBiometricZoneChart(
-                points: points,
-                selectedPointKey: selectedPointKey,
-                zones: selected.zones,
-                chartMin: selected.chartMin,
-                chartMax: selected.chartMax,
-                color: selected.color,
-                onSelect: { point in
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        selectedPointKey = point.dateKey
-                    }
-                }
-            )
-            selectedDayCallout
-            footerGrid
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(BetterSpacing.large)
-        .background(Color.black)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(BetterColors.border, lineWidth: 1))
-        .onAppear(perform: resetSelection)
-        .onChange(of: selected) { _, _ in resetSelection() }
-        .onChange(of: timeline) { _, _ in resetSelection() }
-        .onChange(of: recentSessions.count) { _, _ in resetSelection() }
-    }
-
-    private var points: [SleepBiometricPoint] {
-        let sorted = recentSessions.sorted { $0.endDate < $1.endDate }
-        return sorted.suffix(timeline.dayCount).compactMap { session in
-            guard let value = selected.value(from: session),
-                  let date = SleepDateKey.date(from: session.sleepDateKey)
-            else { return nil }
-            return SleepBiometricPoint(
-                dateKey: session.sleepDateKey,
-                date: date,
-                value: value
-            )
-        }
-    }
-
-    private var selectedPoint: SleepBiometricPoint? {
-        guard let selectedPointKey else { return points.last }
-        return points.first { $0.dateKey == selectedPointKey } ?? points.last
-    }
-
-    private var average: Double? {
-        guard !points.isEmpty else { return nil }
-        return points.map(\.value).reduce(0, +) / Double(points.count)
-    }
-
-    private var bestValue: Double? {
-        switch selected {
-        case .rhr:
-            return points.map(\.value).min()
-        case .hrv, .spo2:
-            return points.map(\.value).max()
-        case .breath:
-            return points.map(\.value).min { abs($0 - 14) < abs($1 - 14) }
-        }
-    }
-
-    private var headerRow: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("BIOMARKERS")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(selected.color)
-                    .tracking(1.2)
-                Text(selected.fullName)
-                    .font(BetterTypography.subheadline)
-                    .foregroundStyle(BetterColors.text)
-            }
-            Spacer()
-            timelinePicker
-        }
-    }
-
-    private var pillRow: some View {
-        HStack(spacing: 5) {
-            ForEach(SleepVitalTab.allCases, id: \.self) { tab in
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                        selected = tab
-                    }
-                } label: {
-                    Text(tab.label)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(tab == selected ? .black : BetterColors.subtext)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 7)
-                        .background {
-                            if tab == selected {
-                                Capsule()
-                                    .fill(tab.color)
-                                    .matchedGeometryEffect(id: "sleepPill", in: pillNS)
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(tab.label), \(tab == selected ? "selected" : "not selected")")
-            }
-        }
-        .padding(4)
-        .background(Color.white.opacity(0.04), in: Capsule())
-    }
-
-    private var timelinePicker: some View {
-        HStack(spacing: 3) {
-            ForEach(SleepBiometricTimeline.allCases, id: \.self) { option in
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        timeline = option
-                    }
-                } label: {
-                    Text(option.label)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(option == timeline ? .black : BetterColors.subtext)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(option == timeline ? selected.color : Color.clear, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(option.accessibilityLabel), \(option == timeline ? "selected" : "not selected")")
-            }
-        }
-        .padding(3)
-        .background(Color.white.opacity(0.04), in: Capsule())
-    }
-
-    private var valueRow: some View {
-        HStack(alignment: .firstTextBaseline) {
-            if let value = selectedPoint?.value ?? selected.currentValue(from: biometrics) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(formattedValue(value))
-                            .font(.system(size: 36, weight: .bold, design: .rounded))
-                            .foregroundStyle(BetterColors.text)
-                            .contentTransition(.numericText())
-                        Text(selected.unit)
-                            .font(.system(size: 16, weight: .medium, design: .rounded))
-                            .foregroundStyle(BetterColors.subtext)
-                    }
-                    if let delta = deltaText(value: value) {
-                        Text(delta)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(BetterColors.subtext)
-                    }
-                }
-                Spacer()
-                Text(selected.statusLabel(for: value))
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(selected.statusColor(for: value), in: Capsule())
-            } else {
-                Text("–")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
-                Spacer()
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: selected)
-    }
-
-    private var educationPanel: some View {
-        HStack(alignment: .top, spacing: BetterSpacing.small) {
-            Image(systemName: selected.educationIcon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(selected.color)
-                .frame(width: 28, height: 28)
-                .background(selected.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            Text(selected.education)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(BetterSpacing.small)
-        .background(selected.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    @ViewBuilder
-    private var selectedDayCallout: some View {
-        if let point = selectedPoint {
-            HStack(alignment: .top, spacing: BetterSpacing.small) {
-                Circle()
-                    .fill(selected.statusColor(for: point.value))
-                    .frame(width: 9, height: 9)
-                    .overlay {
-                        if differentiateWithoutColor {
-                            Circle()
-                                .stroke(Color.white.opacity(0.8), lineWidth: 1)
-                        }
-                    }
-                    .padding(.top, 5)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(point.date.formatted(.dateTime.month(.abbreviated).day())) · \(formattedValue(point.value)) \(selected.unit)")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(BetterColors.text)
-                    Text(selected.impactText(value: point.value, average: average))
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-            }
-            .padding(BetterSpacing.small)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-    }
-
-    private var footerGrid: some View {
-        HStack(spacing: BetterSpacing.small) {
-            statTile("Average", value: average.map { formattedValue($0) } ?? "--")
-            statTile(bestLabel, value: bestValue.map { formattedValue($0) } ?? "--")
-            statTile("Range", value: rangeText)
-            statTile("Nights", value: "\(points.count)/\(timeline.dayCount)")
-        }
-    }
-
-    private var bestLabel: String {
-        switch selected {
-        case .rhr:    return "Lowest"
-        case .hrv:    return "Highest"
-        case .spo2:   return "Highest"
-        case .breath: return "Optimal"
-        }
-    }
-
-    private var rangeText: String {
-        guard let min = points.map(\.value).min(), let max = points.map(\.value).max() else { return "--" }
-        return "\(formattedValue(min))-\(formattedValue(max))"
-    }
-
-    private func deltaText(value: Double) -> String? {
-        guard let average else { return nil }
-        let diff = value - average
-        let sign = diff >= 0 ? "+" : ""
-
-        switch selected {
-        case .rhr, .hrv:
-            return "\(sign)\(String(format: "%.0f", diff)) \(selected.unit) vs selected avg"
-        case .spo2, .breath:
-            return "\(sign)\(String(format: "%.1f", diff)) \(selected.unit) vs selected avg"
-        }
-    }
-
-    private func statTile(_ label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(value)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(BetterColors.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Text(label)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private func resetSelection() {
-        selectedPointKey = points.last?.dateKey
-    }
-
-    private func formattedValue(_ value: Double) -> String {
-        switch selected {
-        case .breath: return String(format: "%.1f", value)
-        case .spo2:   return String(format: "%.0f", value)   // whole percent — pulse-ox accuracy is ±2%
-        default:      return String(format: "%.0f", value)
         }
     }
 }

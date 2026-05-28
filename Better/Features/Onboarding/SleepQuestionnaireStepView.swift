@@ -58,6 +58,7 @@ struct SleepQuestionnaireStepView: View {
                         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: currentIndex)
                 }
             }
+            .accessibilityHidden(true)
         }
     }
 
@@ -158,7 +159,8 @@ struct SleepQuestionnaireStepView: View {
         )
 
         isAutoAdvancing = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(360))
             movingForward = true
             if currentIndex < questions.count - 1 {
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
@@ -217,5 +219,7 @@ private struct QuestionOptionButton: View {
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.28, dampingFraction: 0.8), value: isSelected)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityHint(isSelected ? "" : "Double-tap to select")
     }
 }

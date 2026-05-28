@@ -136,7 +136,7 @@ struct InsightsSleepInsightsCard: View {
         case .positive:       BetterColors.success
         case .caution:        BetterColors.warning
         case .informational:  BetterColors.brand
-        case .neutral, nil:   BetterColors.subtext
+        case .neutral, nil:   BetterColors.text.opacity(0.55)
         }
     }
 }

@@ -75,6 +75,20 @@ struct ProtocolFormulaSetupView: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(ProtocolPalette.mutedText)
                     }
+                    Spacer()
+                    if !version.isActive {
+                        Button {
+                            Task { await viewModel.setActive(version) }
+                        } label: {
+                            Text("Set as Current")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(ProtocolPalette.versionColor(hex: version.colorHex)))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
         }

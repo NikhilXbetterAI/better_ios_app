@@ -323,6 +323,17 @@ private extension AlertGenerationService {
             alerts.append(improvement)
         }
 
+        // Drift detection — weekly alert when sleep duration has been trending
+        // shorter by ≥ 2 min/night over the last 30 nights. Counterpart to
+        // improvementTrend; prevents baseline from silently adapting to decline.
+        if let drift = sleepDriftAlert(
+            for: session,
+            recentSessions: recentSessions,
+            createdAt: createdAt
+        ) {
+            alerts.append(drift)
+        }
+
         // Legacy "missed protocol" adherence alert removed alongside the legacy
         // Protocol tab. A formula-aware variant is a follow-up.
 
@@ -388,6 +399,53 @@ private extension AlertGenerationService {
             severity: 0,
             createdAt: createdAt
         )
+    }
+
+    /// Detects a gradual downward drift in total sleep time using linear regression
+    /// over the last 30 valid nights. Fires at ≥ 2 min/night decline (≈ 1h/month).
+    /// Keyed by week bin so it re-evaluates weekly, not per-night.
+    func sleepDriftAlert(
+        for session: SleepSession,
+        recentSessions: [SleepSession],
+        createdAt: Date
+    ) -> SleepAlert? {
+        let ordered = recentSessions
+            .filter { BaselineEngine.isValidNight($0, calendar: calendar) }
+            .sorted { $0.endDate < $1.endDate }
+            .suffix(30)
+        guard ordered.count >= 14 else { return nil }
+        let slopeMinutes = linearRegressionSlopeMinutes(Array(ordered))
+        guard slopeMinutes <= -2.0 else { return nil }
+
+        let weekOfYear = calendar.component(.weekOfYear, from: createdAt)
+        let year       = calendar.component(.year, from: createdAt)
+        let weekKey    = "sleepDriftDown|\(year)W\(weekOfYear)"
+        let lossPerMonth = Int(-slopeMinutes * 30.0) / 60
+
+        return SleepAlert(
+            id: Self.deterministicUUID(weekKey),
+            kind: .sleepDriftDown,
+            title: "Sleep trending shorter",
+            body: "Your sleep has shortened by about \(Int(-slopeMinutes)) min/night over \(ordered.count) nights (~\(lossPerMonth)h/month).",
+            sleepDateKey: session.sleepDateKey,
+            severity: 1,
+            createdAt: createdAt
+        )
+    }
+
+    private func linearRegressionSlopeMinutes(_ sessions: [SleepSession]) -> Double {
+        let n = Double(sessions.count)
+        var sumX: Double = 0; var sumY: Double = 0
+        var sumXX: Double = 0; var sumXY: Double = 0
+        for (i, s) in sessions.enumerated() {
+            let x = Double(i)
+            let y = s.totalSleepTime / 60.0  // convert to minutes
+            sumX += x; sumY += y
+            sumXX += x * x; sumXY += x * y
+        }
+        let denom = n * sumXX - sumX * sumX
+        guard denom > 0 else { return 0 }
+        return (n * sumXY - sumX * sumY) / denom
     }
 
     func hasPassedProtocolCutoff(on date: Date, cutoffHour: Int) -> Bool {

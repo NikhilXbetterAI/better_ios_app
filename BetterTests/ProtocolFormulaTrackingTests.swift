@@ -1099,9 +1099,9 @@ final class BaselineStatHelperTests: XCTestCase {
     }
 
     func testStdDev_knownValues() {
-        // [2, 4, 4, 4, 5, 5, 7, 9] → sample std ≈ 2.0
+        // [2, 4, 4, 4, 5, 5, 7, 9] → sample std ≈ 2.138
         let std = ProtocolBaselineService.standardDeviation([2, 4, 4, 4, 5, 5, 7, 9])
-        XCTAssertEqual(std ?? 0, 2.0, accuracy: 0.001)
+        XCTAssertEqual(std ?? 0, 2.138, accuracy: 0.001)
     }
 
     func testStdDev_twoIdentical_zero() {

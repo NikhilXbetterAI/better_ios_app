@@ -60,6 +60,7 @@ struct AlertRowView: View {
         case .recoveryTrend: "arrow.up.heart.fill"
         case .baselineAvailable: "calendar.badge.checkmark"
         case .protocolPattern: "pills.fill"
+        case .sleepDriftDown: "chart.line.downtrend.xyaxis"
         }
     }
 

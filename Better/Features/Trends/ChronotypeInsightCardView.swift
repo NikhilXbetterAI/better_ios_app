@@ -4,7 +4,6 @@ struct ChronotypeInsightCardView: View {
     let result: ChronotypeCalculationResult
 
     @State private var didAppear = false
-    @State private var activeTimingInfo: TimingInfo?
     @State private var isShowingDetail = false
     @State private var highlightedMetric: TimingInfo? = nil
 
@@ -92,21 +91,20 @@ struct ChronotypeInsightCardView: View {
                         .lineLimit(2)
                         .minimumScaleFactor(0.72)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        timingButton(
-                            title: formatMinute(estimate.correctedMidpointMinute),
-                            systemImage: "scope",
-                            tint: BetterColors.cyan,
-                            info: .correctedMidpoint
-                        )
-                        timingButton(
-                            title: formatWindow(estimate.optimalSleepWindow),
-                            systemImage: "moon.zzz.fill",
-                            tint: BetterColors.brandLight,
-                            info: .optimalWindow
-                        )
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Natural bedtime: \(formatMinute(estimate.optimalSleepWindow.startMinute))", systemImage: "moon.zzz.fill")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(BetterColors.brandLight)
+
+                        let drift = abs(estimate.workdayMidpointMinute - estimate.freeDayMidpointMinute)
+                        let wrappedDrift = min(drift, 1_440 - drift)
+                        if wrappedDrift >= 60 {
+                            Label(socialJetLagText(wrappedDrift), systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundStyle(BetterColors.subtext)
+                                .labelStyle(ColoredIconLabelStyle(iconColor: BetterColors.warning))
+                        }
                     }
-                    .font(.system(size: 14, weight: .semibold, design: .rounded).monospacedDigit())
 
                     Text("Your Body Clock is estimated from recent wearable sleep timing.")
                         .font(BetterTypography.caption)
@@ -116,15 +114,10 @@ struct ChronotypeInsightCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            ChronotypeMetricStripView(estimate: estimate) { info in
-                activeTimingInfo = info
-            }
-
             HStack(spacing: BetterSpacing.small) {
                 legendDot(BetterColors.brandLight, "Sleep window")
-                legendDot(BetterColors.cyan, "Corrected")
-                legendDot(BetterColors.warning, "Weekdays")
-                legendDot(BetterColors.success, "Weekends")
+                legendDot(BetterColors.warning, "Weekday")
+                legendDot(BetterColors.success, "Weekend")
             }
 
             // Explanatory directive button to click for details
@@ -132,7 +125,7 @@ struct ChronotypeInsightCardView: View {
                 isShowingDetail = true
             } label: {
                 HStack(spacing: 6) {
-                    Text("Explore Details & Calculation Insights")
+                    Text("How is this calculated?")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                     Image(systemName: "arrow.up.backward.and.arrow.down.forward")
                         .font(.system(size: 11, weight: .bold))
@@ -151,17 +144,8 @@ struct ChronotypeInsightCardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Body Clock \(estimate.bucket.bodyClockDisplayName), corrected midpoint \(formatMinute(estimate.correctedMidpointMinute)), optimal window \(formatWindow(estimate.optimalSleepWindow))"
+            "Body Clock \(estimate.bucket.bodyClockDisplayName), natural bedtime \(formatMinute(estimate.optimalSleepWindow.startMinute))"
         )
-        .popover(item: $activeTimingInfo, arrowEdge: .bottom) { info in
-            timingPopover(info: info)
-                .presentationCompactAdaptation(.popover)
-        }
-        .onChange(of: activeTimingInfo) { oldValue, newValue in
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
-                highlightedMetric = newValue
-            }
-        }
     }
 
     private var insufficientContent: some View {
@@ -212,30 +196,15 @@ struct ChronotypeInsightCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func timingButton(title: String, systemImage: String, tint: Color, info: TimingInfo) -> some View {
-        Button {
-            activeTimingInfo = info
-        } label: {
-            Label(title, systemImage: systemImage)
-                .foregroundStyle(tint)
+    private func socialJetLagText(_ driftMinutes: Int) -> String {
+        if driftMinutes >= 60 {
+            let hours = driftMinutes / 60
+            let mins = driftMinutes % 60
+            let formatted = mins == 0 ? "\(hours)h" : "\(hours)h \(mins)m"
+            return "Social jet lag: you sleep \(formatted) later on weekends"
+        } else {
+            return "Social jet lag: you sleep \(driftMinutes) min later on weekends"
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(info.title)
-    }
-
-    private func timingPopover(info: TimingInfo) -> some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.small) {
-            Text(info.title)
-                .font(BetterTypography.title)
-                .foregroundStyle(BetterColors.text)
-            Text(info.body)
-                .font(BetterTypography.footnote)
-                .foregroundStyle(BetterColors.subtext)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(BetterSpacing.large)
-        .frame(maxWidth: 280, alignment: .leading)
-        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var missingRequirementsText: String {
@@ -258,6 +227,7 @@ struct ChronotypeInsightCardView: View {
     }
 }
 
+// TimingInfo is used by ChronotypeClockView to highlight arc/markers on the clock dial.
 private enum TimingInfo: String, Identifiable {
     case correctedMidpoint
     case optimalWindow
@@ -266,36 +236,6 @@ private enum TimingInfo: String, Identifiable {
     case sleepAverage
 
     var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .correctedMidpoint:
-            "Corrected midpoint"
-        case .optimalWindow:
-            "Optimal sleep window"
-        case .weekdayMidpoint:
-            "Weekday midpoint"
-        case .weekendMidpoint:
-            "Weekend midpoint"
-        case .sleepAverage:
-            "Sleep average"
-        }
-    }
-
-    var body: String {
-        switch self {
-        case .correctedMidpoint:
-            "This is the adjusted center of your sleep timing after we account for extra weekend sleep."
-        case .optimalWindow:
-            "This is the sleep range the model thinks fits your recent timing best."
-        case .weekdayMidpoint:
-            "This is the middle of your sleep on weekdays."
-        case .weekendMidpoint:
-            "This is the middle of your sleep on weekends."
-        case .sleepAverage:
-            "This is your average sleep duration across the nights used for your Body Clock."
-        }
-    }
 }
 
 private struct ChronotypeClockView: View {
@@ -310,26 +250,30 @@ private struct ChronotypeClockView: View {
             let radius = size / 2 - 13
 
             ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [BetterColors.cardSecondary.opacity(0.92), BetterColors.card.opacity(0.58)],
-                            center: .center,
-                            startRadius: 8,
-                            endRadius: size / 2
+                // Static background + ticks rendered to a single Metal layer.
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [BetterColors.cardSecondary.opacity(0.92), BetterColors.card.opacity(0.58)],
+                                center: .center,
+                                startRadius: 8,
+                                endRadius: size / 2
+                            )
                         )
-                    )
 
-                Circle()
-                    .stroke(BetterColors.glassStroke.opacity(0.75), lineWidth: 1)
+                    Circle()
+                        .stroke(BetterColors.glassStroke.opacity(0.75), lineWidth: 1)
 
-                ForEach(0..<24, id: \.self) { hour in
-                    Capsule()
-                        .fill(hour % 6 == 0 ? BetterColors.subtext.opacity(0.58) : BetterColors.subtext.opacity(0.24))
-                        .frame(width: hour % 6 == 0 ? 2 : 1, height: hour % 6 == 0 ? 8 : 5)
-                        .offset(y: -radius)
-                        .rotationEffect(.degrees(Double(hour) / 24 * 360))
+                    ForEach(0..<24, id: \.self) { hour in
+                        Capsule()
+                            .fill(hour % 6 == 0 ? BetterColors.subtext.opacity(0.58) : BetterColors.subtext.opacity(0.24))
+                            .frame(width: hour % 6 == 0 ? 2 : 1, height: hour % 6 == 0 ? 8 : 5)
+                            .offset(y: -radius)
+                            .rotationEffect(.degrees(Double(hour) / 24 * 360))
+                    }
                 }
+                .drawingGroup()
 
                 let isArcHighlighted = highlightedMetric == .optimalWindow || highlightedMetric == .sleepAverage
                 let isAnyHighlighted = highlightedMetric != nil
@@ -379,9 +323,9 @@ private struct ChronotypeClockView: View {
 
                 VStack(spacing: 2) {
                     Text(formatMinute(estimate.correctedMidpointMinute))
-                        .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
+                        .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(BetterColors.text)
-                    Text("midpoint")
+                    Text("sleep center")
                         .font(.system(size: 9, weight: .semibold, design: .rounded))
                         .foregroundStyle(BetterColors.subtext)
                 }
@@ -409,54 +353,6 @@ private struct ChronotypeClockView: View {
             .opacity(opacity)
             .position(isAnimated ? point : center)
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: highlightedMetric)
-    }
-}
-
-private struct ChronotypeMetricStripView: View {
-    let estimate: ChronotypeEstimate
-    let onSelectTimingInfo: (TimingInfo) -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-                metricCell(label: "Weekdays", value: formatMinute(estimate.workdayMidpointMinute), icon: "briefcase.fill", color: BetterColors.warning, info: .weekdayMidpoint)
-                divider
-                metricCell(label: "Weekends", value: formatMinute(estimate.freeDayMidpointMinute), icon: "sparkles", color: BetterColors.success, info: .weekendMidpoint)
-                divider
-                metricCell(label: "Sleep avg", value: formatDuration(estimate.weeklyAverageDuration), icon: "clock.fill", color: BetterColors.cyan, info: .sleepAverage)
-            }
-        .padding(.vertical, BetterSpacing.small)
-        .background(BetterColors.cardSecondary.opacity(0.52), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(BetterColors.border.opacity(0.58))
-            .frame(width: 1, height: 42)
-    }
-
-    private func metricCell(label: String, value: String, icon: String, color: Color, info: TimingInfo) -> some View {
-        Button {
-            onSelectTimingInfo(info)
-        } label: {
-            VStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(color)
-                Text(value)
-                    .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(BetterColors.text)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                Text(label)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -514,10 +410,6 @@ private extension ChronotypeInsightCardView {
     }
 }
 
-private func formatWindow(_ window: SleepWindowRecommendation) -> String {
-    "\(formatMinute(window.startMinute))-\(formatMinute(window.endMinute))"
-}
-
 private func formatMinute(_ minute: Int) -> String {
     let normalized = ((minute % 1_440) + 1_440) % 1_440
     let hour = normalized / 60
@@ -525,11 +417,6 @@ private func formatMinute(_ minute: Int) -> String {
     let hour12 = hour % 12 == 0 ? 12 : hour % 12
     let suffix = hour < 12 ? "AM" : "PM"
     return String(format: "%d:%02d %@", hour12, minute, suffix)
-}
-
-private func formatDuration(_ seconds: TimeInterval) -> String {
-    let totalMinutes = Int((seconds / 60).rounded())
-    return "\(totalMinutes / 60)h \(totalMinutes % 60)m"
 }
 
 private func pointForMinute(_ minute: Int, center: CGPoint, radius: CGFloat) -> CGPoint {
@@ -547,6 +434,17 @@ private func angle(for minute: Int) -> Double {
 private func sweepDegrees(from startMinute: Int, to endMinute: Int) -> Double {
     let delta = (endMinute - startMinute + 1_440) % 1_440
     return Double(delta == 0 ? 1_440 : delta) / 1_440 * 360
+}
+
+/// LabelStyle that lets the icon use a custom color while the title inherits its own style.
+private struct ColoredIconLabelStyle: LabelStyle {
+    let iconColor: Color
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            configuration.icon.foregroundStyle(iconColor)
+            configuration.title
+        }
+    }
 }
 
 #if DEBUG

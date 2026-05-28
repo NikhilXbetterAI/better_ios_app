@@ -5,10 +5,10 @@ struct InsightsOverviewCard: View {
     let scoreSparklineValues: [Double]
     let avgScore: Double?
     let avgDurationHours: Double?
-    let bestScore: Int?               // pre-computed via HealthSleepScoreEstimator
     let comparisonSummary: TrendComparisonSummary?
 
     @State private var ringProgress: Double = 0
+    @State private var hasAnimatedRing = false
 
     var body: some View {
         BetterHealthCard {
@@ -18,9 +18,16 @@ struct InsightsOverviewCard: View {
                 statsRow
             }
         }
-        .onAppear { animateRing() }
-        .onChange(of: sessions.count) { _, _ in animateRing() }
-        .onChange(of: avgScore) { _, _ in animateRing() }
+        .onAppear {
+            if !hasAnimatedRing { animateRing() }
+        }
+        .onChange(of: avgScore) { _, _ in
+            // Snap to new value without re-animating from zero on every reload.
+            let target = min(max((avgScore ?? 0) / 100.0, 0), 1)
+            withAnimation(.easeOut(duration: 0.35)) {
+                ringProgress = target
+            }
+        }
     }
 
     // MARK: - Main Row
@@ -137,18 +144,14 @@ struct InsightsOverviewCard: View {
                 value: avgDurationHours.map { formatHours($0) } ?? "--",
                 color: BetterColors.brand
             )
-            statDivider
-            statCell(
-                label: "Best Night",
-                value: bestScore.map { "\($0)" } ?? "--",
-                color: BetterColors.success
-            )
-            statDivider
-            statCell(
-                label: "Nights",
-                value: "\(sessions.count)",
-                color: BetterColors.hrv
-            )
+            if let score = avgScore {
+                statDivider
+                statCell(
+                    label: "Avg Sleep Score",
+                    value: "\(Int(score.rounded()))",
+                    color: BetterColors.success
+                )
+            }
         }
     }
 
@@ -194,6 +197,7 @@ struct InsightsOverviewCard: View {
     }
 
     private func animateRing() {
+        hasAnimatedRing = true
         ringProgress = 0
         let target = min(max((avgScore ?? 0) / 100.0, 0), 1)
         withAnimation(.easeOut(duration: 0.85)) {

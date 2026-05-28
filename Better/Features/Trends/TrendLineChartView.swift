@@ -30,6 +30,8 @@ struct TrendLineChartView: View {
 
             if points.isEmpty {
                 emptyState
+            } else if maxValue - minValue <= 0.001 {
+                flatRangeState
             } else {
                 GeometryReader { proxy in
                     let size = proxy.size
@@ -62,9 +64,13 @@ struct TrendLineChartView: View {
                         }
                     }
                     .contentShape(Rectangle())
+                    .onTapGesture { location in
+                        updateSelection(at: location.x, width: size.width)
+                    }
                     .gesture(
-                        DragGesture(minimumDistance: 0)
+                        DragGesture(minimumDistance: 8)
                             .onChanged { value in
+                                guard abs(value.translation.width) > abs(value.translation.height) else { return }
                                 updateSelection(at: value.location.x, width: size.width)
                             }
                     )
@@ -100,6 +106,19 @@ struct TrendLineChartView: View {
         .frame(height: 150)
     }
 
+    private var flatRangeState: some View {
+        VStack(spacing: BetterSpacing.small) {
+            Image(systemName: "chart.line.flattrend.xyaxis")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(BetterColors.mutedText)
+            Text("Not enough variation")
+                .font(BetterTypography.caption)
+                .foregroundStyle(BetterColors.mutedText)
+        }
+        .frame(height: 150)
+        .frame(maxWidth: .infinity)
+    }
+
     private func horizontalGrid(size: CGSize) -> some View {
         Path { path in
             for step in 0...3 {
@@ -122,7 +141,10 @@ struct TrendLineChartView: View {
     }
 
     private func position(for value: Double, at index: Int, size: CGSize) -> CGPoint {
-        let spread = max(0.1, maxValue - minValue)
+        let spread = maxValue - minValue
+        guard spread > 0.001 else {
+            return CGPoint(x: points.count == 1 ? size.width / 2 : size.width * CGFloat(index) / CGFloat(points.count - 1), y: size.height / 2)
+        }
         let x = points.count == 1 ? size.width / 2 : size.width * CGFloat(index) / CGFloat(points.count - 1)
         let normalized = (value - minValue) / spread
         let y = size.height - (size.height * CGFloat(normalized))
@@ -173,7 +195,8 @@ struct TrendLineChartView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(width: 132, alignment: .leading)
-        .background(BetterColors.cardTertiary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(BetterColors.card.opacity(0.96), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(BetterColors.border, lineWidth: 1)

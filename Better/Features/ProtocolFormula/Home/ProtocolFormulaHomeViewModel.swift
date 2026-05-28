@@ -13,15 +13,6 @@ nonisolated enum ProtocolFormulaHomeSegmentStorage {
 @MainActor
 @Observable
 final class ProtocolFormulaHomeViewModel {
-    enum Segment: String, Hashable {
-        case lastNight
-        case tonight
-    }
-
-    var segment: Segment {
-        didSet { userDefaults.set(segment.rawValue, forKey: ProtocolFormulaHomeSegmentStorage.key) }
-    }
-
     var isLoading: Bool = false
     var versions: [ProtocolFormulaVersion] = []
     /// Pre-built lookup so SwiftUI `body` and computed deriveds can resolve a
@@ -50,7 +41,7 @@ final class ProtocolFormulaHomeViewModel {
     var baseline: ProtocolBaselineSnapshot?
     var baselineReadiness: ProtocolBaselineReadiness?
     var bestVersion: ProtocolFormulaBestVersion?
-    var showFirstSwitchHint: Bool = false
+    var showQuickLogSheet: Bool = false
     var recentSnapshots: [ProtocolNightMetricSnapshot] = []
     var ribbonSegments: [PvPhaseRibbon.Segment] = []
     var errorMessage: String?
@@ -163,8 +154,6 @@ final class ProtocolFormulaHomeViewModel {
         self.calendar = calendar
         self.nowProvider = nowProvider
         self.historicalRefresh = historicalRefresh
-        let raw = userDefaults.string(forKey: ProtocolFormulaHomeSegmentStorage.key) ?? Segment.lastNight.rawValue
-        self.segment = Segment(rawValue: raw) ?? .lastNight
     }
 
     private let historicalRefresh: (() async -> Void)?
@@ -189,7 +178,6 @@ final class ProtocolFormulaHomeViewModel {
 
     func onAppear() async {
         await refresh()
-        applyFirstSwitchHintIfNeeded()
     }
 
     func refresh() async {
@@ -290,6 +278,19 @@ final class ProtocolFormulaHomeViewModel {
 
     // MARK: - Tonight CTA actions
 
+    /// Sets `version` as the active formula. The repository singleton rule
+    /// auto-clears `isActive` on every other row, so a single save is enough.
+    func setActive(_ version: ProtocolFormulaVersion) async {
+        var updated = version
+        updated.isActive = true
+        do {
+            try await localRepository.saveFormulaVersion(updated)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func markTonightTaken() async {
         await writeTonightLog(status: .taken)
     }
@@ -369,24 +370,43 @@ final class ProtocolFormulaHomeViewModel {
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Quick Log for Last Night
 
-    /// First entry into 19:00–04:00 with no tonight log → one-time preselect Tonight + hint.
-    private func applyFirstSwitchHintIfNeeded() {
-        let alreadyShown = userDefaults.bool(forKey: ProtocolFormulaHomeSegmentStorage.firstSwitchHintShownKey)
-        guard !alreadyShown else { return }
-        let hour = calendar.component(.hour, from: nowProvider())
-        let inEveningWindow = hour >= 19 || hour < 4
-        guard inEveningWindow else { return }
-        let key = Self.tonightSleepDateKey(calendar: calendar, now: nowProvider())
-        let hasLog = lastNightLog?.sleepDateKey == key
-        guard !hasLog else { return }
-        segment = .tonight
-        showFirstSwitchHint = true
-        userDefaults.set(true, forKey: ProtocolFormulaHomeSegmentStorage.firstSwitchHintShownKey)
+    func markLastNightTaken() async {
+        guard let session = lastNightSession, let active = activeVersion else { return }
+        let log = ProtocolNightLog(
+            sleepDateKey: session.sleepDateKey,
+            versionID: active.id,
+            status: .taken,
+            addins: [],
+            takenAt: nowProvider(),
+            formulaSnapshotHash: ProtocolFormulaHashing.snapshotHash(for: active)
+        )
+        do {
+            try await localRepository.saveNightLog(log)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
-    func dismissHint() { showFirstSwitchHint = false }
+    func markLastNightSkipped() async {
+        guard let session = lastNightSession, let active = activeVersion else { return }
+        let log = ProtocolNightLog(
+            sleepDateKey: session.sleepDateKey,
+            versionID: active.id,
+            status: .skipped,
+            addins: [],
+            takenAt: nil,
+            formulaSnapshotHash: ProtocolFormulaHashing.snapshotHash(for: active)
+        )
+        do {
+            try await localRepository.saveNightLog(log)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 
     /// Rebuilds `impactPairs` from the latest `impact`. Triggered automatically
     /// by `impact`'s didSet — view code reads `viewModel.impactPairs[metric]`
@@ -479,5 +499,38 @@ final class ProtocolFormulaHomeViewModel {
     /// baseline-cutoff key from a version's `shippedOn`.
     static func sleepDateKey(for date: Date, calendar: Calendar = .current) -> String {
         SleepDateKey.calendarDateKey(for: date, calendar: calendar)
+    }
+
+    /// Index offset from the latest night (0 = most recent)
+    var nightOffset: Int = 0
+
+    var isShowingLatestNight: Bool { nightOffset == 0 }
+
+    func goToPreviousNight() async {
+        nightOffset += 1
+        await refreshForOffset()
+    }
+
+    func goToNextNight() async {
+        guard nightOffset > 0 else { return }
+        nightOffset -= 1
+        if nightOffset == 0 {
+            await refresh()
+        } else {
+            await refreshForOffset()
+        }
+    }
+
+    private func refreshForOffset() async {
+        let now = nowProvider()
+        let windowStart = calendar.date(byAdding: .day, value: -(nightOffset + 14), to: now) ?? now
+        let sessions = try? await localRepository.fetchCachedSessions(from: windowStart, to: now)
+        let sorted = (sessions ?? []).sorted { $0.startDate > $1.startDate }
+        guard nightOffset < sorted.count else { return }
+        let session = sorted[nightOffset]
+        lastNightSession = session
+        lastNightLog = try? await localRepository.fetchNightLog(forSleepDateKey: session.sleepDateKey)
+        lastNightVersion = lastNightLog.flatMap { log in versions.first { $0.id == log.versionID } }
+        lastNightSnapshot = ProtocolFormulaAnalysisService.snapshot(for: session, log: lastNightLog)
     }
 }

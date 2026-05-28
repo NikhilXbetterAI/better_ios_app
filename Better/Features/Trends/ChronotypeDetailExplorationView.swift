@@ -428,6 +428,32 @@ struct ChronotypeDetailView: View {
                             .stroke(BetterColors.glassStroke, lineWidth: 1)
                     )
 
+                    // Timing Breakdown
+                    VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+                        Text("TIMING BREAKDOWN")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(BetterColors.mutedText)
+                            .tracking(1.5)
+
+                        VStack(spacing: 0) {
+                            timingRow(label: "Weekday midpoint", value: formatMinute(estimate.workdayMidpointMinute), color: BetterColors.warning)
+                            Divider().background(BetterColors.border)
+                            timingRow(label: "Weekend midpoint", value: formatMinute(estimate.freeDayMidpointMinute), color: BetterColors.success)
+                            Divider().background(BetterColors.border)
+                            timingRow(label: "Corrected midpoint (MSFsc)", value: formatMinute(estimate.correctedMidpointMinute), color: BetterColors.cyan)
+                            Divider().background(BetterColors.border)
+                            timingRow(label: "Avg sleep duration", value: formatDurationDetail(estimate.weeklyAverageDuration), color: BetterColors.brandLight)
+                        }
+                        .background(BetterColors.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(BetterColors.border, lineWidth: 1))
+
+                        Text("MSFsc (Munich ChronoType Questionnaire method) corrects your free-day sleep midpoint for sleep debt accumulated during the week, giving a truer picture of your circadian preference.")
+                            .font(.system(size: 12))
+                            .lineSpacing(4)
+                            .foregroundStyle(BetterColors.subtext)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     // Learning Sections
                     VStack(alignment: .leading, spacing: BetterSpacing.large) {
                         educationalSection(
@@ -453,6 +479,28 @@ struct ChronotypeDetailView: View {
         .background(BetterColors.background)
         .ignoresSafeArea(edges: .top)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func timingRow(label: String, value: String, color: Color) -> some View {
+        HStack {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(label)
+                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+            Spacer()
+            Text(value)
+                .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(BetterColors.text)
+        }
+        .padding(.horizontal, BetterSpacing.medium)
+        .padding(.vertical, 12)
+    }
+
+    private func formatDurationDetail(_ seconds: TimeInterval) -> String {
+        let totalMinutes = Int((seconds / 60).rounded())
+        return "\(totalMinutes / 60)h \(totalMinutes % 60)m"
     }
 
     private func educationalSection(title: String, body: String) -> some View {

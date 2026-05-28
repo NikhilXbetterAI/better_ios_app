@@ -123,7 +123,9 @@ nonisolated struct ResearchCSVExporter: Sendable {
             "formula_version_label",
             "formula_version_id",
             "formula_night_status",
-            "restorative_pct_of_in_bed"
+            "restorative_pct_of_in_bed",
+            // Appended 2026-05-27 — do not reorder (invariant #9)
+            "sleep_score_restorative"
         ]
 
         let body = rows.map { row in
@@ -209,7 +211,9 @@ nonisolated struct ResearchCSVExporter: Sendable {
                 row.formulaVersionLabel ?? "",
                 row.formulaVersionID ?? "",
                 row.formulaNightStatus ?? "",
-                Self.number(row.restorativePctOfInBed)
+                Self.number(row.restorativePctOfInBed),
+                // Appended 2026-05-27
+                row.sleepScoreRestorative.map(String.init) ?? ""
             ])
         }
 

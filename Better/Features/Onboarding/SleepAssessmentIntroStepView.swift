@@ -21,6 +21,7 @@ struct SleepAssessmentIntroStepView: View {
                         .foregroundStyle(BetterColors.stageDeep)
                 }
                 .frame(height: screenHeight * 0.38)
+                .accessibilityHidden(true)
 
                 VStack(spacing: BetterSpacing.small) {
                     Text("A few quick sleep questions")

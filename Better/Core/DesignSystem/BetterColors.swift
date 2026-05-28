@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum BetterColors {
-    static let background = Color(hex: "#07070F")
-    static let backgroundElevated = Color(hex: "#10111B")
-    static let card = Color(hex: "#1C1E2E")
-    static let cardSecondary = Color(hex: "#232538")
-    static let cardTertiary = Color(hex: "#2B3042")
+    static let background = Color(hex: "#000000")
+    static let backgroundElevated = Color(hex: "#080808")
+    static let card = Color(hex: "#0C0C0C")
+    static let cardSecondary = Color(hex: "#141414")
+    static let cardTertiary = Color(hex: "#1C1C1C")
     static let brand = Color(hex: "#6366F1")
     static let brandLight = Color(hex: "#818CF8")
     static let text = Color.white

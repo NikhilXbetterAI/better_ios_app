@@ -231,50 +231,114 @@ nonisolated struct SleepDaySummary: Codable, Hashable, Sendable, Identifiable {
 
 nonisolated struct HealthSleepScoreEstimate: Hashable, Sendable {
     var overall: Int
-    var duration: Int
-    var bedtime: Int
-    var interruptions: Int
+    var duration: Int       // 0-40 pts (detailedStages) / 0-50 pts (partial)
+    var bedtime: Int        // 0-25 pts; 0 when baseline not ready or travel suppressed
+    var interruptions: Int  // 0-15 pts (detailedStages) / 0-30 pts (partial)
+    var restorative: Int    // 0-20 pts deep+REM contribution; 0 when isPartial
 }
 
 nonisolated enum HealthSleepScoreEstimator {
+    /// Formula (detailedStages):
+    ///   Duration    40 pts  — actual sleep vs goal
+    ///   Bedtime     25 pts  — deviation from personal baseline; 0 if baseline not ready
+    ///   Continuity  15 pts  — WASO penalty
+    ///   Restorative 20 pts  — deep+REM contribution vs target/baseline
+    ///   Total = 100
+    ///
+    /// Formula (unspecifiedSleepOnly / isPartial = true):
+    ///   Duration    50 pts
+    ///   Continuity  30 pts
+    ///   Restorative  0 pts  — no stage data
+    ///   Total max = 80 pts, `isPartial` marks it as incomplete
     static func estimate(
         session: SleepSession,
         baseline: SleepBaseline?,
         sleepGoalHours: Double = 8.0,
+        contextEntry: SleepContextEntry? = nil,
         calendar: Calendar = .current
     ) -> HealthSleepScoreEstimate {
-        let duration = durationComponent(totalSleepTime: session.totalSleepTime, sleepGoalHours: sleepGoalHours)
-        let bedtime = bedtimeComponent(session: session, baseline: baseline, calendar: calendar)
-        let interruptions = interruptionsComponent(session: session)
+        let hasStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
+
+        let duration = durationComponent(
+            totalSleepTime: session.totalSleepTime,
+            sleepGoalHours: sleepGoalHours,
+            maxPts: hasStages ? 40 : 50
+        )
+        let bedtime = bedtimeComponent(
+            session: session,
+            baseline: baseline,
+            contextEntry: contextEntry,
+            maxPts: hasStages ? 25 : 0,
+            calendar: calendar
+        )
+        let interruptions = interruptionsComponent(
+            session: session,
+            maxPts: hasStages ? 15 : 30
+        )
+        let restorative = hasStages
+            ? restorativeComponent(session: session, baseline: baseline)
+            : 0
 
         return HealthSleepScoreEstimate(
-            overall: duration + bedtime + interruptions,
+            overall: duration + bedtime + interruptions + restorative,
             duration: duration,
             bedtime: bedtime,
-            interruptions: interruptions
+            interruptions: interruptions,
+            restorative: restorative
         )
     }
 
-    private static func durationComponent(totalSleepTime: TimeInterval, sleepGoalHours: Double) -> Int {
+    private static func durationComponent(
+        totalSleepTime: TimeInterval,
+        sleepGoalHours: Double,
+        maxPts: Int
+    ) -> Int {
         let targetSleepSeconds = sleepGoalHours * 3_600
-        return clamp(Int((totalSleepTime / targetSleepSeconds * 50).rounded()), lower: 0, upper: 50)
+        return clamp(Int((totalSleepTime / targetSleepSeconds * Double(maxPts)).rounded()), lower: 0, upper: maxPts)
     }
 
     private static func bedtimeComponent(
         session: SleepSession,
         baseline: SleepBaseline?,
+        contextEntry: SleepContextEntry?,
+        maxPts: Int,
         calendar: Calendar
     ) -> Int {
+        guard maxPts > 0 else { return 0 }
+        // Invariant #2: travel == true (not != false) — nil means unknown, not safe-to-penalize.
+        if contextEntry?.travel == true { return maxPts }  // travel exemption — full pts
         guard let baseline, baseline.validNights >= 5 else { return 0 }
 
         let bedMinute = minuteOfDay(for: session.inBedStartDate ?? session.startDate, calendar: calendar)
         let deviation = circularMinuteDistance(bedMinute, baseline.bedtimeMinuteAverage)
-        return clamp(Int(((1 - deviation / 166) * 30).rounded()), lower: 0, upper: 30)
+        // 166-minute boundary: at ≥2h46m deviation the component reaches 0.
+        return clamp(Int(((1 - deviation / 166) * Double(maxPts)).rounded()), lower: 0, upper: maxPts)
     }
 
-    private static func interruptionsComponent(session: SleepSession) -> Int {
-        let wasoPenalty = min(20, max(0, (session.waso - 5 * 60) / (55 * 60) * 20))
-        return clamp(Int((20 - wasoPenalty).rounded()), lower: 0, upper: 20)
+    private static func interruptionsComponent(session: SleepSession, maxPts: Int) -> Int {
+        // Grace period: 5 min WASO = no penalty. Full penalty at 55 min WASO.
+        let wasoPenalty = min(Double(maxPts), max(0, (session.waso - 5 * 60) / (55 * 60) * Double(maxPts)))
+        return clamp(Int((Double(maxPts) - wasoPenalty).rounded()), lower: 0, upper: maxPts)
+    }
+
+    /// 0–20 pts based on combined deep+REM ratio vs personal baseline.
+    /// Falls back to absolute target (40% combined) when baseline isn't ready.
+    private static func restorativeComponent(session: SleepSession, baseline: SleepBaseline?) -> Int {
+        guard session.totalSleepTime > 0 else { return 0 }
+        let combined = session.deepDuration + session.remDuration
+        let ratio = combined / session.totalSleepTime
+
+        if let baseline, baseline.validNights >= 5, baseline.totalSleepAverage > 0 {
+            let baselineRatio = (baseline.deepAverage + baseline.remAverage) / baseline.totalSleepAverage
+            // ±delta around baseline: 10 pts at parity, up to 20 pts for +20% above baseline.
+            let delta = ratio - baselineRatio
+            return clamp(Int((10.0 + delta * 50.0).rounded()), lower: 0, upper: 20)
+        } else {
+            // Absolute target: 40% combined (18% deep + 22% REM).
+            // 20 pts at ≥40%, 0 pts at ≤0%.
+            let target = 0.40
+            return clamp(Int((ratio / target * 20.0).rounded()), lower: 0, upper: 20)
+        }
     }
 
     private static func minuteOfDay(for date: Date, calendar: Calendar) -> Double {

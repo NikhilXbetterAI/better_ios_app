@@ -87,6 +87,8 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
     func fetchNightLog(forSleepDateKey key: String) async throws -> ProtocolNightLog?
     func fetchNightLogs(from startKey: String, to endKey: String) async throws -> [ProtocolNightLog]
     func deleteNightLog(forSleepDateKey key: String) async throws
+    func hasNightLogs(forVersionID id: UUID) async throws -> Bool
+
 
     func saveLogEdit(_ edit: ProtocolLogEdit) async throws
     func fetchLogEdits(forSleepDateKey key: String) async throws -> [ProtocolLogEdit]
@@ -234,6 +236,8 @@ extension LocalDataRepositoryProtocol {
     func fetchNightLog(forSleepDateKey key: String) async throws -> ProtocolNightLog? { nil }
     func fetchNightLogs(from startKey: String, to endKey: String) async throws -> [ProtocolNightLog] { [] }
     func deleteNightLog(forSleepDateKey key: String) async throws {}
+    func hasNightLogs(forVersionID id: UUID) async throws -> Bool { false }
+
     func saveLogEdit(_ edit: ProtocolLogEdit) async throws {}
     func fetchLogEdits(forSleepDateKey key: String) async throws -> [ProtocolLogEdit] { [] }
     func saveBaselineSnapshot(_ snapshot: ProtocolBaselineSnapshot) async throws {}

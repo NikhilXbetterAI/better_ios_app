@@ -1,10 +1,11 @@
 import Foundation
 import Observation
+import SwiftUI
 
 enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
     case week = 7
     case month = 30
-    case twoMonths = 60
+    case threeMonths = 90
 
     var id: Int { rawValue }
     var days: Int { rawValue }
@@ -13,7 +14,7 @@ enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
         switch self {
         case .week: "7D"
         case .month: "30D"
-        case .twoMonths: "60D"
+        case .threeMonths: "90D"
         }
     }
 }
@@ -35,15 +36,15 @@ enum TrendMetric: String, CaseIterable, Identifiable, Sendable {
     var displayName: String {
         switch self {
         case .totalSleep: "Total Sleep"
-        case .longestRestorativeBlock: "Longest Block"
+        case .longestRestorativeBlock: "Longest Stretch"
         case .score: "Sleep Score"
         case .deepSleep: "Deep Sleep"
         case .remSleep: "REM Sleep"
         case .hrv: "HRV"
-        case .waso: "WASO"
+        case .waso: "Wake Time"
         case .latency: "Latency"
-        case .respiratoryRate: "Resp. Rate"
-        case .oxygenSaturation: "SpO2"
+        case .respiratoryRate: "Breath Rate"
+        case .oxygenSaturation: "Blood Oxygen"
         }
     }
 
@@ -59,7 +60,7 @@ enum TrendMetric: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct TrendChartPoint: Identifiable, Sendable {
+struct TrendChartPoint: Identifiable, Sendable, Equatable {
     let id: UUID
     let date: Date
     let dateKey: String
@@ -73,6 +74,12 @@ struct TrendChartPoint: Identifiable, Sendable {
         self.value = value
         self.details = details
     }
+
+    /// Semantic equality: UUID is a stable-per-init identity token, not a semantic key.
+    /// Two points with the same dateKey, value, and details are the same data point.
+    static func == (lhs: TrendChartPoint, rhs: TrendChartPoint) -> Bool {
+        lhs.dateKey == rhs.dateKey && lhs.value == rhs.value && lhs.details == rhs.details
+    }
 }
 
 struct TrendPointDetails: Sendable, Hashable {
@@ -82,7 +89,7 @@ struct TrendPointDetails: Sendable, Hashable {
     let score: SleepQualityScore
 }
 
-struct StageCompositionPoint: Identifiable, Sendable {
+struct StageCompositionPoint: Identifiable, Sendable, Equatable {
     let id: UUID
     let date: Date
     let dateKey: String
@@ -127,9 +134,17 @@ struct StageCompositionPoint: Identifiable, Sendable {
         self.remDuration = remDuration
         self.awakeDuration = awakeDuration
     }
+
+    static func == (lhs: StageCompositionPoint, rhs: StageCompositionPoint) -> Bool {
+        lhs.dateKey == rhs.dateKey
+            && lhs.deepDuration == rhs.deepDuration
+            && lhs.coreDuration == rhs.coreDuration
+            && lhs.remDuration == rhs.remDuration
+            && lhs.awakeDuration == rhs.awakeDuration
+    }
 }
 
-struct TrendComparisonSummary: Sendable, Hashable {
+struct TrendComparisonSummary: Sendable, Hashable, Equatable {
     var currentAverage: Double
     var previousAverage: Double
     var percentChange: Double
@@ -142,6 +157,7 @@ struct TrendComparisonSummary: Sendable, Hashable {
 final class TrendsViewModel {
     private let localRepository: LocalDataRepositoryProtocol
     private let chronotypeService: ChronotypeCalculationService
+    private let insightService = SleepInsightService()
     private let calendar: Calendar
     private var comparisonSessions: [SleepSession] = []
     private enum UserDefaultsKeys {
@@ -163,6 +179,39 @@ final class TrendsViewModel {
     var chronotypeResult: ChronotypeCalculationResult?
     var sleepGoalHours: Double = 8.0
 
+    // Explorer state
+    var secondaryMetric: TrendMetric? = nil
+    var secondaryChartPoints: [TrendChartPoint] = []
+    var tertiaryMetric: TrendMetric? = nil
+    var tertiaryChartPoints: [TrendChartPoint] = []
+    var periodAverages: [TrendWindow: [TrendMetric: Double]] = [:]
+
+    /// Stable color for each metric comparison slot (0=primary, 1=compare1, 2=compare2).
+    static func explorerColor(slot: Int) -> Color {
+        switch slot {
+        case 0: return BetterColors.brand
+        case 1: return BetterColors.success
+        default: return BetterColors.warning
+        }
+    }
+
+    // Per-session metric value cache. Two parallel structures to distinguish
+    // "not yet computed" from "computed but nil".
+    // Key: "\(session.id):\(metric.rawValue)"
+    private var metricValueCacheComputed: Set<String> = []
+    private var metricValueCacheValues: [String: Double] = [:]
+
+    // Cached derived properties to avoid main-thread scroll lag
+    var bestSleepSession: SleepSession? = nil
+    var avgScoreInPeriod: Double? = nil
+    var avgDurationHours: Double? = nil
+    var scoreSparklineValues: [Double] = []
+    var weekendAvgHours: Double? = nil
+    var weekdayAvgHours: Double? = nil
+    var weekendSessionCount: Int = 0
+    var weekdaySessionCount: Int = 0
+
+
     var weekOverWeekChange: Double? {
         comparisonSummary?.percentChange
     }
@@ -179,44 +228,6 @@ final class TrendsViewModel {
         ).overall)
     }
 
-    var bestSleepSession: SleepSession? {
-        sessions.max { healthScore(for: $0) < healthScore(for: $1) }
-    }
-
-    var avgScoreInPeriod: Double? {
-        let values = sessions.map { healthScore(for: $0) }
-        guard !values.isEmpty else { return nil }
-        return values.reduce(0, +) / Double(values.count)
-    }
-
-    var avgDurationHours: Double? {
-        guard !sessions.isEmpty else { return nil }
-        return sessions.map { $0.totalSleepTime / 3_600 }.reduce(0, +) / Double(sessions.count)
-    }
-
-    var scoreSparklineValues: [Double] {
-        sessions.sorted { $0.startDate < $1.startDate }.map { healthScore(for: $0) }
-    }
-
-    var weekendAvgHours: Double? {
-        let s = sessions.filter { calendar.isDateInWeekend($0.startDate) }
-        guard !s.isEmpty else { return nil }
-        return s.map { $0.totalSleepTime / 3_600 }.reduce(0, +) / Double(s.count)
-    }
-
-    var weekdayAvgHours: Double? {
-        let s = sessions.filter { !calendar.isDateInWeekend($0.startDate) }
-        guard !s.isEmpty else { return nil }
-        return s.map { $0.totalSleepTime / 3_600 }.reduce(0, +) / Double(s.count)
-    }
-
-    var weekendSessionCount: Int {
-        sessions.filter { calendar.isDateInWeekend($0.startDate) }.count
-    }
-
-    var weekdaySessionCount: Int {
-        sessions.filter { !calendar.isDateInWeekend($0.startDate) }.count
-    }
 
     init(
         localRepository: LocalDataRepositoryProtocol,
@@ -234,18 +245,46 @@ final class TrendsViewModel {
 
     func selectWindow(_ window: TrendWindow) async {
         selectedWindow = window
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         await loadData()
     }
 
     func selectMetric(_ metric: TrendMetric) {
         selectedMetric = metric
+        // If the new primary clashes with secondary or tertiary, clear those
+        if secondaryMetric == metric { secondaryMetric = nil; tertiaryMetric = nil }
+        if tertiaryMetric == metric { tertiaryMetric = nil }
         updateChartPoints()
+        updateSecondaryChartPoints()
+        updateTertiaryChartPoints()
         updateComparisonSummary(from: comparisonSessions, endingAt: Date())
+        recomputeDerivedMetrics()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    func selectSecondaryMetric(_ metric: TrendMetric?) {
+        secondaryMetric = metric
+        // If secondary clears out, clear tertiary too (tertiary requires secondary)
+        if metric == nil { tertiaryMetric = nil }
+        updateSecondaryChartPoints()
+        updateTertiaryChartPoints()
+        recomputeDerivedMetrics()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    func selectTertiaryMetric(_ metric: TrendMetric?) {
+        tertiaryMetric = metric
+        updateTertiaryChartPoints()
+        recomputeDerivedMetrics()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     func loadData(now: Date = Date()) async {
         isLoading = true
         errorMessage = nil
+        // Invalidate cache — sessions and baselines may have changed.
+        metricValueCacheComputed.removeAll(keepingCapacity: true)
+        metricValueCacheValues.removeAll(keepingCapacity: true)
         protocolStartDate = UserDefaults.standard.object(forKey: UserDefaultsKeys.protocolStartDate) as? Date
         do {
             let startDate = calendar.date(byAdding: .day, value: -selectedWindow.days, to: now)
@@ -278,8 +317,11 @@ final class TrendsViewModel {
             adherenceByDateKey = byKey
             updateComparisonSummary(from: fetchedSessions, endingAt: now)
             updateChartPoints()
+            updateSecondaryChartPoints()
+            updateTertiaryChartPoints()
             updateStageCompositionPoints()
             updateLatestInsights()
+            recomputeDerivedMetrics()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -288,6 +330,63 @@ final class TrendsViewModel {
 }
 
 private extension TrendsViewModel {
+    func recomputeDerivedMetrics() {
+        periodAverages = computePeriodAverages()
+        guard !sessions.isEmpty else {
+            bestSleepSession = nil
+            avgScoreInPeriod = nil
+            avgDurationHours = nil
+            scoreSparklineValues = []
+            weekendSessionCount = 0
+            weekdaySessionCount = 0
+            weekendAvgHours = nil
+            weekdayAvgHours = nil
+            return
+        }
+
+        let sortedSessions = sessions.sorted { $0.startDate < $1.startDate }
+
+        var maxScore: Double = 0
+        var maxScoreSession: SleepSession? = nil
+        var scoreSum: Double = 0
+        var durationSum: TimeInterval = 0
+        var weekendDurationSum: TimeInterval = 0
+        var weekdayDurationSum: TimeInterval = 0
+        var weekendCount = 0
+        var weekdayCount = 0
+        var sparklineScores: [Double] = []
+
+        for session in sortedSessions {
+            let score = healthScore(for: session)
+            sparklineScores.append(score)
+            scoreSum += score
+            durationSum += session.totalSleepTime
+
+            if score > maxScore {
+                maxScore = score
+                maxScoreSession = session
+            }
+
+            if calendar.isDateInWeekend(session.startDate) {
+                weekendDurationSum += session.totalSleepTime
+                weekendCount += 1
+            } else {
+                weekdayDurationSum += session.totalSleepTime
+                weekdayCount += 1
+            }
+        }
+
+        let count = sessions.count
+        bestSleepSession = maxScoreSession
+        avgScoreInPeriod = scoreSum / Double(count)
+        avgDurationHours = durationSum / Double(count) / 3_600
+        scoreSparklineValues = sparklineScores
+        weekendSessionCount = weekendCount
+        weekdaySessionCount = weekdayCount
+        weekendAvgHours = weekendCount > 0 ? weekendDurationSum / Double(weekendCount) / 3_600 : nil
+        weekdayAvgHours = weekdayCount > 0 ? weekdayDurationSum / Double(weekdayCount) / 3_600 : nil
+    }
+
     func calculateChronotype(
         sessions: [SleepSession],
         contextEntries: [SleepContextEntry],
@@ -326,9 +425,74 @@ private extension TrendsViewModel {
         }
     }
 
+    func updateSecondaryChartPoints() {
+        guard let metric = secondaryMetric else {
+            secondaryChartPoints = []
+            return
+        }
+        secondaryChartPoints = sessions.compactMap { session -> TrendChartPoint? in
+            guard let value = metricValue(for: session, metric: metric) else { return nil }
+            return TrendChartPoint(
+                date: session.startDate,
+                dateKey: session.sleepDateKey,
+                value: value,
+                details: TrendPointDetails(
+                    totalSleep: session.totalSleepTime,
+                    timeInBed: session.totalInBedTime,
+                    efficiency: session.efficiency,
+                    score: session.qualityScore
+                )
+            )
+        }
+    }
+
+    func updateTertiaryChartPoints() {
+        guard let metric = tertiaryMetric else {
+            tertiaryChartPoints = []
+            return
+        }
+        tertiaryChartPoints = sessions.compactMap { session -> TrendChartPoint? in
+            guard let value = metricValue(for: session, metric: metric) else { return nil }
+            return TrendChartPoint(
+                date: session.startDate,
+                dateKey: session.sleepDateKey,
+                value: value,
+                details: TrendPointDetails(
+                    totalSleep: session.totalSleepTime,
+                    timeInBed: session.totalInBedTime,
+                    efficiency: session.efficiency,
+                    score: session.qualityScore
+                )
+            )
+        }
+    }
+
+    func computePeriodAverages() -> [TrendWindow: [TrendMetric: Double]] {
+        let metrics = [selectedMetric, secondaryMetric, tertiaryMetric].compactMap { $0 }
+        guard !metrics.isEmpty, !comparisonSessions.isEmpty else { return [:] }
+        let now = Date()
+        var result: [TrendWindow: [TrendMetric: Double]] = [:]
+        for window in TrendWindow.allCases {
+            let cutoff = Calendar.current.date(byAdding: .day, value: -window.days, to: now)
+                ?? now.addingTimeInterval(Double(-window.days) * 86_400)
+            let windowSessions = comparisonSessions.filter { $0.endDate > cutoff && $0.startDate < now }
+            guard !windowSessions.isEmpty else { continue }
+            var metricMap: [TrendMetric: Double] = [:]
+            for metric in metrics {
+                let values = windowSessions.compactMap { metricValue(for: $0, metric: metric) }
+                if !values.isEmpty {
+                    metricMap[metric] = values.reduce(0, +) / Double(values.count)
+                }
+            }
+            if !metricMap.isEmpty {
+                result[window] = metricMap
+            }
+        }
+        return result
+    }
+
     func updateLatestInsights() {
         let sorted = sessions.sorted { $0.startDate < $1.startDate }
-        let insightService = SleepInsightService()
         if let latestSession = sorted.last {
             latestSessionInsights = insightService.insights(
                 session: latestSession,
@@ -396,8 +560,8 @@ private extension TrendsViewModel {
             return weekComparisonWindows(endingAt: endDate)
         case .month:
             return monthComparisonWindows(endingAt: endDate)
-        case .twoMonths:
-            return rollingComparisonWindows(days: 60, endingAt: endDate)
+        case .threeMonths:
+            return rollingComparisonWindows(days: 90, endingAt: endDate)
         }
     }
 
@@ -442,8 +606,32 @@ private extension TrendsViewModel {
         )
     }
 
+    /// Memoized explicit-metric overload. Used by `updateSecondaryChartPoints`,
+    /// `computePeriodAverages`, `updateComparisonSummary`, and `updateChartPoints`.
+    /// Cache key: "\(session.id):\(metric.rawValue)". Cleared in `loadData()`.
+    /// Nil results are stored via the absence of an entry in `metricValueCacheValues`
+    /// combined with presence in `metricValueCacheComputed`.
+    func metricValue(for session: SleepSession, metric: TrendMetric) -> Double? {
+        let key = "\(session.id):\(metric.rawValue)"
+        if metricValueCacheComputed.contains(key) {
+            return metricValueCacheValues[key]
+        }
+        let result = computeMetricValue(for: session, metric: metric)
+        metricValueCacheComputed.insert(key)
+        if let result {
+            metricValueCacheValues[key] = result
+        }
+        return result
+    }
+
+    /// Convenience overload that evaluates `selectedMetric`.
     func metricValue(for session: SleepSession) -> Double? {
-        switch selectedMetric {
+        metricValue(for: session, metric: selectedMetric)
+    }
+
+    /// Pure computation — no caching. Called only from `metricValue(for:metric:)`.
+    private func computeMetricValue(for session: SleepSession, metric: TrendMetric) -> Double? {
+        switch metric {
         case .totalSleep:
             return session.totalSleepTime / 3_600
         case .longestRestorativeBlock:

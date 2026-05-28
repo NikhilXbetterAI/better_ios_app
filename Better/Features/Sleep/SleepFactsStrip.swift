@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Compact hero summary: Total sleep · Bedtime · Wake.
-/// Bedtime and wake can flip to minutes-vs-usual deltas when baseline data exists.
+/// Bedtime and wake can flip to minutes-vs-usual deltas when baseline data is ready
+/// (≥ dashboardMinimumValidNights). An arrow icon hints the interaction is available.
 struct SleepFactsStrip: View {
     let session: SleepSession
     let baseline: SleepBaseline?
@@ -9,6 +10,11 @@ struct SleepFactsStrip: View {
     @State private var flippedClock: Set<Clock> = []
 
     enum Clock: Hashable { case bed, wake }
+
+    /// True when baseline has enough nights for a meaningful delta comparison.
+    private var baselineReady: Bool {
+        (baseline?.validNights ?? 0) >= BaselineEngine.dashboardMinimumValidNights
+    }
 
     // MARK: - Body
 
@@ -52,6 +58,13 @@ struct SleepFactsStrip: View {
                         .minimumScaleFactor(0.8)
                         .lineLimit(1)
                     Spacer(minLength: 0)
+                    // Affordance: shows when baseline is ready, hinting the cell is tappable
+                    if canFlip {
+                        Image(systemName: isFlipped ? "clock.fill" : "arrow.left.arrow.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(tint.opacity(isFlipped ? 0.9 : 0.45))
+                            .animation(.easeInOut(duration: 0.2), value: isFlipped)
+                    }
                 }
                 Text(isFlipped ? clockDeltaText(clock) : clockTimeText(clock))
                     .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
@@ -146,7 +159,9 @@ struct SleepFactsStrip: View {
     }
 
     private func clockBaselineMinute(_ clock: Clock) -> Double? {
-        guard let baseline else { return nil }
+        // Guard: require ≥ dashboardMinimumValidNights so the delta is
+        // based on a real sample, not a single-night "baseline".
+        guard let baseline, baselineReady else { return nil }
         switch clock {
         case .bed:  return baseline.bedtimeMinuteAverage
         case .wake: return baseline.wakeMinuteAverage

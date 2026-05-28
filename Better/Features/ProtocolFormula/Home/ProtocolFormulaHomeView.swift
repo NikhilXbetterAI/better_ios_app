@@ -14,17 +14,6 @@ struct ProtocolFormulaHomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: BetterSpacing.section) {
-                // Header navigation & segment switcher
-                HStack {
-                    segmentedSwitch
-                    Spacer()
-                    EditAffordance(action: onOpenEditLog)
-                }
-                
-                if viewModel.showFirstSwitchHint {
-                    hintCard
-                }
-
                 if let error = viewModel.errorMessage {
                     Text(error)
                         .font(.caption.weight(.semibold))
@@ -36,31 +25,20 @@ struct ProtocolFormulaHomeView: View {
                 }
                 
                 if let active = viewModel.activeVersion {
-                    switch viewModel.segment {
-                    case .lastNight:
-                        // HOME A: Last Night First (Morning Review)
-                        lastNightHeroCard(active)
-                        impactComparisonCard
-                        tonightCompactCard(active)
-                        trendSection
-                        protocolSummarySection
-                        quickNavRow
-
-                    case .tonight:
-                        // HOME B: Tonight First (Evening action view)
-                        tonightDominantHeroCard(active)
-                        lastNightCompactRecapCard(active)
-                        impactComparisonCard
-                        trendSection
-                        trialProgressSection(active)
-                        quickNavRow
-                    }
+                    lastNightHeroCard(active)
+                    lastNightMetricsGrid
+                    tonightInlineCard(active)
+                    trendSection
+                    quickNavRow
+                    protocolSummarySection
                 } else {
                     noFormulaCard
+                    quickNavRow
                 }
             }
             .padding(BetterSpacing.screen)
         }
+        .contentMargins(.bottom, 20, for: .scrollContent)
         .background(ProtocolPalette.backgroundColor.ignoresSafeArea())
         .task { await viewModel.onAppear() }
         .refreshable { await viewModel.refresh() }
@@ -69,67 +47,63 @@ struct ProtocolFormulaHomeView: View {
                 ImpactMetricDetailSheet(metric: metric, impact: impact, activeVersion: active)
             }
         }
-    }
-
-    // MARK: - Segmented Switch
-
-    private var segmentedSwitch: some View {
-        HStack(spacing: 0) {
-            segmentButton(.lastNight, "Last night")
-            segmentButton(.tonight, "Tonight")
-        }
-        .padding(3)
-        .frame(minHeight: 44)
-        .background(Capsule().fill(Color.white.opacity(0.04)))
-        .overlay(Capsule().stroke(Color.white.opacity(0.09), lineWidth: 0.5))
-    }
-
-    private func segmentButton(_ seg: ProtocolFormulaHomeViewModel.Segment, _ title: String) -> some View {
-        let selected = viewModel.segment == seg
-        return Button {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
-                viewModel.segment = seg
+        .sheet(isPresented: $viewModel.showQuickLogSheet) {
+            VStack(spacing: 20) {
+                Text("Log Last Night's Formula")
+                    .font(.headline)
+                    .foregroundStyle(BetterColors.text)
+                
+                if let active = viewModel.activeVersion {
+                    Text("Did you take \(active.resolvedLabel) last night?")
+                        .font(.subheadline)
+                        .foregroundStyle(ProtocolPalette.mutedText)
+                        .multilineTextAlignment(.center)
+                }
+                
+                HStack(spacing: 12) {
+                    Button {
+                        Task {
+                            await viewModel.markLastNightTaken()
+                            viewModel.showQuickLogSheet = false
+                        }
+                    } label: {
+                        Text("Took it")
+                            .font(.subheadline.weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(Capsule().fill(ProtocolPalette.goodColor))
+                            .foregroundStyle(Color.black)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Button {
+                        Task {
+                            await viewModel.markLastNightSkipped()
+                            viewModel.showQuickLogSheet = false
+                        }
+                    } label: {
+                        Text("Didn't take")
+                            .font(.subheadline.weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                            .foregroundStyle(BetterColors.text)
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                Button("Cancel", role: .cancel) {
+                    viewModel.showQuickLogSheet = false
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(ProtocolPalette.dimText)
+                .padding(.top, 4)
             }
-        } label: {
-            Text(title)
-                .font(.footnote.weight(.bold))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .frame(minHeight: 44)
-                .background(Capsule().fill(selected ? Color.white.opacity(0.08) : .clear))
-                .foregroundStyle(selected ? BetterColors.text : ProtocolPalette.mutedText)
+            .padding(24)
+            .background(ProtocolPalette.backgroundColor)
+            .presentationDetents([.height(220)])
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
-    // MARK: - Hint Card
-
-    private var hintCard: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "moon.stars.fill")
-                .foregroundStyle(ProtocolPalette.addinColor)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Log tonight's dose")
-                    .font(.footnote.weight(.bold))
-                Text("Tap Mark taken once you've taken your formula. Switch back to Last night anytime.")
-                    .font(.caption)
-                    .foregroundStyle(ProtocolPalette.mutedText)
-            }
-            Spacer()
-            Button("Dismiss") { viewModel.dismissHint() }
-                .font(.caption.weight(.bold))
-                .foregroundStyle(ProtocolPalette.brandColor)
-                .frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("Dismiss hint")
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.03)))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.08), lineWidth: 1))
-    }
-
-    // MARK: - HOME A: Last Night Hero Card
+    // MARK: - HOME: Last Night Hero Card
 
     private func lastNightHeroCard(_ active: ProtocolFormulaVersion) -> some View {
         let color = viewModel.lastNightVersion.map { ProtocolPalette.versionColor(hex: $0.colorHex) } ?? ProtocolPalette.brandColor
@@ -146,18 +120,54 @@ struct ProtocolFormulaHomeView: View {
                         .foregroundStyle(ProtocolPalette.dimText)
                         .textCase(.uppercase)
 
-                    Text(viewModel.lastNightSession?.sleepDateKey ?? "No session logged")
-                        .font(.title3.weight(.black))
-                        .foregroundStyle(BetterColors.text)
+                    HStack(spacing: 8) {
+                        Button { Task { await viewModel.goToPreviousNight() } } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(ProtocolPalette.dimText)
+                                .frame(width: 32, height: 32)
+                                .background(Circle().fill(Color.white.opacity(0.06)))
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Text(viewModel.lastNightSession?.sleepDateKey ?? "No session logged")
+                            .font(.title3.weight(.black))
+                            .foregroundStyle(BetterColors.text)
+                        
+                        Button { Task { await viewModel.goToNextNight() } } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(ProtocolPalette.dimText)
+                                .frame(width: 32, height: 32)
+                                .background(Circle().fill(Color.white.opacity(0.06)))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(viewModel.isShowingLatestNight)
+                    }
 
                     HStack(spacing: 6) {
                         if let lastNightVer = viewModel.lastNightVersion {
-                            VersionChip(version: lastNightVer, size: .xs)
-                                .accessibilityLabel("Formula \(lastNightVer.resolvedLabel)")
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(ProtocolPalette.goodColor)
+                                VersionChip(version: lastNightVer, size: .xs)
+                                    .accessibilityLabel("Formula \(lastNightVer.resolvedLabel)")
+                            }
                         } else {
-                            Text("No formula taken")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(ProtocolPalette.dimText)
+                            Button {
+                                viewModel.showQuickLogSheet = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "questionmark.circle.fill")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.orange)
+                                    Text("Not logged — tap to log")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
                         if let addins = viewModel.lastNightLog?.addins, !addins.isEmpty {
                             Text("+\(addins.count) add-in\(addins.count == 1 ? "" : "s")")
@@ -232,7 +242,6 @@ struct ProtocolFormulaHomeView: View {
                     awakeMin: snap.awakeMinutes ?? 0,
                     totalSleepMin: snap.totalSleepMinutes ?? 0,
                     height: 12,
-                    color: color,
                     showLabels: true
                 )
                 .accessibilityElement(children: .ignore)
@@ -253,7 +262,7 @@ struct ProtocolFormulaHomeView: View {
         let sign = delta >= 0 ? "+" : ""
         let color: Color = delta >= 0 ? ProtocolPalette.goodColor : ProtocolPalette.badColor
         let direction = delta >= 0 ? "higher" : "lower"
-        let displayUnit = unit == "%" ? "pp" : unit
+        let displayUnit = unit == "%" ? "%" : unit
         let formatted = "\(sign)\(String(format: "%.1f", delta))\(displayUnit)"
         return HStack(spacing: 5) {
             Text(formatted)
@@ -313,94 +322,9 @@ struct ProtocolFormulaHomeView: View {
         )
     }
 
-    // MARK: - Impact vs Baseline Comparison Card
-
-    private var impactComparisonMetrics: [ProtocolFormulaMetric] {
-        [.restorativePct, .deep, .rem, .awake, .duration]
-    }
-
-    private func impactPair(for metric: ProtocolFormulaMetric) -> ProtocolFormulaHomeViewModel.ImpactPair {
-        viewModel.impactPairs[metric]
-            ?? ProtocolFormulaHomeViewModel.ImpactPair(you: nil, baseline: nil, delta: nil, unit: metric.unit)
-    }
-
-    private var impactComparisonCard: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            HStack {
-                Text("Your Metrics vs Baseline")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(ProtocolPalette.dimText)
-                    .textCase(.uppercase)
-                Spacer()
-                if let count = viewModel.impact?.nightCount, count > 0 {
-                    Text("\(count) night\(count == 1 ? "" : "s")")
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(ProtocolPalette.dimText)
-                }
-            }
-
-            if viewModel.baselineStatus != .ready || (viewModel.impact?.isLowData ?? true) {
-                HStack(spacing: 8) {
-                    Image(systemName: "hourglass")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(ProtocolPalette.dimText)
-                    Text(baselineStatusText)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(ProtocolPalette.dimText)
-                    Spacer()
-                }
-                .padding(.vertical, 10)
-            }
-
-            // 2-column grid of tappable metric cards
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
-                ForEach(impactComparisonMetrics, id: \.self) { metric in
-                    impactMetricGridCard(metric)
-                }
-            }
-
-            Text(ProtocolImpactSummary.causalityCaveat)
-                .font(.caption2)
-                .foregroundStyle(ProtocolPalette.dimText)
-        }
-        .padding(BetterSpacing.medium)
-        .background(ProtocolPalette.surfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
-    }
-
-    /// Compact tappable card in the 2-col Impact vs Baseline grid.
-    private func impactMetricGridCard(_ metric: ProtocolFormulaMetric) -> some View {
-        let pair = impactPair(for: metric)
-
-        return Button {
-            impactDetailMetric = metric
-        } label: {
-            ProtocolMetricComparisonStrip(
-                metric: metric,
-                yourValue: pair.you,
-                baselineValue: pair.baseline,
-                compact: true
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(metric.fullLabel), tap for details")
-    }
-
-    private func impactFormattedValue(_ value: Double?, unit: String) -> String {
-        guard let v = value else { return "—" }
-        switch unit {
-        case "%":   return "\(Int(v.rounded()))%"
-        case "pts": return "\(Int(v.rounded()))pts"
-        default:
-            let h = Int(v) / 60; let m = Int(v) % 60
-            return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-        }
-    }
-
-    // Tonight Compact CTA Card
-    private func tonightCompactCard(_ active: ProtocolFormulaVersion) -> some View {
-        let tonightVer = viewModel.versions.first { $0.id == viewModel.selectedTonightVersionID } ?? active
+    // Tonight Inline CTA Card
+    private func tonightInlineCard(_ active: ProtocolFormulaVersion) -> some View {
+        let tonightVer = viewModel.selectedTonightVersionID.flatMap { viewModel.versionsByID[$0] } ?? active
         let color = ProtocolPalette.versionColor(hex: tonightVer.colorHex)
         
         return VStack(alignment: .leading, spacing: BetterSpacing.medium) {
@@ -412,8 +336,9 @@ struct ProtocolFormulaHomeView: View {
                         .textCase(.uppercase)
 
                     HStack(spacing: 8) {
-                        Text("Take Tonight:")
+                        Text("Schedule:")
                             .font(.subheadline.weight(.bold))
+                            .foregroundStyle(BetterColors.text)
                         VersionChip(version: tonightVer, size: .small)
                             .accessibilityLabel("Formula \(tonightVer.resolvedLabel)")
                     }
@@ -421,31 +346,26 @@ struct ProtocolFormulaHomeView: View {
                 Spacer()
             }
 
-            if !tonightVer.formulaText.isEmpty {
-                Text(tonightVer.formulaText)
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(ProtocolPalette.mutedText)
-            }
-
             // Supplement log actions — show save-state banner when saving/saved/error
             tonightLogActionArea(color: color, compact: true)
 
-            // Dashed supplement expander button
+            // Collapsible supplement expander button
             Button {
                 withAnimation { showAddinEditor.toggle() }
             } label: {
                 HStack {
                     Image(systemName: showAddinEditor ? "minus" : "plus")
                         .font(.caption.weight(.bold))
-                    Text(showAddinEditor ? "Hide add-on supplement editor" : "Add tonight's add-on supplements")
+                    Text(showAddinEditor ? "Hide add-on supplements" : "Add tonight's add-on supplements")
                         .font(.caption.weight(.bold))
                 }
+                .font(.system(size: 13))
                 .foregroundStyle(ProtocolPalette.addinColor)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .padding(.vertical, 8)
+                .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(ProtocolPalette.addinColor.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                        .stroke(ProtocolPalette.borderColor, lineWidth: 1)
                 )
             }
             .buttonStyle(.plain)
@@ -458,189 +378,6 @@ struct ProtocolFormulaHomeView: View {
         .background(ProtocolPalette.surfaceColor)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
-    }
-
-    // MARK: - HOME B: Tonight Dominant Hero Card
-
-    private func tonightDominantHeroCard(_ active: ProtocolFormulaVersion) -> some View {
-        let selected = viewModel.versions.first { $0.id == viewModel.selectedTonightVersionID } ?? active
-        let color = ProtocolPalette.versionColor(hex: selected.colorHex)
-        let nightCount = viewModel.impact?.nightCount ?? 0
-        
-        return VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            // Trial progress ribbon text
-            HStack {
-                Text("Tonight's schedule")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(color)
-                    .textCase(.uppercase)
-                Spacer()
-                Text("Night \(nightCount)/14")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(ProtocolPalette.dimText)
-                    .monospacedDigit()
-            }
-
-            Text("Take Tonight: \(selected.resolvedLabel)")
-                .font(.title.weight(.black))
-                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
-                .foregroundStyle(BetterColors.text)
-
-            if !selected.formulaText.isEmpty {
-                Text(selected.formulaText)
-                    .font(.body.weight(.bold))
-                    .foregroundStyle(BetterColors.text.opacity(0.85))
-            }
-
-            // Baseline-delta context — tappable pill opens the restorativePct detail sheet.
-            if let impact = viewModel.impact, !impact.isLowData,
-               let deltaPct = impact.deltaRestorativePctOfInBed {
-                Button { impactDetailMetric = .restorativePct } label: {
-                    heroBaselinePill(delta: deltaPct, unit: "%")
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Tonight dominant card actions
-            tonightLogActionArea(color: color, compact: false)
-            
-            // Inline add-on supplementary editor
-            addinEditor
-            
-            // Select version switch row
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Took a different version tonight?")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(ProtocolPalette.dimText)
-
-                HStack(spacing: 8) {
-                    ForEach(viewModel.visibleVersions) { ver in
-                        let isSel = ver.id == selected.id
-                        Button {
-                            viewModel.selectTonightVersion(ver)
-                        } label: {
-                            Text(ver.resolvedLabel)
-                                .font(.caption.weight(.bold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .frame(minHeight: 44)
-                                .background(Capsule().fill(isSel ? ProtocolPalette.versionColor(hex: ver.colorHex).opacity(0.18) : Color.white.opacity(0.03)))
-                                .overlay(Capsule().stroke(isSel ? ProtocolPalette.versionColor(hex: ver.colorHex) : Color.white.opacity(0.08), lineWidth: 1))
-                                .foregroundStyle(isSel ? BetterColors.text : ProtocolPalette.mutedText)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Formula \(ver.resolvedLabel)")
-                        .accessibilityAddTraits(isSel ? [.isSelected] : [])
-                    }
-                }
-            }
-            .padding(.top, 4)
-        }
-        .padding(BetterSpacing.medium)
-        .background(
-            LinearGradient(colors: [color.opacity(0.14), ProtocolPalette.surfaceColor],
-                           startPoint: .top, endPoint: .bottom)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(color.opacity(0.24), lineWidth: 1))
-    }
-
-    // HOME B: Last Night Compact Recap Card
-    private func lastNightCompactRecapCard(_ active: ProtocolFormulaVersion) -> some View {
-        let snapshot = viewModel.lastNightSnapshot
-        let pct = snapshot?.restorativePctOfInBed ?? 0
-        let color = viewModel.lastNightVersion.map { ProtocolPalette.versionColor(hex: $0.colorHex) } ?? ProtocolPalette.brandColor
-        
-        return VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Last night recap")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(ProtocolPalette.dimText)
-                        .textCase(.uppercase)
-
-                    Text(viewModel.lastNightSession?.sleepDateKey ?? "No session logged")
-                        .font(.headline.weight(.black))
-                        .foregroundStyle(BetterColors.text)
-                }
-                Spacer()
-                if let lastNightVer = viewModel.lastNightVersion {
-                    VersionChip(version: lastNightVer, size: .xs)
-                        .accessibilityLabel("Formula \(lastNightVer.resolvedLabel)")
-                }
-            }
-
-            HStack(spacing: BetterSpacing.large) {
-                // Circular stats summary
-                VStack(spacing: 2) {
-                    Text("\(Int(pct.rounded()))%")
-                        .font(.title.weight(.black).monospacedDigit())
-                        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
-                    Text("Restorative")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(ProtocolPalette.dimText)
-                }
-                .frame(width: 80)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Restorative sleep")
-                .accessibilityValue("\(Int(pct.rounded())) percent")
-                
-                // Inline compact list of metrics
-                VStack(alignment: .leading, spacing: 4) {
-                    compactRow(label: "Deep sleep", value: snapshot?.deepMinutes)
-                    compactRow(label: "REM sleep", value: snapshot?.remMinutes)
-                    compactRow(label: "Awake time", value: snapshot?.awakeMinutes)
-                    compactRow(label: "Sleep duration", value: snapshot?.totalSleepMinutes)
-                }
-            }
-            
-            if let snap = snapshot {
-                StageBar(
-                    deepMin: snap.deepMinutes ?? 0,
-                    remMin: snap.remMinutes ?? 0,
-                    awakeMin: snap.awakeMinutes ?? 0,
-                    totalSleepMin: snap.totalSleepMinutes ?? 0,
-                    height: 8,
-                    color: color,
-                    showLabels: false
-                )
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(stageBarAccessibilityLabel(snap: snap))
-            }
-
-            if let impact = viewModel.impact, !impact.isLowData,
-               let deltaPct = impact.deltaRestorativePctOfInBed {
-                Button { impactDetailMetric = .restorativePct } label: {
-                    heroBaselinePill(delta: deltaPct, unit: "%")
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(BetterSpacing.medium)
-        .background(ProtocolPalette.surfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
-    }
-
-    private func compactRow(label: String, value: Double?) -> some View {
-        HStack {
-            Text(label)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(ProtocolPalette.dimText)
-            Spacer()
-            if let value {
-                let hrs = Int(value) / 60
-                let mins = Int(value) % 60
-                let str = hrs > 0 ? "\(hrs)h \(mins)m" : "\(mins)m"
-                Text(str)
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(BetterColors.text)
-            } else {
-                Text("—")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(ProtocolPalette.dimText)
-            }
-        }
     }
 
     // MARK: - Shared Trend Chart Sparkline Section
@@ -691,7 +428,7 @@ struct ProtocolFormulaHomeView: View {
         }
     }
 
-    // MARK: - HOME A: Your Protocol Summary Strip
+    // MARK: - HOME: Your Protocol Summary Strip
 
     private var protocolSummarySection: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.small) {
@@ -702,37 +439,6 @@ struct ProtocolFormulaHomeView: View {
             
             BetterHealthCard {
                 PvPhaseRibbon(segments: viewModel.ribbonSegments)
-            }
-        }
-    }
-
-    // MARK: - HOME B: Trial Progress Strip
-
-    private func trialProgressSection(_ active: ProtocolFormulaVersion) -> some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.small) {
-            Text("Trial progress")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(ProtocolPalette.dimText)
-                .textCase(.uppercase)
-            
-            BetterHealthCard {
-                VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                    PvPhaseRibbon(segments: viewModel.ribbonSegments)
-                    
-                    // Show comparison text: active average vs baseline
-                    if let impact = viewModel.impact, !impact.isLowData {
-                        if let deltaPct = impact.deltaRestorativePctOfInBed {
-                            let sign = deltaPct >= 0 ? "+" : ""
-                            Text("\(active.resolvedLabel) averages \(sign)\(deltaPct, format: .number.precision(.fractionLength(1))) pp restorative sleep vs baseline.")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(ProtocolPalette.mutedText)
-                        }
-                    } else {
-                        Text(trialStatusText(active))
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(ProtocolPalette.dimText)
-                    }
-                }
             }
         }
     }
@@ -1045,21 +751,71 @@ struct ProtocolFormulaHomeView: View {
     }
 
     private var noFormulaCard: some View {
-        BetterHealthCard {
-            VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                BetterSectionHeader(title: "No formula yet")
-                Text("Create your first formula version to start logging and comparing nights.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(ProtocolPalette.mutedText)
-                Button(action: onOpenFormulaSetup) {
-                    Text("Add a formula")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(BetterColors.brand))
-                        .foregroundStyle(.white)
+        Group {
+            if viewModel.versions.isEmpty {
+                // Truly no formulas — prompt to create one
+                BetterHealthCard {
+                    VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+                        BetterSectionHeader(title: "No formula yet")
+                        Text("Create your first formula version to start logging and comparing nights.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(ProtocolPalette.mutedText)
+                        Button(action: onOpenFormulaSetup) {
+                            Text("Add a formula")
+                                .font(.system(size: 15, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Capsule().fill(BetterColors.brand))
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
+            } else {
+                // Formulas exist but none is active — one tap to pick
+                BetterHealthCard {
+                    VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+                        BetterSectionHeader(title: "Which formula are you on?")
+                        Text("Tap to set your current formula.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(ProtocolPalette.mutedText)
+                        VStack(spacing: 10) {
+                            ForEach(viewModel.versions) { version in
+                                let color = ProtocolPalette.versionColor(hex: version.colorHex)
+                                Button {
+                                    Task { await viewModel.setActive(version) }
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Circle()
+                                            .fill(color)
+                                            .frame(width: 10, height: 10)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(version.resolvedLabel)
+                                                .font(.system(size: 15, weight: .bold))
+                                                .foregroundStyle(BetterColors.text)
+                                            if !version.formulaText.isEmpty {
+                                                Text(version.formulaText)
+                                                    .font(.system(size: 12))
+                                                    .foregroundStyle(ProtocolPalette.mutedText)
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(ProtocolPalette.dimText)
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 12)
+                                    .background(color.opacity(0.08))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(color.opacity(0.22), lineWidth: 1))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
             }
         }
     }

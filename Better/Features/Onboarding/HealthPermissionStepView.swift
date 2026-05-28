@@ -7,6 +7,7 @@ struct HealthPermissionStepView: View {
 
     @State private var rowOpacities: [Double] = [0, 0]
     @State private var rowOffsets: [CGFloat] = [20, 20]
+    @State private var syncProgress: Double = 0.15
 
     var body: some View {
         GeometryReader { geometry in
@@ -18,6 +19,7 @@ struct HealthPermissionStepView: View {
                     ActivityRingsHero(rings: ActivityRingsHero.healthRings)
                 }
                 .frame(height: screenHeight * 0.38)
+                .accessibilityHidden(true)
 
                 // ── Text ──────────────────────────────────────────────────────
                 VStack(spacing: BetterSpacing.small) {
@@ -35,34 +37,17 @@ struct HealthPermissionStepView: View {
                 .padding(.horizontal, BetterSpacing.screen)
                 .padding(.top, BetterSpacing.large)
 
-                // ── Permission rows card ───────────────────────────────────────
-                VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                    permissionRow(
-                        "Sleep Analysis",
-                        "Duration, stages, efficiency, latency, and awakenings",
-                        "moon.zzz.fill",
-                        BetterColors.stageDeep
-                    )
-                    .opacity(rowOpacities[0])
-                    .offset(y: rowOffsets[0])
-
-                    Divider().overlay(BetterColors.border)
-
-                    permissionRow(
-                        "Heart and Recovery",
-                        "Overnight heart rate, HRV, oxygen, and respiratory rate",
-                        "waveform.path.ecg",
-                        BetterColors.heartRate
-                    )
-                    .opacity(rowOpacities[1])
-                    .offset(y: rowOffsets[1])
+                // ── Permission rows / sync state ──────────────────────────────
+                Group {
+                    if isWorking {
+                        healthSyncingView
+                            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    } else {
+                        permissionRowsCard
+                            .transition(.opacity)
+                    }
                 }
-                .padding(BetterSpacing.large)
-                .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(BetterColors.glassStroke, lineWidth: 1)
-                )
+                .animation(.spring(response: 0.45, dampingFraction: 0.82), value: isWorking)
                 .padding(.horizontal, BetterSpacing.screen)
                 .padding(.top, BetterSpacing.xLarge)
 
@@ -70,6 +55,7 @@ struct HealthPermissionStepView: View {
                 statusView
                     .padding(.horizontal, BetterSpacing.screen)
                     .padding(.top, BetterSpacing.medium)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.82), value: authorizationStateKey)
 
                 Spacer(minLength: 0)
                 Color.clear.frame(height: 120)
@@ -77,6 +63,88 @@ struct HealthPermissionStepView: View {
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }
         .onAppear { animateRows() }
+    }
+
+    // MARK: - Permission rows card
+
+    private var permissionRowsCard: some View {
+        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+            permissionRow(
+                "Sleep Analysis",
+                "Duration, stages, efficiency, latency, and awakenings",
+                "moon.zzz.fill",
+                BetterColors.stageDeep
+            )
+            .opacity(rowOpacities[0])
+            .offset(y: rowOffsets[0])
+
+            Divider().overlay(BetterColors.border)
+
+            permissionRow(
+                "Heart and Recovery",
+                "Overnight heart rate, HRV, oxygen, and respiratory rate",
+                "waveform.path.ecg",
+                BetterColors.heartRate
+            )
+            .opacity(rowOpacities[1])
+            .offset(y: rowOffsets[1])
+        }
+        .padding(BetterSpacing.large)
+        .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(BetterColors.glassStroke, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Syncing view
+
+    private var healthSyncingView: some View {
+        VStack(alignment: .leading, spacing: BetterSpacing.large) {
+            HStack(spacing: BetterSpacing.medium) {
+                ZStack {
+                    MetricGaugeView(progress: syncProgress, color: BetterColors.brand, lineWidth: 5)
+                        .frame(width: 44, height: 44)
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(BetterColors.brand)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Syncing your health data")
+                        .font(BetterTypography.subheadline)
+                        .foregroundStyle(BetterColors.text)
+                    Text("Reading sleep stages, heart rate, and biometrics from Apple Health…")
+                        .font(BetterTypography.footnote)
+                        .foregroundStyle(BetterColors.brand)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+
+            VStack(spacing: BetterSpacing.small) {
+                ForEach(0..<3, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(BetterColors.cardSecondary.opacity(0.8))
+                        .frame(height: 14)
+                        .redacted(reason: .placeholder)
+                        .shimmering()
+                }
+            }
+        }
+        .padding(BetterSpacing.large)
+        .background(BetterColors.cardGradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(BetterColors.glassStroke, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Syncing your health data from Apple Health")
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                syncProgress = 0.85
+            }
+        }
     }
 
     // MARK: - Permission row
@@ -115,6 +183,17 @@ struct HealthPermissionStepView: View {
             OnboardingNoticeView(icon: "moon.zzz", title: "Connected, but no sleep data found yet.", color: BetterColors.brand)
         case .failed(let message):
             OnboardingNoticeView(icon: "exclamationmark.circle.fill", title: message, color: BetterColors.warning)
+        }
+    }
+
+    private var authorizationStateKey: String {
+        switch authorizationState {
+        case .notRequested:           return "notRequested"
+        case .healthDataUnavailable:  return "unavailable"
+        case .requestCompleted:       return "completed"
+        case .canQueryHealthData:     return "canQuery"
+        case .noReadableSleepData:    return "noData"
+        case .failed(let m):          return "failed:\(m)"
         }
     }
 

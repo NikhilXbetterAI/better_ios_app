@@ -145,7 +145,6 @@ struct ProtocolVersionDiveView: View {
                     awakeMin: roll.meanAwakeMin ?? 0,
                     totalSleepMin: roll.meanTotalSleepMin ?? 0,
                     height: 12,
-                    color: color,
                     showLabels: true
                 )
             }

@@ -7,7 +7,6 @@ struct OnboardingFlowView: View {
     @State private var step: OnboardingStep = .welcome
     @State private var movingForward = true
     @State private var healthConnectAttempted = false
-    @State private var notificationAttempted = false
     @State private var finishPulse = false
     @State private var showPrivacyPolicy = false
 
@@ -205,6 +204,7 @@ struct OnboardingFlowView: View {
             .scaleEffect(finishPulse ? 1.04 : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.5), value: finishPulse)
             .accessibilityIdentifier("onboarding.primary")
+            .accessibilityLabel(viewModel.isLoading ? "Loading" : resolvedPrimaryTitle)
         }
         .padding(.bottom, BetterSpacing.xLarge)
     }
@@ -233,7 +233,7 @@ struct OnboardingFlowView: View {
         case .assessmentIntro:
             return "Continue"
         case .notifications:
-            return notificationAttempted ? "Continue" : "Enable Notifications"
+            return viewModel.notificationPermissionRequested ? "Continue" : "Enable Notifications"
         case .preferredName:
             return "Finish"
         default:
@@ -253,8 +253,7 @@ struct OnboardingFlowView: View {
                 goForward()
             }
         case .notifications:
-            if !notificationAttempted {
-                notificationAttempted = true
+            if !viewModel.notificationPermissionRequested {
                 Task { await viewModel.requestNotifications() }
             } else {
                 goForward()
@@ -265,8 +264,9 @@ struct OnboardingFlowView: View {
             goForward()
         case .preferredName:
             finishPulse = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { finishPulse = false }
             Task {
+                try? await Task.sleep(for: .milliseconds(150))
+                finishPulse = false
                 let completed = await viewModel.completeOnboarding()
                 if completed { onCompleted() }
             }
@@ -287,6 +287,7 @@ struct OnboardingFlowView: View {
     }
 
     private func move(to next: OnboardingStep) {
+        viewModel.errorMessage = nil
         movingForward = true
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             step = next

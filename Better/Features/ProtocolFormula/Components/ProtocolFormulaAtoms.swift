@@ -298,7 +298,6 @@ struct StageBar: View {
     let awakeMin: Double
     let totalSleepMin: Double
     var height: CGFloat = 16
-    var color: Color
     var showLabels: Bool = true
 
     private var safeDeepMin: Double { Self.safeMinutes(deepMin) }
@@ -323,17 +322,14 @@ struct StageBar: View {
 
             if showLabels {
                 HStack(spacing: 12) {
-                    legendItem(label: "Deep", value: formatMin(safeDeepMin), dotColor: color)
-                    legendItem(label: "REM", value: formatMin(safeRemMin), dotColor: Self.remColor)
-                    legendItem(label: "Light", value: formatMin(lightMin), dotColor: Self.lightColor.opacity(0.7))
-                    legendItem(label: "Awake", value: formatMin(safeAwakeMin), dotColor: ProtocolPalette.badColor.opacity(0.8))
+                    legendItem(label: "Deep", value: formatMin(safeDeepMin), dotColor: ProtocolPalette.deepColor)
+                    legendItem(label: "REM", value: formatMin(safeRemMin), dotColor: ProtocolPalette.remColor)
+                    legendItem(label: "Light", value: formatMin(lightMin), dotColor: ProtocolPalette.lightColor)
+                    legendItem(label: "Awake", value: formatMin(safeAwakeMin), dotColor: ProtocolPalette.awakeColor)
                 }
             }
         }
     }
-
-    private static let remColor = Color(hex: "#4ADE80")
-    private static let lightColor = Color(hex: "#60A5FA")
 
     @ViewBuilder
     private func stageBarHStack(totalWidth: CGFloat) -> some View {
@@ -343,19 +339,19 @@ struct StageBar: View {
         let wAwake = totalWidth * CGFloat(safeAwakeMin / totalMin)
         HStack(spacing: 2) {
             if safeDeepMin > 0 {
-                RoundedRectangle(cornerRadius: 3).fill(color)
+                RoundedRectangle(cornerRadius: 3).fill(ProtocolPalette.deepColor)
                     .frame(width: max(2, wDeep - 2))
             }
             if safeRemMin > 0 {
-                RoundedRectangle(cornerRadius: 3).fill(Self.remColor)
+                RoundedRectangle(cornerRadius: 3).fill(ProtocolPalette.remColor)
                     .frame(width: max(2, wRem - 2))
             }
             if lightMin > 0 {
-                RoundedRectangle(cornerRadius: 3).fill(Self.lightColor.opacity(0.5))
+                RoundedRectangle(cornerRadius: 3).fill(ProtocolPalette.lightColor)
                     .frame(width: max(2, wLight - 2))
             }
             if safeAwakeMin > 0 {
-                RoundedRectangle(cornerRadius: 3).fill(ProtocolPalette.badColor.opacity(0.8))
+                RoundedRectangle(cornerRadius: 3).fill(ProtocolPalette.awakeColor)
                     .frame(width: max(2, wAwake - 2))
             }
         }

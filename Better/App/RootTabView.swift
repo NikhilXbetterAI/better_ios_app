@@ -7,14 +7,11 @@ struct RootTabView: View {
     @State private var trendsViewModel: TrendsViewModel
     @State private var alertsViewModel: AlertsViewModel
     @State private var settingsViewModel: SettingsViewModel
-    @State private var biologyViewModel: BiologyViewModel
-    @State private var activityViewModel: ActivityViewModel
     @State private var onboardingViewModel: OnboardingViewModel
     @State private var sleepModeCoordinator: SleepModeCoordinator
     @State private var sleepModeViewModel: SleepModeViewModel
     @State private var hasLoadedProfile = false
     @State private var hasCompletedOnboarding = false
-    @State private var secondarySheet: SecondarySheet?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -34,14 +31,6 @@ struct RootTabView: View {
             healthRepository: environment.healthRepository,
             syncCoordinator: environment.syncCoordinator,
             privacyService: environment.privacyDataService
-        ))
-        _biologyViewModel = State(initialValue: BiologyViewModel(
-            localRepository: environment.localRepository,
-            healthRepository: environment.healthRepository
-        ))
-        _activityViewModel = State(initialValue: ActivityViewModel(
-            localRepository: environment.localRepository,
-            healthRepository: environment.healthRepository
         ))
         _onboardingViewModel = State(initialValue: OnboardingViewModel(
             localRepository: environment.localRepository,
@@ -87,7 +76,11 @@ struct RootTabView: View {
                     viewModel: sleepViewModel,
                     sleepModeViewModel: sleepModeViewModel,
                     redLightFilterService: environment.redLightFilterService,
-                    onOpenProfile: { secondarySheet = .settings }
+                    onOpenProfile: {
+                        withAnimation {
+                            selectedTab = .settings
+                        }
+                    }
                 )
             }
             .tabItem { Label(AppTab.sleep.title, systemImage: AppTab.sleep.systemImageName) }
@@ -117,47 +110,21 @@ struct RootTabView: View {
                 .toolbarBackground(.ultraThinMaterial, for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
 
-            // ── Biology ─────────────────────────────────────────────────
+            // ── Settings ─────────────────────────────────────────────────
             NavigationStack {
-                BiologyTabView(viewModel: biologyViewModel)
-            }
-            .tabItem { Label(AppTab.biology.title, systemImage: AppTab.biology.systemImageName) }
-            .tag(AppTab.biology)
-            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
-            .toolbarBackground(.visible, for: .tabBar)
-
-            // ── Activity ────────────────────────────────────────────────
-            NavigationStack {
-                ActivityTabView(
-                    viewModel: activityViewModel,
-                    onOpenAlerts: { secondarySheet = .alerts }
+                SettingsTabView(
+                    viewModel: settingsViewModel,
+                    sleepModeViewModel: sleepModeViewModel,
+                    redLightFilterService: environment.redLightFilterService,
+                    alertsViewModel: alertsViewModel
                 )
             }
-            .tabItem { Label(AppTab.activity.title, systemImage: AppTab.activity.systemImageName) }
-            .tag(AppTab.activity)
+            .tabItem { Label(AppTab.settings.title, systemImage: AppTab.settings.systemImageName) }
+            .tag(AppTab.settings)
             .toolbarBackground(.ultraThinMaterial, for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
         }
         .tint(BetterColors.brand)
-        .onChange(of: sleepViewModel.selectedSleepDateKey) { _, newKey in
-            if let date = SleepDateKey.date(from: newKey) {
-                Task { await activityViewModel.selectDate(date) }
-            }
-        }
-        .sheet(item: $secondarySheet) { sheet in
-            NavigationStack {
-                switch sheet {
-                case .alerts:
-                    AlertsTabView(viewModel: alertsViewModel)
-                case .settings:
-                    SettingsTabView(
-                        viewModel: settingsViewModel,
-                        sleepModeViewModel: sleepModeViewModel,
-                        redLightFilterService: environment.redLightFilterService
-                    )
-                }
-            }
-        }
         .fullScreenCover(item: $sleepModeCoordinator.activePresentation) { _ in
             SleepModeView(viewModel: sleepModeViewModel, redLightService: environment.redLightFilterService)
                 .task {
@@ -190,12 +157,7 @@ struct RootTabView: View {
     }
 }
 
-private enum SecondarySheet: String, Identifiable {
-    case alerts
-    case settings
 
-    var id: String { rawValue }
-}
 
 #if DEBUG
 #Preview("Root Tabs") {
