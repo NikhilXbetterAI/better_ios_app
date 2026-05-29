@@ -59,7 +59,7 @@ struct ProtocolOnboardingView: View {
     private var welcomeStep: some View {
         VStack(alignment: .leading, spacing: BetterSpacing.large) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Sleep Protocol Tracking")
+                Text("Sleep Formula Tracking")
                     .font(.system(size: 28, weight: .black))
                     .foregroundStyle(BetterColors.text)
                 Text("Optimize your sleep by measuring supplement formulas against your baseline.")

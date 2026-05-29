@@ -200,13 +200,13 @@ private extension AlertGenerationService {
             )
         ]
 
-        if session.qualityScore.overall < settings.lowScoreThreshold {
+        if Double(session.appleScorePartial) < settings.lowScoreThreshold {
             alerts.append(
                 alert(
                     .lowScore,
                     session: session,
                     title: "Low sleep score",
-                    body: "Your sleep score was \(Int(session.qualityScore.overall.rounded())), below your alert threshold.",
+                    body: "Your sleep score was \(Int(Double(session.appleScorePartial).rounded())), below your alert threshold.",
                     severity: 2,
                     createdAt: createdAt
                 )
@@ -380,7 +380,7 @@ private extension AlertGenerationService {
 
         guard ordered.count == 7, let first = ordered.first else { return nil }
 
-        let scoreImproved = session.qualityScore.overall - first.qualityScore.overall >= 5
+        let scoreImproved = Double(session.appleScorePartial) - Double(first.appleScorePartial) >= 5
         let deepImproved = session.dataQuality == .detailedStages &&
             first.dataQuality == .detailedStages &&
             session.deepDuration - first.deepDuration >= 15 * 60
@@ -557,7 +557,7 @@ private extension AlertGenerationService {
             return ("Sleep analysis ready", "Open Better to see your sleep insights.")
         }
 
-        let score = Int(session.qualityScore.overall.rounded())
+        let score = Int(Double(session.appleScorePartial).rounded())
         let durationStr = formatDuration(session.totalSleepTime)
 
         let scoreLabel: String

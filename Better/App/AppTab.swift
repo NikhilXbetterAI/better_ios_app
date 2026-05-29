@@ -3,6 +3,7 @@ import SwiftUI
 enum AppTab: String, CaseIterable, Identifiable, Sendable {
     case sleep
     case insights
+    case chronotype
     case `protocol`
     case settings
 
@@ -14,8 +15,10 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
             "Sleep"
         case .insights:
             "Insights"
+        case .chronotype:
+            "Chronotype"
         case .protocol:
-            "Protocol"
+            "Formula"
         case .settings:
             "Settings"
         }
@@ -27,6 +30,8 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
             "moon.fill"
         case .insights:
             "chart.bar.xaxis"
+        case .chronotype:
+            "sun.horizon.fill"
         case .protocol:
             "pills.fill"
         case .settings:
@@ -40,6 +45,8 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
             BetterColors.stageDeep
         case .insights:
             BetterColors.stageCore
+        case .chronotype:
+            BetterColors.cyan
         case .protocol:
             BetterColors.brand
         case .settings:

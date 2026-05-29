@@ -67,19 +67,37 @@ nonisolated struct SleepDataProcessor: Sendable {
     func summarizeBiometrics(
         _ samples: [BiometricSample],
         sessionID: UUID,
-        sleepDateKey: String
+        sleepDateKey: String,
+        sleepEndDate: Date? = nil
     ) -> NightlyBiometricSummary {
         let heartRates = samples.values(for: .heartRate)
-        let hrv = samples.values(for: .heartRateVariabilitySDNN)
+        let deviceRHR = samples.values(for: .restingHeartRate)
         let oxygen = samples.values(for: .oxygenSaturation)
         let respiratory = samples.values(for: .respiratoryRate)
+
+        // Prefer device-computed RHR (Zepp, Oura, Apple Watch algorithm) written to
+        // HKQuantityTypeIdentifierRestingHeartRate. Fall back to overnight raw minimum only
+        // when no device value is available.
+        let preferredRHR = deviceRHR.isEmpty ? heartRates.min() : Self.averageOrNil(deviceRHR)
+
+        // HRV samples fetched over an extended post-session window may include a device-
+        // computed daily value (e.g., Zepp morning HRV) written after wakeup. Prefer those
+        // post-sleep samples when present; fall back to the average of overnight samples.
+        let allHRVSamples = samples.filter { $0.type == .heartRateVariabilitySDNN }
+        let hrv: [Double]
+        if let sleepEndDate,
+           !allHRVSamples.filter({ $0.startDate >= sleepEndDate }).isEmpty {
+            hrv = allHRVSamples.filter { $0.startDate >= sleepEndDate }.map(\.value)
+        } else {
+            hrv = allHRVSamples.map(\.value)
+        }
 
         return NightlyBiometricSummary(
             sleepSessionID: sessionID,
             sleepDateKey: sleepDateKey,
             samples: samples,
             heartRateAverage: Self.averageOrNil(heartRates),
-            heartRateMinimum: heartRates.min(),
+            heartRateMinimum: preferredRHR,
             heartRateMaximum: heartRates.max(),
             hrvAverage: Self.averageOrNil(hrv),
             hrvMedian: Self.median(hrv),
@@ -270,42 +288,112 @@ nonisolated private extension SleepDataProcessor {
         )
     }
 
+    // O(n log n) sweep-line replacement for the original O(boundaries × samples) implementation.
+    //
+    // Algorithm:
+    // 1. Emit two events per sample: (startDate, .enter, index) and (endDate, .leave, index).
+    // 2. Sort events by time. At equal times, .leave events come before .enter events so that
+    //    a sample ending at T is removed before a new sample starting at T is added — this
+    //    matches the strict-overlap check `startDate < end && endDate > start` used by the
+    //    original implementation (boundary-only touching intervals are excluded).
+    // 3. Sweep through events, maintaining the highest-priority active sample at each point.
+    //    Emit a CleanedSleepInterval [prevTime, currentTime] whenever the active sample changes.
+    // 4. Merge consecutive intervals with the same stage and source (identical to original).
+    //
+    // Priority resolution uses `RawSleepInterval.resolutionPriority` (stage.resolutionPriority*10
+    // + sourceQuality), which is identical to the `max(by: resolutionPriority)` in the original.
     static func cleanedIntervals(from rawIntervals: [RawSleepInterval]) -> [CleanedSleepInterval] {
-        let boundaries = Array(Set(rawIntervals.flatMap { [$0.startDate, $0.endDate] })).sorted()
-        guard boundaries.count > 1 else { return [] }
+        guard !rawIntervals.isEmpty else { return [] }
 
+        // Build events: (time, isLeave, priority, sampleIndex)
+        // isLeave=true sorts before isLeave=false at equal times (leave before enter).
+        struct Event: Comparable {
+            var time: Date
+            var isLeave: Bool   // true = leave, false = enter
+            var priority: Int   // used for tie-breaking only; not semantically needed for sort
+            var index: Int
+
+            static func < (lhs: Event, rhs: Event) -> Bool {
+                if lhs.time != rhs.time { return lhs.time < rhs.time }
+                // At equal time: leave events before enter events.
+                if lhs.isLeave != rhs.isLeave { return lhs.isLeave && !rhs.isLeave }
+                return false
+            }
+        }
+
+        var events: [Event] = []
+        events.reserveCapacity(rawIntervals.count * 2)
+        for (i, interval) in rawIntervals.enumerated() {
+            events.append(Event(time: interval.startDate, isLeave: false, priority: interval.resolutionPriority, index: i))
+            events.append(Event(time: interval.endDate,   isLeave: true,  priority: interval.resolutionPriority, index: i))
+        }
+        events.sort()
+
+        // Active set: maps sampleIndex → priority, so we can find max quickly.
+        // We use a simple dictionary + linear max scan; active set is small in practice
+        // (number of overlapping sleep samples at any instant is typically 2–4).
+        //
+        // Tie-breaking: when two active samples share the same priority, we pick the one
+        // with the higher sampleIndex. This matches the behavior of the original boundary-scan
+        // implementation, where `overlapping.max(by: { $0.resolutionPriority < $1.resolutionPriority })`
+        // returns the LAST element with the maximum priority in the `overlapping` array
+        // (Swift's `max(by:)` is not stable — but the `overlapping` filter preserves input
+        // order, so higher index = later sample in `rawIntervals` wins). Using sampleIndex as
+        // the stable tie-breaker ensures both implementations agree and the output is deterministic.
+        var activeSet: [Int: Int] = [:]  // index → priority
+        var prevTime: Date? = nil
         var cleaned: [CleanedSleepInterval] = []
 
-        for index in boundaries.indices.dropLast() {
-            let start = boundaries[index]
-            let end = boundaries[index + 1]
-            guard end > start else { continue }
-
-            let overlapping = rawIntervals.filter { $0.startDate < end && $0.endDate > start }
-            guard let selected = overlapping.max(by: { $0.resolutionPriority < $1.resolutionPriority }) else {
-                continue
+        func bestActive() -> RawSleepInterval? {
+            guard !activeSet.isEmpty else { return nil }
+            // Find entry with max priority; break ties by taking the highest index.
+            var bestIdx: Int = -1
+            var bestPriority: Int = Int.min
+            for (idx, priority) in activeSet {
+                if priority > bestPriority || (priority == bestPriority && idx > bestIdx) {
+                    bestIdx = idx
+                    bestPriority = priority
+                }
             }
+            return bestIdx >= 0 ? rawIntervals[bestIdx] : nil
+        }
 
-            let segment = CleanedSleepInterval(
-                stage: selected.stage,
-                startDate: start,
-                endDate: end,
-                source: selected.source
-            )
-
+        func appendOrMerge(interval: CleanedSleepInterval) {
             if let previous = cleaned.last,
-               previous.stage == segment.stage,
-               previous.source == segment.source,
-               previous.endDate == segment.startDate {
+               previous.stage == interval.stage,
+               previous.source == interval.source,
+               previous.endDate == interval.startDate {
                 cleaned[cleaned.count - 1] = CleanedSleepInterval(
                     stage: previous.stage,
                     startDate: previous.startDate,
-                    endDate: segment.endDate,
+                    endDate: interval.endDate,
                     source: previous.source
                 )
             } else {
-                cleaned.append(segment)
+                cleaned.append(interval)
             }
+        }
+
+        for event in events {
+            // Before processing this event, emit a segment for [prevTime, event.time]
+            // using whatever was active in that interval.
+            if let prev = prevTime, event.time > prev, let active = bestActive() {
+                appendOrMerge(interval: CleanedSleepInterval(
+                    stage: active.stage,
+                    startDate: prev,
+                    endDate: event.time,
+                    source: active.source
+                ))
+            }
+
+            // Update active set.
+            if event.isLeave {
+                activeSet.removeValue(forKey: event.index)
+            } else {
+                activeSet[event.index] = rawIntervals[event.index].resolutionPriority
+            }
+
+            prevTime = event.time
         }
 
         return cleaned

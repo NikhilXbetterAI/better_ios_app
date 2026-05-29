@@ -66,8 +66,20 @@ struct DeltaBadge: View {
     private func valueText(for value: Double) -> some View {
         let sign = value > 0 ? "+" : ""
         let isGood = (value > 0) != lowerIsBetter && value != 0
-        let color: Color = value == 0 ? ProtocolPalette.mutedText
+        
+        let threshold: Double = {
+            if unit.contains("m") || unit.contains("min") {
+                return 15.0 // 15 min threshold
+            } else if unit == "%" || unit == "pp" || unit == "pts" {
+                return 2.0  // 2 points / percent threshold
+            }
+            return 0.0
+        }()
+        
+        let isSignificant = abs(value) >= threshold
+        let color: Color = !isSignificant || value == 0 ? ProtocolPalette.mutedText
             : (isGood ? ProtocolPalette.goodColor : ProtocolPalette.badColor)
+            
         return Text("\(sign)\(value, format: .number.precision(.fractionLength(value.magnitude < 10 ? 1 : 0)))\(unit)")
             .font(.system(size: 13, weight: .bold).monospacedDigit())
             .foregroundStyle(color)
@@ -467,9 +479,30 @@ struct PvRestoreSpark: View {
                         }
                         .stroke(Color.white.opacity(0.04), lineWidth: 1)
 
+                        // Y-axis bounds (Min/Max)
+                        VStack(alignment: .leading) {
+                            Text("\(Int(maxVal.rounded()))%")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(ProtocolPalette.dimText)
+                            Spacer()
+                            Text("\(Int(minVal.rounded()))%")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(ProtocolPalette.dimText)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 4)
+
                         // Baseline dashed line
                         if let baseline = sanitizedBaseline {
                             baselinePath(baseline: baseline, w: geo.size.width, h: geo.size.height)
+                            
+                            // Baseline Label on the right edge
+                            Text("Base: \(Int(baseline.rounded()))%")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(ProtocolPalette.mutedText)
+                                .padding(.horizontal, 4)
+                                .background(ProtocolPalette.backgroundColor.opacity(0.75))
+                                .position(x: geo.size.width - 32, y: yPos(baseline, h: geo.size.height))
                         }
 
                         // Segment lines coloured by version
@@ -525,5 +558,43 @@ struct PvRestoreSpark: View {
         }
         .stroke(sanitizedPoints[i + 1].color,
                 style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+    }
+}
+
+// MARK: - Restore Bar (replaces RestoreRing)
+
+struct RestoreBar: View {
+    let pct: Double
+    let baselinePct: Double?
+    let color: Color
+    var height: CGFloat = 12
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    // Track
+                    Capsule()
+                        .fill(Color.white.opacity(0.06))
+                        .frame(height: height)
+
+                    // Current Value
+                    Capsule()
+                        .fill(color)
+                        .frame(width: geo.size.width * CGFloat(min(max(pct, 0) / 100.0, 1.0)), height: height)
+
+                    // Baseline Notch
+                    if let base = baselinePct, base.isFinite, base > 0 {
+                        let notchX = geo.size.width * CGFloat(min(max(base, 0) / 100.0, 1.0))
+                        Rectangle()
+                            .fill(Color.white)
+                            .frame(width: 3, height: height + 6)
+                            .offset(x: max(0, min(notchX - 1.5, geo.size.width - 3)), y: -3)
+                            .shadow(color: .black.opacity(0.4), radius: 2)
+                    }
+                }
+            }
+            .frame(height: height + 6)
+        }
     }
 }

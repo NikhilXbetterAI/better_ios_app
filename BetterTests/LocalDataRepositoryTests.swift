@@ -558,12 +558,12 @@ final class LocalDataRepositoryTests: XCTestCase {
     @MainActor
     func testTrendsWeekComparisonUsesEqualElapsedCalendarDays() async throws {
         let sessions = [
-            Self.session(key: "2026-04-27", start: Self.date("2026-04-26T22:00:00Z"), end: Self.date("2026-04-27T06:00:00Z"), score: 60),
-            Self.session(key: "2026-04-28", start: Self.date("2026-04-27T22:00:00Z"), end: Self.date("2026-04-28T06:00:00Z"), score: 60),
-            Self.session(key: "2026-04-29", start: Self.date("2026-04-28T22:00:00Z"), end: Self.date("2026-04-29T06:00:00Z"), score: 60),
-            Self.session(key: "2026-05-04", start: Self.date("2026-05-03T22:00:00Z"), end: Self.date("2026-05-04T06:00:00Z"), score: 90),
-            Self.session(key: "2026-05-05", start: Self.date("2026-05-04T22:00:00Z"), end: Self.date("2026-05-05T06:00:00Z"), score: 90),
-            Self.session(key: "2026-05-06", start: Self.date("2026-05-05T22:00:00Z"), end: Self.date("2026-05-06T06:00:00Z"), score: 90)
+            Self.session(key: "2026-04-27", start: Self.date("2026-04-26T22:00:00Z"), end: Self.date("2026-04-27T06:00:00Z"), totalSleep: 12672),
+            Self.session(key: "2026-04-28", start: Self.date("2026-04-27T22:00:00Z"), end: Self.date("2026-04-28T06:00:00Z"), totalSleep: 12672),
+            Self.session(key: "2026-04-29", start: Self.date("2026-04-28T22:00:00Z"), end: Self.date("2026-04-29T06:00:00Z"), totalSleep: 12672),
+            Self.session(key: "2026-05-04", start: Self.date("2026-05-03T22:00:00Z"), end: Self.date("2026-05-04T06:00:00Z"), totalSleep: 24768),
+            Self.session(key: "2026-05-05", start: Self.date("2026-05-04T22:00:00Z"), end: Self.date("2026-05-05T06:00:00Z"), totalSleep: 24768),
+            Self.session(key: "2026-05-06", start: Self.date("2026-05-05T22:00:00Z"), end: Self.date("2026-05-06T06:00:00Z"), totalSleep: 24768)
         ]
         let repository = MockLocalDataRepository(sessions: sessions)
         let viewModel = TrendsViewModel(localRepository: repository, calendar: Self.utcCalendar)
@@ -580,10 +580,10 @@ final class LocalDataRepositoryTests: XCTestCase {
     @MainActor
     func testTrendsMonthComparisonUsesEqualElapsedCalendarDays() async throws {
         let sessions = [
-            Self.session(key: "2026-04-02", start: Self.date("2026-04-01T22:00:00Z"), end: Self.date("2026-04-02T06:00:00Z"), score: 50),
-            Self.session(key: "2026-04-03", start: Self.date("2026-04-02T22:00:00Z"), end: Self.date("2026-04-03T06:00:00Z"), score: 50),
-            Self.session(key: "2026-05-02", start: Self.date("2026-05-01T22:00:00Z"), end: Self.date("2026-05-02T06:00:00Z"), score: 100),
-            Self.session(key: "2026-05-03", start: Self.date("2026-05-02T22:00:00Z"), end: Self.date("2026-05-03T06:00:00Z"), score: 100)
+            Self.session(key: "2026-04-02", start: Self.date("2026-04-01T22:00:00Z"), end: Self.date("2026-04-02T06:00:00Z"), totalSleep: 8640),
+            Self.session(key: "2026-04-03", start: Self.date("2026-04-02T22:00:00Z"), end: Self.date("2026-04-03T06:00:00Z"), totalSleep: 8640),
+            Self.session(key: "2026-05-02", start: Self.date("2026-05-01T22:00:00Z"), end: Self.date("2026-05-02T06:00:00Z"), totalSleep: 28800),
+            Self.session(key: "2026-05-03", start: Self.date("2026-05-02T22:00:00Z"), end: Self.date("2026-05-03T06:00:00Z"), totalSleep: 28800)
         ]
         let repository = MockLocalDataRepository(sessions: sessions)
         let viewModel = TrendsViewModel(localRepository: repository, calendar: Self.utcCalendar)
@@ -796,6 +796,110 @@ final class LocalDataRepositoryTests: XCTestCase {
         for type in mappedTypes {
             XCTAssertNotNil(HealthKitRepository.quantityType(for: type), "\(type) should map to a HealthKit quantity type")
         }
+    }
+
+    // MARK: - V4 schema migration tests
+
+    /// Pre-V4 rows (qualityScoreOverall == nil) after migration: the scalar column is nil
+    /// and does NOT get auto-populated at migration time — only on next replaceSessions.
+    @MainActor
+    func testV4MigrationLeavesQualityScoreOverallNilForPreMigrationRows() async throws {
+        let container = try BetterPersistenceContainerFactory.makePreviewContainer()
+        let context = ModelContext(container)
+
+        // Insert a stored session without setting qualityScoreOverall (simulates pre-V4 row).
+        let session = Self.session(key: "2026-05-01",
+                                   start: Self.date("2026-04-30T22:00:00Z"),
+                                   end: Self.date("2026-05-01T06:00:00Z"),
+                                   score: 78)
+        let stored = try StoredSleepSession(domain: session)
+        // Manually clear the scalar to simulate a legacy row that was inserted before V4.
+        stored.qualityScoreOverall = nil
+        context.insert(stored)
+        try context.save()
+
+        // Verify the scalar is nil (migration doesn't back-fill).
+        let descriptor = FetchDescriptor<StoredSleepSession>(
+            predicate: #Predicate { $0.sleepDateKey == "2026-05-01" }
+        )
+        let fetched = try context.fetch(descriptor)
+        XCTAssertEqual(fetched.count, 1)
+        XCTAssertNil(fetched.first?.qualityScoreOverall,
+                     "Pre-V4 rows must have qualityScoreOverall == nil until next replaceSessions")
+    }
+
+    /// deleteAllHealthData wipes both new V4 cache tables.
+    func testDeleteAllHealthDataWipesV4CacheTables() async throws {
+        let repository = try await makeRepository()
+
+        // Insert one row into each V4 cache table.
+        let dashboardSnapshot = StoredDashboardBaselineSnapshot(
+            asOfSleepDateKey: "2026-05-01",
+            windowKind: "dashboard30",
+            generatedAt: Self.date("2026-05-01T08:00:00Z"),
+            validNightCount: 12,
+            sourceWindowStart: Self.date("2026-04-01T00:00:00Z"),
+            sourceWindowEnd: Self.date("2026-05-01T00:00:00Z"),
+            durationMean: 25200,
+            durationStdDev: 1800,
+            bedtimeMeanHour: 23.5,
+            bedtimeStdDev: 0.4,
+            remRatioMean: 0.22,
+            deepRatioMean: 0.18
+        )
+        try await repository.saveBaselineSnapshot(dashboardSnapshot)
+
+        let chronotypeSnapshot = StoredChronotypeSnapshot(
+            windowEndSleepDateKey: "2026-05-01",
+            generatedAt: Self.date("2026-05-01T08:00:00Z"),
+            estimateData: nil,
+            coverageNightCount: 14,
+            windowDays: 90
+        )
+        try await repository.saveChronotypeSnapshot(chronotypeSnapshot)
+
+        // Verify both were saved.
+        let fetchedDashboard = try await repository.fetchBaselineSnapshot(asOfSleepDateKey: "2026-05-01", windowKind: "dashboard30")
+        let fetchedChronotype = try await repository.fetchChronotypeSnapshot(windowEndSleepDateKey: "2026-05-01")
+        XCTAssertNotNil(fetchedDashboard)
+        XCTAssertNotNil(fetchedChronotype)
+
+        // Delete all health data.
+        try await repository.deleteAllHealthData()
+
+        // Both tables must be empty.
+        let afterDashboard = try await repository.fetchBaselineSnapshot(asOfSleepDateKey: "2026-05-01", windowKind: "dashboard30")
+        let afterChronotype = try await repository.fetchChronotypeSnapshot(windowEndSleepDateKey: "2026-05-01")
+        XCTAssertNil(afterDashboard, "StoredDashboardBaselineSnapshot must be wiped by deleteAllHealthData")
+        XCTAssertNil(afterChronotype, "StoredChronotypeSnapshot must be wiped by deleteAllHealthData")
+    }
+
+    /// fetchAvailableSleepDates uses the scalar path (no blob decryption) when
+    /// qualityScoreOverall is present, even if qualityScoreData is corrupted.
+    @MainActor
+    func testFetchAvailableSleepDatesUsesScalarWhenBlobIsCorrupted() async throws {
+        let container = try BetterPersistenceContainerFactory.makePreviewContainer()
+        let context = ModelContext(container)
+
+        // Build a valid StoredSleepSession, then corrupt its qualityScoreData blob.
+        let session = Self.session(key: "2026-06-01",
+                                   start: Self.date("2026-05-31T22:00:00Z"),
+                                   end: Self.date("2026-06-01T06:00:00Z"),
+                                   score: 85)
+        let stored = try StoredSleepSession(domain: session)
+        // Override with scalar set to 0.85 and a deliberately broken blob.
+        stored.qualityScoreOverall = 85
+        stored.qualityScoreData = Data([0xDE, 0xAD, 0xBE, 0xEF]) // invalid JSON/encrypted data
+        context.insert(stored)
+        try context.save()
+
+        let repository = LocalDataRepository(modelContainer: container)
+
+        // Must not throw even though the blob is corrupt; scalar path bypasses it.
+        let summaries = try await repository.fetchAvailableSleepDates(from: "2026-06-01", to: "2026-06-01")
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(summaries.first?.sleepDateKey, "2026-06-01")
+        XCTAssertEqual(summaries.first?.score ?? 0, 85, accuracy: 0.001)
     }
 }
 

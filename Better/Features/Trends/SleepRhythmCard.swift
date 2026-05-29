@@ -248,7 +248,8 @@ struct SleepRhythmCard: View {
         switch readiness {
         case .highConfidence: "High confidence"
         case .stable: "Stable"
-        case .preview: "Preview"
+        case .goodEstimate: "Good estimate"
+        case .preview: "Early estimate"
         case nil: "Building"
         }
     }
@@ -257,6 +258,7 @@ struct SleepRhythmCard: View {
         switch readiness {
         case .highConfidence: BetterColors.success
         case .stable: BetterColors.brand
+        case .goodEstimate: BetterColors.cyan
         case .preview: BetterColors.warning
         case nil: BetterColors.subtext
         }

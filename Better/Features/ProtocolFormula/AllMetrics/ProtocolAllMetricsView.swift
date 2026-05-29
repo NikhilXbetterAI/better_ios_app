@@ -99,7 +99,9 @@ struct ProtocolAllMetricsView: View {
                             .foregroundStyle(isSelected ? BetterColors.text : ProtocolPalette.mutedText)
                         // Baseline reference value
                         if let bv = baselineVal {
-                            Text("Base: \(Self.formatValue(bv, metric: metric))\(metric.unit)")
+                            let formatted = Self.formatValue(bv, metric: metric)
+                            let unitSuffix = (metric.unit == "%" || metric.unit == "pts") ? metric.unit : ""
+                            Text("Base: \(formatted)\(unitSuffix)")
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(ProtocolPalette.dimText.opacity(isSelected ? 0.9 : 0.55))
                                 .monospacedDigit()
@@ -137,28 +139,19 @@ struct ProtocolAllMetricsView: View {
                     }
                     Spacer()
                     if let point = selectedChartPoint ?? viewModel.chartPoints.last {
+                        let formatted = Self.formatValue(point.value, metric: viewModel.activeMetric)
+                        let unitSuffix = (viewModel.activeMetric.unit == "%" || viewModel.activeMetric.unit == "pts") ? viewModel.activeMetric.unit : ""
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(Self.formatValue(point.value, metric: viewModel.activeMetric))
+                            Text(formatted)
                                 .font(.system(size: 24, weight: .black))
                                 .foregroundStyle(BetterColors.text)
                                 .monospacedDigit()
-                            Text(viewModel.activeMetric.unit)
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(ProtocolPalette.mutedText)
-                        }
-                    }
-                    if selectedChartIndex != nil {
-                        Button {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                selectedChartIndex = nil
+                            if !unitSuffix.isEmpty {
+                                Text(unitSuffix)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(ProtocolPalette.mutedText)
                             }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(ProtocolPalette.mutedText)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Clear selected point")
                     }
                 }
 
@@ -177,14 +170,6 @@ struct ProtocolAllMetricsView: View {
                         selectedIndex: $selectedChartIndex
                     )
                     .frame(height: 150)
-
-                    if let selected = selectedChartPoint {
-                        chartInspector(for: selected)
-                    } else {
-                        Text("Tap or drag the chart to inspect a night.")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(ProtocolPalette.dimText)
-                    }
                 }
 
                 // Version legend
@@ -330,47 +315,18 @@ struct ProtocolAllMetricsView: View {
         return viewModel.chartPoints[selectedChartIndex]
     }
 
-    private func chartInspector(for point: ProtocolAllMetricsViewModel.ChartPoint) -> some View {
-        let baseline = viewModel.baselineValue
-        let delta = baseline.map { point.value - $0 }
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.formatDate(point.dateKey))
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(ProtocolPalette.dimText)
-                    Text(point.version.resolvedLabel)
-                        .font(.system(size: 13, weight: .black))
-                        .foregroundStyle(BetterColors.text)
-                }
-                Spacer()
-                Text(formattedMetricValue(point.value, metric: viewModel.activeMetric))
-                    .font(.system(size: 20, weight: .black).monospacedDigit())
-                    .foregroundStyle(BetterColors.text)
-            }
-
-            HStack {
-                Text("Baseline \(baseline.map { formattedMetricValue($0, metric: viewModel.activeMetric) } ?? "—")")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(ProtocolPalette.dimText)
-                Spacer()
-                if let delta {
-                    DeltaBadge(value: delta, unit: viewModel.activeMetric.deltaUnit, lowerIsBetter: viewModel.activeMetric.betterIsLower)
-                }
-            }
-        }
-        .padding(12)
-        .background(ProtocolPalette.surfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(ProtocolPalette.borderColor, lineWidth: 1))
-    }
 
     private static func formatValue(_ value: Double, metric: ProtocolAllMetricsViewModel.Metric) -> String {
-        switch metric {
-        case .restorativePct: String(format: "%.1f", value)
-        case .score: String(format: "%.0f", value)
-        default: String(Int(value.rounded()))
+        switch metric.unit {
+        case "%":
+            return String(format: "%.1f", value)
+        case "pts":
+            return String(format: "%.0f", value)
+        default:
+            let hours = Int(value) / 60
+            let minutes = Int(value) % 60
+            return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
         }
     }
 
@@ -384,16 +340,7 @@ struct ProtocolAllMetricsView: View {
         return "\(monthName) \(day)"
     }
 
-    private func formattedMetricValue(_ value: Double, metric: ProtocolAllMetricsViewModel.Metric) -> String {
-        switch metric.unit {
-        case "%":
-            return "\(Self.formatValue(value, metric: metric))%"
-        case "pts":
-            return "\(Self.formatValue(value, metric: metric))pts"
-        default:
-            return "\(Self.formatValue(value, metric: metric)) \(metric.unit)"
-        }
-    }
+
 }
 
 // MARK: - Nightly trend chart (interactive)
@@ -601,7 +548,7 @@ private struct ChartTooltip: View {
             : (isGood ? ProtocolPalette.goodColor : ProtocolPalette.badColor)
         switch metric.unit {
         case "%":
-            return ("\(sign)\(String(format: "%.1f", delta))pp vs base", col)
+            return ("\(sign)\(String(format: "%.1f", delta))% vs base", col)
         case "pts":
             return ("\(sign)\(Int(delta.rounded()))pts vs base", col)
         default:

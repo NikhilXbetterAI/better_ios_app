@@ -18,8 +18,6 @@ final class SyncCoordinator {
     static let maximumBaselineWindowDays = 90
     static let dataRetentionDays = 90
     private static let lastForegroundRefreshMetadataKey = "better.metadata.lastForegroundRefresh"
-    private static let lastDailyProcessingMetadataKey = "better.metadata.lastDailyProcessing"
-    private static let windowMetadataKey = "better.metadata.window"
 
     private let healthRepository: HealthKitRepositoryProtocol
     private let localRepository: LocalDataRepositoryProtocol
@@ -111,7 +109,11 @@ final class SyncCoordinator {
             return
         }
         do {
-            try await saveMetadataDate(now, for: Self.lastForegroundRefreshMetadataKey)
+            try await HealthSyncEngine.saveMetadataDate(
+                now,
+                for: Self.lastForegroundRefreshMetadataKey,
+                localRepository: localRepository
+            )
         } catch {
             logger.error("Failed to save foreground refresh timestamp: \(error.localizedDescription, privacy: .public)")
         }
@@ -126,7 +128,10 @@ final class SyncCoordinator {
 
     func shouldPerformForegroundRefresh(hasCachedSessionForToday: Bool, now: Date = Date()) async -> Bool {
         do {
-            guard let lastRefresh = try await fetchMetadataDate(for: Self.lastForegroundRefreshMetadataKey) else {
+            guard let lastRefresh = try await HealthSyncEngine.fetchMetadataDate(
+                for: Self.lastForegroundRefreshMetadataKey,
+                localRepository: localRepository
+            ) else {
                 return true
             }
 
@@ -134,7 +139,13 @@ final class SyncCoordinator {
                 return now.timeIntervalSince(lastRefresh) >= 60 * 60
             }
 
-            return !calendar.isDate(lastRefresh, inSameDayAs: now)
+            // Third-party wearables (Zepp, Oura) write daily RHR and HRV to HealthKit
+            // hours after wakeup, not during the sleep window. Allow a second foreground
+            // refresh on the same calendar day once 2h have elapsed so those writes are
+            // captured. Daily maintenance (baseline, alerts) has its own separate gate.
+            let biomarkerCatchupInterval: TimeInterval = 2 * 3_600
+            return !calendar.isDate(lastRefresh, inSameDayAs: now) ||
+                   now.timeIntervalSince(lastRefresh) >= biomarkerCatchupInterval
         } catch {
             return true
         }
@@ -156,12 +167,12 @@ final class SyncCoordinator {
             }
 
             if result.deletedObjects.isEmpty, let range = Self.expandedRange(for: result.samples, fallbackEndDate: now) {
-                try await performSyncHealthRange(from: range.start, to: range.end, forceDailyProcessing: true)
+                try await performSyncHealthRange(from: range.start, to: range.end, forceDailyProcessing: false)
             } else {
                 let startDate = calendar.date(byAdding: .day, value: -Self.maximumBaselineWindowDays, to: now)
                     ?? now.addingTimeInterval(Double(-Self.maximumBaselineWindowDays) * 86_400)
                 logger.debug("incremental refresh fallbackDays=\(Self.maximumBaselineWindowDays, privacy: .public)")
-                try await performSyncHealthRange(from: startDate, to: now, forceDailyProcessing: true)
+                try await performSyncHealthRange(from: startDate, to: now, forceDailyProcessing: false)
             }
 
             try await localRepository.saveSyncAnchor(result.newAnchor, for: typeIdentifier)
@@ -233,135 +244,35 @@ private extension SyncCoordinator {
         to endDate: Date,
         forceDailyProcessing: Bool = false
     ) async throws {
-        let samples = try await healthRepository.fetchSleepSamples(from: startDate, to: endDate)
-        let sessions = processor.process(samples: samples)
-        
-        let hydratedSessions = try await withThrowingTaskGroup(of: SleepSession.self) { group in
-            for session in sessions {
-                group.addTask {
-                    try await self.attachBiometrics(to: session)
-                }
-            }
-            
-            var results: [SleepSession] = []
-            for try await session in group {
-                results.append(session)
-            }
-            return results.sorted { $0.startDate < $1.startDate }
-        }
+        // Capture all Sendable values before hopping off main so the nonisolated
+        // engine call does not capture self (which is @MainActor).
+        let healthRepo = healthRepository
+        let localRepo = localRepository
+        let proc = processor
+        let alerts = alertService
+        let notifPrefs = notificationPreferencesStore
+        let cal = calendar
+        let bioSvc = biomarkerBaselineService
 
-        try await localRepository.replaceSessions(hydratedSessions, from: startDate, to: endDate)
-
-        let profile = try await localRepository.fetchProfile()
-        guard try await shouldRunDailyProcessing(
-            at: endDate,
-            force: forceDailyProcessing
-        ) else {
-            return
-        }
-
-        // Daily maintenance: keep enough cached sleep history for 90-day baselines.
-        try await localRepository.pruneDataOlderThan(days: Self.dataRetentionDays)
-
-        // Per-window baseline computation
-        let windowDays = [7, 15, 30]
-        var latestSelection: BaselineSelection?
-
-        for days in windowDays {
-            let shouldRun = try await shouldRunWindowedBaseline(windowDays: days, at: endDate, force: forceDailyProcessing)
-            if shouldRun {
-                let windowStart = calendar.date(byAdding: .day, value: -days, to: endDate)!
-                let sessions = try await localRepository.fetchCachedSessions(from: windowStart, to: endDate)
-                
-                // We use BaselineEngine to compute the baseline for this specific window.
-                // Note: selectBaseline produces three baselines, but we only care about the one matching 'days'.
-                let selection = BaselineEngine(processor: processor, calendar: calendar).selectBaseline(
-                    from: sessions,
-                    generatedAt: endDate
-                )
-                
-                // Save the relevant baseline for this window
-                if let baseline = selection.allBaselines.first(where: { $0.windowDays <= days }) {
-                    try await localRepository.saveBaseline(baseline)
-                }
-                
-                try await saveMetadataDate(endDate, for: "\(Self.windowMetadataKey).\(days)")
-                latestSelection = selection
-            }
-        }
-
-        // For alerts, we need the active baseline. If we didn't recompute any today, fetch the latest stored one.
-        let activeBaseline: SleepBaseline?
-        if let selection = latestSelection {
-            activeBaseline = selection.activeBaseline
-        } else {
-            let baselineWindowDays = Self.clampedBaselineWindowDays(profile.baselineWindowDays)
-            activeBaseline = try await localRepository.fetchLatestBaseline(windowDays: baselineWindowDays)
-        }
-
-        let baselineWindowDays = Self.clampedBaselineWindowDays(profile.baselineWindowDays)
-        let baselineStart = calendar.date(byAdding: .day, value: -baselineWindowDays, to: endDate)
-            ?? endDate.addingTimeInterval(Double(-baselineWindowDays) * 86_400)
-        let cachedSessions = try await localRepository.fetchCachedSessions(from: baselineStart, to: endDate)
-        let appStartKey = SleepDateKey.calendarDateKey(for: profile.createdAt, calendar: calendar)
-        let alertEligibleSessions = hydratedSessions.filter { $0.sleepDateKey >= appStartKey }
-
-        if let activeBaseline {
-            let alertSettings = notificationPreferencesStore.load().alertGenerationSettings
-            let previousAlerts = try await localRepository.fetchAlerts(
-                unreadOnly: false,
-                fromSleepDateKey: appStartKey,
-                limit: nil
+        // All CPU-heavy work (process, selectBaseline, biometric hydration) runs
+        // off the main actor inside HealthSyncEngine.perform.
+        _ = try await Task.detached(priority: .userInitiated) {
+            try await HealthSyncEngine.perform(
+                startDate: startDate,
+                endDate: endDate,
+                forceDailyProcessing: forceDailyProcessing,
+                dataRetentionDays: Self.dataRetentionDays,
+                baselineWindowDaysMin: Self.minimumBaselineWindowDays,
+                baselineWindowDaysMax: Self.maximumBaselineWindowDays,
+                healthRepository: healthRepo,
+                localRepository: localRepo,
+                processor: proc,
+                alertService: alerts,
+                notificationPreferencesStore: notifPrefs,
+                calendar: cal,
+                biomarkerBaselineService: bioSvc
             )
-            let alerts = try await alertService.generateAlerts(
-                sessions: alertEligibleSessions,
-                recentSessions: cachedSessions,
-                baseline: activeBaseline,
-                profile: profile,
-                settings: alertSettings,
-                previousAlerts: previousAlerts,
-                createdAt: endDate
-            )
-            try await localRepository.saveAlerts(alerts)
-        }
-        try await saveMetadataDate(endDate, for: Self.lastDailyProcessingMetadataKey)
-
-        // Refresh the cached dashboard biomarker baseline once daily processing
-        // ran. The service itself short-circuits if the cache is still fresh,
-        // but a successful sync that lands new sessions is the one moment where
-        // a force-recompute is unambiguously worthwhile.
-        if let biomarkerBaselineService {
-            await biomarkerBaselineService.recompute(now: endDate)
-        }
-    }
-
-    func attachBiometrics(to session: SleepSession) async throws -> SleepSession {
-        let sampleGroups = await withTaskGroup(of: [BiometricSample].self) { group in
-            for type in BiometricType.dashboardTypes {
-                group.addTask {
-                    (try? await self.healthRepository.fetchBiometrics(for: type, from: session.startDate, to: session.endDate)) ?? []
-                }
-            }
-
-            var all: [[BiometricSample]] = []
-            for await samples in group {
-                all.append(samples)
-            }
-            return all
-        }
-        let samples = sampleGroups.flatMap { $0 }
-        guard !samples.isEmpty else { return session }
-
-        let summary = processor.summarizeBiometrics(
-            samples,
-            sessionID: session.id,
-            sleepDateKey: session.sleepDateKey
-        )
-        try await localRepository.saveBiometricSummary(summary)
-
-        var updatedSession = session
-        updatedSession.biometrics = summary
-        return updatedSession
+        }.value
     }
 
     func finishSync(at date: Date) {
@@ -404,46 +315,6 @@ private extension SyncCoordinator {
 
 }
 
-private extension SyncCoordinator {
-    func shouldRunDailyProcessing(at date: Date, force: Bool) async throws -> Bool {
-        if force { return true }
-        guard let lastProcessing = try await fetchMetadataDate(for: Self.lastDailyProcessingMetadataKey) else {
-            return true
-        }
-        return !calendar.isDate(lastProcessing, inSameDayAs: date)
-    }
-
-    func shouldRunWindowedBaseline(windowDays: Int, at date: Date, force: Bool) async throws -> Bool {
-        if force { return true }
-        let key = "\(Self.windowMetadataKey).\(windowDays)"
-        guard let lastRun = try await fetchMetadataDate(for: key) else {
-            return true
-        }
-        
-        let elapsedSeconds = date.timeIntervalSince(lastRun)
-        let windowSeconds = Double(windowDays) * 86_400
-        return elapsedSeconds >= windowSeconds
-    }
-
-    func saveMetadataDate(_ date: Date, for key: String) async throws {
-        let data = try PersistenceJSON.encode(date)
-        try await localRepository.saveSyncAnchor(data, for: key)
-    }
-
-    func fetchMetadataDate(for key: String) async throws -> Date? {
-        guard let data = try await localRepository.fetchSyncAnchor(for: key) else { return nil }
-        return try? PersistenceJSON.decode(Date.self, from: data)
-    }
-}
-
-private extension BiometricType {
-    static let dashboardTypes: [BiometricType] = [
-        .heartRate,
-        .heartRateVariabilitySDNN,
-        .oxygenSaturation,
-        .respiratoryRate
-    ]
-}
 
 private extension Sequence {
     func asyncMap<T>(_ transform: (Element) async throws -> T) async throws -> [T] {

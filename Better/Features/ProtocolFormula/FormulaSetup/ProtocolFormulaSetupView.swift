@@ -15,6 +15,23 @@ struct ProtocolFormulaSetupView: View {
         }
         .background(BetterColors.background.ignoresSafeArea())
         .task { await viewModel.onAppear() }
+        .overlay {
+            if viewModel.versions.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "flask")
+                        .font(.system(size: 36))
+                        .foregroundStyle(ProtocolPalette.mutedText)
+                    Text("No formulas yet")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(BetterColors.text)
+                    Text("Go back and tap \"Add a formula\" to get started.")
+                        .font(.system(size: 13))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(ProtocolPalette.mutedText)
+                }
+                .padding(32)
+            }
+        }
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
@@ -27,10 +44,10 @@ struct ProtocolFormulaSetupView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Protocol versions")
+            Text("Formula versions")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(BetterColors.text)
-            Text("Protocol versions are fixed so your sleep changes can be compared cleanly over time.")
+            Text("Formula versions are fixed so your sleep changes can be compared cleanly over time.")
                 .font(.system(size: 13))
                 .foregroundStyle(ProtocolPalette.mutedText)
         }
@@ -52,15 +69,6 @@ struct ProtocolFormulaSetupView: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(ProtocolPalette.addinColor)
                     }
-                }
-                if version.formulaText.isEmpty {
-                    Text("(no formula text yet)")
-                        .font(.system(size: 13))
-                        .foregroundStyle(ProtocolPalette.dimText)
-                } else {
-                    Text(version.formulaText)
-                        .font(.system(size: 14))
-                        .foregroundStyle(BetterColors.text)
                 }
                 HStack(spacing: BetterSpacing.small) {
                     if version.isActive {

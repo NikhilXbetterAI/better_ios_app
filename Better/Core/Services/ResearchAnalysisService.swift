@@ -168,7 +168,7 @@ nonisolated private extension ResearchAnalysisService {
                 awakeHours: session.awakeDuration / 3_600,
                 wasoMinutes: session.waso / 60,
                 latencyMinutes: session.sleepLatency / 60,
-                sleepScore: session.qualityScore.overall,
+                sleepScore: Double(session.appleScorePartial),
                 durationScore: session.qualityScore.durationScore,
                 efficiencyScore: session.qualityScore.efficiencyScore,
                 remScore: session.qualityScore.remScore,

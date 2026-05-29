@@ -12,6 +12,10 @@ struct ExplorerFullScreenView: View {
     /// Which metric slot is being edited (0 = primary, 1 = compare-1, 2 = compare-2).
     @State private var showMetricSheet = false
     @State private var editingSlot = 0
+    /// Guards against the portrait↔landscape loop caused by UIKit re-mounting the
+    /// view during the orientation-change layout pass. Once set, forceLandscape()
+    /// won't fire again for the lifetime of this presentation.
+    @State private var landscapeRequested = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -48,11 +52,24 @@ struct ExplorerFullScreenView: View {
                 .presentationDragIndicator(.visible)
                 .preferredColorScheme(.dark)
         }
-        .onAppear {
+        // Use .task instead of onAppear so:
+        // 1. The task is auto-cancelled if the view disappears early — callback
+        //    can never fire after dismiss and trigger the loop.
+        // 2. We delay ~400ms to let the fullScreenCover presentation animation
+        //    complete before requesting rotation. Calling setNeedsUpdateOfSupported-
+        //    InterfaceOrientations() mid-animation causes UIKit to remount the
+        //    view hierarchy, which re-fires onAppear/onDisappear in a loop.
+        // 3. landscapeRequested guards against the rare case where UIKit still
+        //    triggers a re-mount after the delay (seen on some iOS 17/18 builds).
+        .task {
+            guard !landscapeRequested else { return }
+            landscapeRequested = true
+            try? await Task.sleep(for: .milliseconds(400))
             forceLandscape()
         }
         .onDisappear {
-            // Safety fallback in case Done was not the exit path (e.g. swipe-to-dismiss).
+            // Reset flag so a fresh presentation works correctly.
+            landscapeRequested = false
             forcePortrait()
         }
     }

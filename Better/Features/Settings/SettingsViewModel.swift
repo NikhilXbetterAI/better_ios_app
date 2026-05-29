@@ -111,7 +111,9 @@ final class SettingsViewModel {
             let startDate = Calendar.current.date(byAdding: .day, value: -30, to: now)
                 ?? now.addingTimeInterval(-30 * 86_400)
             connectedSources = try await healthRepository.fetchSourceSummaries(from: startDate, to: now)
-            await loadResearchInsight(now: now)
+            // Research insight (buildExportPackage) is expensive — ZIP serialization,
+            // protocol comparison, adherence aggregation. Load it only on explicit user
+            // action (exportRecentCSV / exportCSV), not on every Settings tab appear.
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import SwiftData
 
 nonisolated struct BaselineSelection: Codable, Hashable, Sendable {
     var activeBaseline: SleepBaseline?
@@ -136,6 +137,95 @@ nonisolated struct BaselineEngine: Sendable {
             validNightCount: validSessions.count,
             excludedNightCount: excludedCount,
             windowUsed: active?.windowDays
+        )
+    }
+
+    // MARK: - Snapshot serialization helpers (Phase 3 cache)
+
+    /// Builds a `DashboardBaselineSnapshotRecord` from a fully-computed
+    /// `SleepBaseline`, including the full-fidelity serialized blob (`baselineData`).
+    /// The scalar fields (durationMean, bedtimeMeanHour, etc.) are derived from the
+    /// baseline for lightweight querying; `baselineData` is the authoritative source
+    /// used for exact reconstruction.
+    static func makeSnapshot(
+        from baseline: SleepBaseline,
+        asOfSleepDateKey: String,
+        windowKind: String,
+        sourceWindowStart: Date,
+        sourceWindowEnd: Date
+    ) -> DashboardBaselineSnapshotRecord {
+        let durationMean = baseline.totalSleepAverage
+        // Convert absolute sleep time to a bedtime-hour float for the scalar index.
+        // `bedtimeMinuteAverage` is in minutes-of-day (circular mean).
+        let bedtimeMeanHour = baseline.bedtimeMinuteAverage / 60.0
+        let bedtimeStdDev = baseline.bedtimeMinuteStandardDeviation / 60.0
+        let remRatioMean = durationMean > 0 ? baseline.remAverage / durationMean : 0
+        let deepRatioMean = durationMean > 0 ? baseline.deepAverage / durationMean : 0
+
+        let baselineData = try? PersistenceJSON.encode(baseline)
+
+        return DashboardBaselineSnapshotRecord(
+            asOfSleepDateKey: asOfSleepDateKey,
+            windowKind: windowKind,
+            generatedAt: baseline.generatedAt,
+            validNightCount: baseline.validNights,
+            sourceWindowStart: sourceWindowStart,
+            sourceWindowEnd: sourceWindowEnd,
+            durationMean: durationMean,
+            durationStdDev: baseline.totalSleepStandardDeviation,
+            bedtimeMeanHour: bedtimeMeanHour,
+            bedtimeStdDev: bedtimeStdDev,
+            remRatioMean: remRatioMean,
+            deepRatioMean: deepRatioMean,
+            baselineData: baselineData
+        )
+    }
+
+    /// Reconstructs a `SleepBaseline` from a stored snapshot.
+    ///
+    /// V5 rows carry `baselineData` — the full-fidelity serialized baseline —
+    /// which is decoded and returned directly (exact parity guaranteed).
+    /// Pre-V5 rows (`baselineData == nil`) fall back to scalar reconstruction,
+    /// which is approximate for fields not stored in the snapshot (HRV, SpO2,
+    /// WASO, latency, etc. default to 0). The fallback exists only to avoid
+    /// crashes on rows written by older code; in practice all new writes include
+    /// `baselineData`.
+    static func reconstructBaseline(from snapshot: DashboardBaselineSnapshotRecord) -> SleepBaseline? {
+        // Prefer full-fidelity blob path (V5+).
+        if let data = snapshot.baselineData,
+           let baseline = try? PersistenceJSON.decode(SleepBaseline.self, from: data) {
+            return baseline
+        }
+
+        // Scalar fallback for pre-V5 rows.
+        guard snapshot.validNightCount >= dashboardMinimumValidNights else { return nil }
+        let durationMean = snapshot.durationMean
+        return SleepBaseline(
+            windowDays: snapshot.windowKind == "dashboard30" ? dashboardPrimaryWindow : dashboardFallbackWindow,
+            generatedAt: snapshot.generatedAt,
+            validNights: snapshot.validNightCount,
+            totalSleepAverage: durationMean,
+            totalSleepStandardDeviation: snapshot.durationStdDev,
+            remAverage: snapshot.remRatioMean * durationMean,
+            remStandardDeviation: 0,
+            deepAverage: snapshot.deepRatioMean * durationMean,
+            deepStandardDeviation: 0,
+            efficiencyAverage: 0,
+            efficiencyStandardDeviation: 0,
+            wasoAverage: 0,
+            wasoStandardDeviation: 0,
+            latencyAverage: 0,
+            latencyStandardDeviation: 0,
+            hrvAverage: 0,
+            hrvStandardDeviation: 0,
+            respiratoryRateAverage: 0,
+            respiratoryRateStandardDeviation: 0,
+            oxygenSaturationAverage: 0,
+            oxygenSaturationStandardDeviation: 0,
+            bedtimeMinuteAverage: snapshot.bedtimeMeanHour * 60.0,
+            bedtimeMinuteStandardDeviation: snapshot.bedtimeStdDev * 60.0,
+            wakeMinuteAverage: 0,
+            wakeMinuteStandardDeviation: 0
         )
     }
 

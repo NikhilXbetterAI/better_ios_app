@@ -146,7 +146,7 @@ enum PreviewSleepData {
             SleepAlert(
                 kind: .irregularSchedule,
                 title: "Bedtime shifted later",
-                body: "Your bedtime varied more than usual across the last week.",
+                body: "Your bedtime varied more than baseline across the last week.",
                 sleepDateKey: sampleSession.sleepDateKey,
                 severity: 1,
                 isRead: false,
@@ -238,7 +238,7 @@ enum PreviewSleepData {
         let offset = TimeInterval(days * 86_400)
         let totalSleep = max(5.8 * 3_600, session.totalSleepTime * sleepMultiplier)
         let ratio = totalSleep / session.totalSleepTime
-        let score = min(96, max(58, session.qualityScore.overall + scoreDelta))
+        let score = min(96, max(58, Double(session.appleScorePartial) + scoreDelta))
         let dateKey = sleepDateKey(for: session.startDate.addingTimeInterval(offset))
         let stages = session.stages.map {
             SleepStage(

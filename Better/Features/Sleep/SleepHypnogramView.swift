@@ -61,7 +61,7 @@ struct SleepHypnogramView: View {
                         }
                     }
 
-                    // 3. Edge-to-edge vertical connectors between consecutive stages
+                    // 3. Gradient connectors between consecutive stages (stage-color-to-stage-color)
                     if stages.count > 1 {
                         ForEach(0..<stages.count - 1, id: \.self) { index in
                             let s1 = stages[index]
@@ -70,26 +70,32 @@ struct SleepHypnogramView: View {
                             if gap < 300 {
                                 let f1 = frame(for: s1, size: geo.size)
                                 let f2 = frame(for: s2, size: geo.size)
+                                let sameStage = s1.type == s2.type
                                 let goingDown = f2.midY > f1.midY
                                 let yStart = goingDown ? f1.maxY : f1.minY
                                 let yEnd = goingDown ? f2.minY : f2.maxY
+                                let connectorHeight = abs(yEnd - yStart)
 
-                                Path { path in
-                                    path.move(to: CGPoint(x: f1.maxX, y: yStart))
-                                    path.addLine(to: CGPoint(x: f1.maxX, y: yEnd))
+                                if sameStage || connectorHeight < 2 {
+                                    // Same lane — draw nothing; blocks are visually flush
+                                    EmptyView()
+                                } else {
+                                    let topColor = goingDown ? s1.type.color : s2.type.color
+                                    let bottomColor = goingDown ? s2.type.color : s1.type.color
+                                    Rectangle()
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [
+                                                    topColor.opacity(differentiateWithoutColor ? 0.7 : 0.55),
+                                                    bottomColor.opacity(differentiateWithoutColor ? 0.7 : 0.55)
+                                                ],
+                                                startPoint: .top,
+                                                endPoint: .bottom
+                                            )
+                                        )
+                                        .frame(width: differentiateWithoutColor ? 2.5 : 1.5, height: connectorHeight)
+                                        .position(x: f1.maxX, y: (yStart + yEnd) / 2)
                                 }
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [s1.type.color, s2.type.color],
-                                        startPoint: goingDown ? .top : .bottom,
-                                        endPoint: goingDown ? .bottom : .top
-                                    ),
-                                    style: StrokeStyle(
-                                        lineWidth: 4.5,
-                                        lineCap: .butt,
-                                        dash: differentiateWithoutColor ? [4, 3] : []
-                                    )
-                                )
                             }
                         }
                     }

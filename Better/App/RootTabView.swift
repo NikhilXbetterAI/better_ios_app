@@ -2,9 +2,10 @@ import SwiftUI
 
 struct RootTabView: View {
     let environment: AppEnvironment
-    @State private var selectedTab: AppTab = .sleep
+    @State private var selectedTab: AppTab
     @State private var sleepViewModel: SleepDashboardViewModel
     @State private var trendsViewModel: TrendsViewModel
+    @State private var chronotypeViewModel: ChronotypeViewModel
     @State private var alertsViewModel: AlertsViewModel
     @State private var settingsViewModel: SettingsViewModel
     @State private var onboardingViewModel: OnboardingViewModel
@@ -15,12 +16,16 @@ struct RootTabView: View {
 
     init(environment: AppEnvironment) {
         self.environment = environment
+        _selectedTab = State(initialValue: Self.initialSelectedTab())
         _sleepViewModel = State(initialValue: SleepDashboardViewModel(
             syncCoordinator: environment.syncCoordinator,
             localRepository: environment.localRepository,
             biomarkerBaselineService: environment.biomarkerBaselineService
         ))
         _trendsViewModel = State(initialValue: TrendsViewModel(
+            localRepository: environment.localRepository
+        ))
+        _chronotypeViewModel = State(initialValue: ChronotypeViewModel(
             localRepository: environment.localRepository
         ))
         _alertsViewModel = State(initialValue: AlertsViewModel(
@@ -90,10 +95,26 @@ struct RootTabView: View {
 
             // ── Insights / Trends ────────────────────────────────────────
             NavigationStack {
-                TrendsTabView(viewModel: trendsViewModel)
+                TrendsTabView(
+                    viewModel: trendsViewModel,
+                    onOpenChronotype: {
+                        withAnimation {
+                            selectedTab = .chronotype
+                        }
+                    }
+                )
             }
             .tabItem { Label(AppTab.insights.title, systemImage: AppTab.insights.systemImageName) }
             .tag(AppTab.insights)
+            .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
+
+            // ── Chronotype ───────────────────────────────────────────────
+            NavigationStack {
+                ChronotypeTabView(viewModel: chronotypeViewModel)
+            }
+            .tabItem { Label(AppTab.chronotype.title, systemImage: AppTab.chronotype.systemImageName) }
+            .tag(AppTab.chronotype)
             .toolbarBackground(.ultraThinMaterial, for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
 
@@ -154,6 +175,15 @@ struct RootTabView: View {
         withAnimation(.easeInOut) {
             hasLoadedProfile = true
         }
+    }
+
+    private static func initialSelectedTab() -> AppTab {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--open-cronotype") {
+            return .chronotype
+        }
+        #endif
+        return .sleep
     }
 }
 

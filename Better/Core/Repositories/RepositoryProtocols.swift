@@ -101,6 +101,17 @@ nonisolated protocol LocalDataRepositoryProtocol: Sendable {
     func deleteInterventionWindow(id: UUID) async throws
     func deleteBaselineSnapshot() async throws
 
+    // MARK: - Dashboard baseline snapshot cache (V4)
+
+    func saveBaselineSnapshot(_ snapshot: DashboardBaselineSnapshotRecord) async throws
+    func fetchBaselineSnapshot(asOfSleepDateKey: String, windowKind: String) async throws -> DashboardBaselineSnapshotRecord?
+    func deleteBaselineSnapshots(containingSleepDateKey: String) async throws
+
+    // MARK: - Chronotype snapshot cache (V4)
+
+    func saveChronotypeSnapshot(_ snapshot: ChronotypeSnapshotRecord) async throws
+    func fetchChronotypeSnapshot(windowEndSleepDateKey: String) async throws -> ChronotypeSnapshotRecord?
+
     // MARK: - Privacy & migration
 
     /// Deletes all health-derived records.  User preferences (sleep goal, baseline
@@ -247,6 +258,14 @@ extension LocalDataRepositoryProtocol {
     func saveInterventionWindow(_ window: InterventionWindow) async throws {}
     func deleteInterventionWindow(id: UUID) async throws {}
     func deleteBaselineSnapshot() async throws {}
+
+    // Default no-op implementations for V4 cache tables so mocks don't need
+    // to track dashboard baseline / chronotype snapshot state.
+    func saveBaselineSnapshot(_ snapshot: DashboardBaselineSnapshotRecord) async throws {}
+    func fetchBaselineSnapshot(asOfSleepDateKey: String, windowKind: String) async throws -> DashboardBaselineSnapshotRecord? { nil }
+    func deleteBaselineSnapshots(containingSleepDateKey: String) async throws {}
+    func saveChronotypeSnapshot(_ snapshot: ChronotypeSnapshotRecord) async throws {}
+    func fetchChronotypeSnapshot(windowEndSleepDateKey: String) async throws -> ChronotypeSnapshotRecord? { nil }
 }
 
 

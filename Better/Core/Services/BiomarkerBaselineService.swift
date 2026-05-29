@@ -126,8 +126,12 @@ final class BiomarkerBaselineService {
     private static func standardDeviation(_ values: [Double], mean: Double) -> Double {
         guard values.count > 1 else { return 0 }
         let sumSquares = values.reduce(0.0) { acc, v in acc + (v - mean) * (v - mean) }
-        // Sample standard deviation (n-1) — we're estimating the population
-        // standard deviation from a small window of nights.
+        // TODO: reconcile stddev convention — currently using n-1 (Bessel correction) for sample
+        // stddev because this service estimates population parameters from a small nightly window.
+        // SleepDataProcessor uses n (population stddev) for its descriptive sleep baseline stats.
+        // Changing to n here would alter the z-score denominators exposed in SleepBiomarkerReaction
+        // and the "above/below usual" UI labels — a user-visible change requiring a separate plan.
+        // See Phase 7 remediation notes for full context.
         return (sumSquares / Double(values.count - 1)).squareRoot()
     }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TrendsTabView: View {
     @Bindable var viewModel: TrendsViewModel
+    var onOpenChronotype: () -> Void = {}
 
     var body: some View {
         ZStack {
@@ -24,8 +25,16 @@ struct TrendsTabView: View {
                         comparisonSummary: viewModel.comparisonSummary
                     )
 
+                    if let chronotypeResult = viewModel.chronotypeResult,
+                       chronotypeResult.estimate != nil {
+                        ChronotypeInsightsPreviewCard(
+                            result: chronotypeResult,
+                            onOpenChronotype: onOpenChronotype
+                        )
+                    }
+
                     SleepRhythmCard(
-                        chronotypeResult: viewModel.chronotypeResult,
+                        chronotypeResult: nil,
                         baseline: viewModel.baseline
                     )
 

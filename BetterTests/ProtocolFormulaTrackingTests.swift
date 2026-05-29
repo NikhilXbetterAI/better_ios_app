@@ -640,7 +640,7 @@ final class ProtocolBaselineServiceTests: XCTestCase {
         XCTAssertEqual(augmented?.meanAwakeMin ?? 0, 15.0, accuracy: 0.001)
         XCTAssertEqual(augmented?.meanTotalSleepMin ?? 0, 420.0, accuracy: 0.001)
         XCTAssertEqual(augmented?.meanLatencyMin ?? 0, 20.0, accuracy: 0.001)
-        XCTAssertEqual(augmented?.meanSleepScore ?? 0, 75.0, accuracy: 0.001)
+        XCTAssertEqual(augmented?.meanSleepScore ?? 0, 91.0, accuracy: 0.001)
     }
 
     func testFreezeBaseline_force_recomputesSnapshot() async throws {
@@ -710,7 +710,7 @@ final class ProtocolFormulaAnalysisRollupTests: XCTestCase {
         // Regression guard: ProtocolFormulaMetric.awake.betterIsLower == true
         XCTAssertTrue(ProtocolFormulaMetric.awake.betterIsLower)
         XCTAssertTrue(ProtocolFormulaMetric.latency.betterIsLower)
-        XCTAssertEqual(ProtocolFormulaMetric.restorativePct.deltaUnit, "pp")
+        XCTAssertEqual(ProtocolFormulaMetric.restorativePct.deltaUnit, "%")
         // All others should be higher-is-better
         let higherBetter: [ProtocolFormulaMetric] = [.restorativeMin, .restorativePct, .longestBlock, .deep, .rem, .duration, .score]
         for m in higherBetter {

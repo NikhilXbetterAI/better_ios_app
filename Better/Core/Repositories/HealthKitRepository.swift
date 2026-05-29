@@ -58,6 +58,13 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
     }
 
     func fetchSleepSamples(from: Date, to: Date) async throws -> [HKCategorySample] {
+        let rangeSeconds = to.timeIntervalSince(from)
+        if rangeSeconds > 91 * 86_400 {
+            logger.warning(
+                "fetchSleepSamples: query spans \(Int(rangeSeconds / 86_400), privacy: .public) days (>91). Consider narrowing the window."
+            )
+        }
+
         let sleepType = Self.sleepType
         let predicate = HKQuery.predicateForSamples(
             withStart: from,
@@ -100,6 +107,13 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
     func fetchBiometrics(for type: BiometricType, from: Date, to: Date) async throws -> [BiometricSample] {
         guard let quantityType = Self.quantityType(for: type) else {
             throw HealthKitRepositoryError.unsupportedBiometricType(type)
+        }
+
+        let rangeSeconds = to.timeIntervalSince(from)
+        if rangeSeconds > 91 * 86_400 {
+            logger.warning(
+                "fetchBiometrics(\(type.rawValue, privacy: .public)): query spans \(Int(rangeSeconds / 86_400), privacy: .public) days (>91). Consider narrowing the window."
+            )
         }
 
         let predicate = HKQuery.predicateForSamples(
@@ -172,8 +186,13 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
         return AsyncStream { continuation in
             let query = HKObserverQuery(sampleType: sleepType, predicate: nil) { [weak self] _, completionHandler, error in
                 if let error {
-                    self?.logger.error("HealthKit observer error: \(error.localizedDescription, privacy: .public)")
+                    // Surface the observer error so the caller (SyncCoordinator) can react.
+                    self?.logger.error(
+                        "HealthKit observer error — observer may stop delivering updates: \(error.localizedDescription, privacy: .public)"
+                    )
                     completionHandler()
+                    // Finish the stream so the consumer can restart the observer.
+                    continuation.finish()
                     return
                 }
 
@@ -186,9 +205,13 @@ nonisolated final class HealthKitRepository: HealthKitRepositoryProtocol, @unche
 
             retainObserverQuery(query)
             healthStore.execute(query)
-            healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { [weak self] _, error in
+            healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { [weak self] success, error in
                 if let error {
-                    self?.logger.error("HealthKit background delivery failed: \(error.localizedDescription, privacy: .public)")
+                    self?.logger.error(
+                        "HealthKit background-delivery registration failed (sleep will not wake the app in the background): \(error.localizedDescription, privacy: .public)"
+                    )
+                } else if success {
+                    self?.logger.info("HealthKit background delivery enabled for sleep type.")
                 }
             }
 

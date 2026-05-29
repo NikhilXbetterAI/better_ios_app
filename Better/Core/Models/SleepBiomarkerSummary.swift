@@ -25,7 +25,7 @@ enum SleepBiomarkerSummary {
         switch (worse.isEmpty, improved.isEmpty) {
         case (true, true):
             // All four in the neutral zone.
-            return "Biomarkers were in your usual range"
+            return "Biomarkers were in your baseline range"
         case (true, false):
             // At least one improved, none worse.
             return "Some biomarkers shifted favorably"
@@ -33,8 +33,8 @@ enum SleepBiomarkerSummary {
             // At least one worse, none improved — name the loudest signal.
             let name = worse.first.map { Self.displayName(for: $0.key) } ?? "A biomarker"
             return worse.count == 1
-                ? "\(name) was outside your usual range"
-                : "Some biomarkers were outside your usual range"
+                ? "\(name) was outside your baseline range"
+                : "Some biomarkers were outside your baseline range"
         case (false, false):
             // Mixed — some improved, some worse.
             return "Mixed biomarker changes tonight"

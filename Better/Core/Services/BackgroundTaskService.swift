@@ -1,6 +1,16 @@
 import BackgroundTasks
 import Foundation
 
+/// Abstracts the completion-signalling surface of `BGAppRefreshTask` so that
+/// `handleSleepRefresh` can be tested without a real BGTask instance.
+@MainActor
+protocol AppRefreshTaskProtocol: AnyObject {
+    var expirationHandler: (() -> Void)? { get set }
+    func setTaskCompleted(success: Bool)
+}
+
+extension BGAppRefreshTask: AppRefreshTaskProtocol {}
+
 @MainActor
 protocol BackgroundTaskSchedulerProtocol: AnyObject {
     func registerSleepRefresh(
@@ -96,15 +106,40 @@ final class BackgroundTaskService {
     }
 }
 
-private extension BackgroundTaskService {
-    func handleSleepRefresh(task: BGAppRefreshTask) async {
+// MARK: - Internal for testing
+
+extension BackgroundTaskService {
+    /// Exposed `internal` (not `private`) so unit tests can drive the completion logic
+    /// without requiring a real `BGAppRefreshTask` instance.
+    func handleSleepRefresh(task: some AppRefreshTaskProtocol) async {
         scheduleNextSleepRefresh()
+
+        // Guard against double-setTaskCompleted: the expiration handler and normal
+        // completion can race. We use a nonisolated(unsafe) Bool under the protection
+        // that only one of the two paths can win: the expiration handler fires on an
+        // arbitrary thread before await returns, so we check-and-set atomically via
+        // the BGTask serial guarantee (only one of the two closures runs to completion
+        // first). Both paths check `completed` before calling setTaskCompleted.
+        nonisolated(unsafe) var completed = false
 
         let refreshTask = Task { @MainActor in
             await syncCoordinator.performIncrementalRefresh()
         }
-        task.expirationHandler = { refreshTask.cancel() }
-        await refreshTask.value
+
+        task.expirationHandler = {
+            guard !completed else { return }
+            completed = true
+            refreshTask.cancel()
+            task.setTaskCompleted(success: false)
+        }
+
+        // Await the task value; cooperative cancellation makes this return promptly
+        // when the expiration handler fires.
+        _ = await refreshTask.result
+
+        guard !completed else { return }
+        completed = true
+
         if case .failed = syncCoordinator.phase {
             task.setTaskCompleted(success: false)
         } else {

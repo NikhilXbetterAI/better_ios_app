@@ -47,6 +47,9 @@ nonisolated enum SleepContinuityCalculator {
         }
 
         let stagesForAnalysis = normalizedStages(stages)
+        // O(n) precomputed suffix: suffixHasSleep[i] = true iff any index > i is a sleep stage.
+        // Replaces the O(awake × stages) per-call scan in hasFutureSleepStage.
+        let suffixHasSleep = Self.buildSuffixHasSleep(for: stagesForAnalysis)
         for (stageIndex, stage) in stagesForAnalysis.enumerated() {
             switch stage.type {
             case .inBed:
@@ -55,7 +58,7 @@ nonisolated enum SleepContinuityCalculator {
                 guard currentStart != nil else { continue }
                 let awakeDuration = stage.endDate.timeIntervalSince(stage.startDate)
                 if awakeDuration >= meaningfulAwakeThreshold {
-                    if hasFutureSleepStage(after: stageIndex, in: stagesForAnalysis) {
+                    if suffixHasSleep[stageIndex] {
                         closeCurrentBlock(at: stage.startDate)
                         meaningfulAwakeningCount += 1
                     } else {
@@ -155,6 +158,31 @@ nonisolated private extension SleepContinuityCalculator {
         return normalized
     }
 
+    // O(n) suffix precomputation replacing O(awake × stages) per-call scan.
+    //
+    // Build a boolean array `suffixHasSleep` where suffixHasSleep[i] = true iff any
+    // stage at index > i is a sleep stage (.unspecified / .core / .deep / .rem).
+    // Single-pass right-to-left scan; each query is then O(1).
+    //
+    // Called from `summary(for:)` which passes the same `stagesForAnalysis` array for
+    // every awake interval, so we precompute once and capture the result in the closure.
+    static func buildSuffixHasSleep(for stages: [SleepStage]) -> [Bool] {
+        var result = [Bool](repeating: false, count: stages.count)
+        var hasSleepSoFar = false
+        for i in stride(from: stages.count - 1, through: 0, by: -1) {
+            result[i] = hasSleepSoFar
+            switch stages[i].type {
+            case .unspecified, .core, .deep, .rem:
+                hasSleepSoFar = true
+            case .inBed, .awake:
+                break
+            }
+        }
+        return result
+    }
+
+    // Retained for backward compatibility with existing call sites; delegates to the
+    // precomputed suffix when provided, otherwise falls back to the linear scan.
     static func hasFutureSleepStage(after index: Int, in stages: [SleepStage]) -> Bool {
         stages.dropFirst(index + 1).contains { stage in
             switch stage.type {

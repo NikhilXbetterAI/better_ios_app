@@ -200,7 +200,7 @@ nonisolated struct ProtocolBaselineService: Sendable {
         let awakeMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.awakeDuration) }
         let totalSleepMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.totalSleepTime) }
         let latencyMins = nights.compactMap { Self.nonNegativeFiniteMinutes($0.sleepLatency) }
-        let sleepScores = nights.compactMap { Self.nonNegativeFinite($0.qualityScore.overall) }
+        let sleepScores = nights.compactMap { Self.nonNegativeFinite(Double($0.appleScorePartial)) }
         return ExtractedMetrics(
             restorativeMins: restorativeMins,
             restorativePcts: restorativePcts,

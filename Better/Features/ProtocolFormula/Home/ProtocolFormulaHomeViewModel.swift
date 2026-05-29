@@ -304,6 +304,17 @@ final class ProtocolFormulaHomeViewModel {
         await writeTonightLog(status: retryStatus)
     }
 
+    func resetTonightLog() async {
+        let key = Self.tonightSleepDateKey(calendar: calendar, now: nowProvider())
+        do {
+            try await localRepository.deleteNightLog(forSleepDateKey: key)
+            tonightLogSaveState = .idle
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func selectTonightVersion(_ version: ProtocolFormulaVersion) {
         selectedTonightVersionID = version.id
     }

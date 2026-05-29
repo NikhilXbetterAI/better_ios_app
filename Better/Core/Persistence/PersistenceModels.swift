@@ -13,9 +13,18 @@ import SwiftData
 // windows for legacy versions is handled in app code post-migration via
 // `BackfillCoordinator.runV3Backfill` (idempotent, gated on a UserDefaults flag).
 //
+// Schema V4 adds two new cache tables (`StoredDashboardBaselineSnapshot` and
+// `StoredChronotypeSnapshot`) and a scalar `qualityScoreOverall: Double?` column on
+// `StoredSleepSession` — eliminating per-day blob decryption in the calendar-dot
+// path (`fetchAvailableSleepDates`). V4 also includes `baselineData: Data?` on
+// `StoredDashboardBaselineSnapshot` for full-fidelity baseline reconstruction.
+// All V4 changes are lightweight-eligible: new tables, new optional columns, no
+// default values needed. Pre-migration rows get nil for new optional columns and
+// fall back to the blob / scalar paths in the repo.
+//
 // Whenever you add or modify a `@Model` class you MUST add a new versioned schema
 // here and append a stage to `BetterMigrationPlan`. Never mutate `BetterSchemaV1` /
-// `BetterSchemaV2` / `BetterSchemaV3` after they ship.
+// `BetterSchemaV2` / `BetterSchemaV3` / `BetterSchemaV4` after they ship.
 
 nonisolated enum BetterSchemaV1: VersionedSchema {
     nonisolated static var versionIdentifier: Schema.Version { .init(1, 0, 0) }
@@ -60,20 +69,31 @@ nonisolated enum BetterSchemaV3: VersionedSchema {
     }
 }
 
+nonisolated enum BetterSchemaV4: VersionedSchema {
+    nonisolated static var versionIdentifier: Schema.Version { .init(4, 0, 0) }
+    nonisolated static var models: [any PersistentModel.Type] {
+        BetterSchemaV3.models + [
+            StoredDashboardBaselineSnapshot.self,
+            StoredChronotypeSnapshot.self,
+        ]
+    }
+}
+
 nonisolated enum BetterMigrationPlan: SchemaMigrationPlan {
     nonisolated static var schemas: [any VersionedSchema.Type] {
-        [BetterSchemaV1.self, BetterSchemaV2.self, BetterSchemaV3.self]
+        [BetterSchemaV1.self, BetterSchemaV2.self, BetterSchemaV3.self, BetterSchemaV4.self]
     }
     nonisolated static var stages: [MigrationStage] {
         [
             .lightweight(fromVersion: BetterSchemaV1.self, toVersion: BetterSchemaV2.self),
-            .lightweight(fromVersion: BetterSchemaV2.self, toVersion: BetterSchemaV3.self)
+            .lightweight(fromVersion: BetterSchemaV2.self, toVersion: BetterSchemaV3.self),
+            .lightweight(fromVersion: BetterSchemaV3.self, toVersion: BetterSchemaV4.self)
         ]
     }
 }
 
 nonisolated enum BetterPersistenceContainerFactory {
-    private static var currentSchema: Schema { Schema(versionedSchema: BetterSchemaV3.self) }
+    private static var currentSchema: Schema { Schema(versionedSchema: BetterSchemaV4.self) }
 
     /// Builds the live SwiftData container with `BetterMigrationPlan` wired in.
     ///
@@ -196,6 +216,10 @@ final class StoredSleepSession {
     var waso: Double
     var efficiency: Double
     var dataQualityRawValue: String
+    /// Scalar cache of `qualityScore.overall`. Populated by `StoredSleepSession(domain:)`
+    /// starting with schema V4. Pre-V4 rows have `nil` here; the repository falls back
+    /// to blob decryption for those rows only.
+    var qualityScoreOverall: Double?
     var qualityScoreData: Data
     var stagesData: Data
     var sourcesData: Data
@@ -219,6 +243,7 @@ final class StoredSleepSession {
         waso: Double,
         efficiency: Double,
         dataQualityRawValue: String,
+        qualityScoreOverall: Double?,
         qualityScoreData: Data,
         stagesData: Data,
         sourcesData: Data,
@@ -241,6 +266,7 @@ final class StoredSleepSession {
         self.waso = waso
         self.efficiency = efficiency
         self.dataQualityRawValue = dataQualityRawValue
+        self.qualityScoreOverall = qualityScoreOverall
         self.qualityScoreData = qualityScoreData
         self.stagesData = stagesData
         self.sourcesData = sourcesData
@@ -273,6 +299,7 @@ final class StoredSleepSession {
             waso: domain.waso,
             efficiency: domain.efficiency,
             dataQualityRawValue: domain.dataQuality.rawValue,
+            qualityScoreOverall: domain.qualityScore.overall,
             qualityScoreData: try PersistenceJSON.encode(domain.qualityScore),
             stagesData: try PersistenceJSON.encode(domain.stages),
             sourcesData: try PersistenceJSON.encode(domain.sources),
@@ -1193,6 +1220,180 @@ final class StoredInterventionWindow {
             phase: InterventionWindow.Phase(rawValue: phaseRaw) ?? .active,
             createdAt: createdAt,
             updatedAt: updatedAt
+        )
+    }
+}
+
+// MARK: - Dashboard baseline snapshot cache (V4)
+
+/// Sendable value mirror of `StoredDashboardBaselineSnapshot`. This is the type
+/// that crosses the `LocalDataRepository` actor boundary — the `@Model` itself is
+/// `ModelContext`-bound and never leaves the actor (mirrors the
+/// `ProtocolBaselineSnapshot` / `StoredProtocolBaselineSnapshot` pattern).
+nonisolated struct DashboardBaselineSnapshotRecord: Sendable {
+    var asOfSleepDateKey: String
+    var windowKind: String
+    var generatedAt: Date
+    var validNightCount: Int
+    var sourceWindowStart: Date
+    var sourceWindowEnd: Date
+    var durationMean: Double
+    var durationStdDev: Double
+    var bedtimeMeanHour: Double
+    var bedtimeStdDev: Double
+    var remRatioMean: Double
+    var deepRatioMean: Double
+    var baselineData: Data?
+}
+
+/// One row per (asOfSleepDateKey, windowKind) pair. Written by the dashboard
+/// baseline computation path; read back to skip re-computation across date
+/// selections within the same session. Wiped by `deleteAllHealthData`.
+@Model
+final class StoredDashboardBaselineSnapshot {
+    @Attribute(.unique) var id: String
+    var asOfSleepDateKey: String
+    /// e.g. "dashboard30" or "dashboard60"
+    var windowKind: String
+    var generatedAt: Date
+    var validNightCount: Int
+    var sourceWindowStart: Date
+    var sourceWindowEnd: Date
+    var durationMean: Double
+    var durationStdDev: Double
+    var bedtimeMeanHour: Double
+    var bedtimeStdDev: Double
+    var remRatioMean: Double
+    var deepRatioMean: Double
+    /// V5: Full `PersistenceJSON.encode`-serialized `SleepBaseline`. When present
+    /// this is used instead of the scalar fields to reconstruct the baseline with
+    /// exact parity. `nil` on pre-V5 rows — those fall back to scalar reconstruction.
+    var baselineData: Data?
+
+    init(
+        asOfSleepDateKey: String,
+        windowKind: String,
+        generatedAt: Date,
+        validNightCount: Int,
+        sourceWindowStart: Date,
+        sourceWindowEnd: Date,
+        durationMean: Double,
+        durationStdDev: Double,
+        bedtimeMeanHour: Double,
+        bedtimeStdDev: Double,
+        remRatioMean: Double,
+        deepRatioMean: Double,
+        baselineData: Data? = nil
+    ) {
+        self.id = "\(asOfSleepDateKey)_\(windowKind)"
+        self.asOfSleepDateKey = asOfSleepDateKey
+        self.windowKind = windowKind
+        self.generatedAt = generatedAt
+        self.validNightCount = validNightCount
+        self.sourceWindowStart = sourceWindowStart
+        self.sourceWindowEnd = sourceWindowEnd
+        self.durationMean = durationMean
+        self.durationStdDev = durationStdDev
+        self.bedtimeMeanHour = bedtimeMeanHour
+        self.bedtimeStdDev = bedtimeStdDev
+        self.remRatioMean = remRatioMean
+        self.deepRatioMean = deepRatioMean
+        self.baselineData = baselineData
+    }
+
+    convenience init(domain: DashboardBaselineSnapshotRecord) {
+        self.init(
+            asOfSleepDateKey: domain.asOfSleepDateKey,
+            windowKind: domain.windowKind,
+            generatedAt: domain.generatedAt,
+            validNightCount: domain.validNightCount,
+            sourceWindowStart: domain.sourceWindowStart,
+            sourceWindowEnd: domain.sourceWindowEnd,
+            durationMean: domain.durationMean,
+            durationStdDev: domain.durationStdDev,
+            bedtimeMeanHour: domain.bedtimeMeanHour,
+            bedtimeStdDev: domain.bedtimeStdDev,
+            remRatioMean: domain.remRatioMean,
+            deepRatioMean: domain.deepRatioMean,
+            baselineData: domain.baselineData
+        )
+    }
+
+    func toDomain() -> DashboardBaselineSnapshotRecord {
+        DashboardBaselineSnapshotRecord(
+            asOfSleepDateKey: asOfSleepDateKey,
+            windowKind: windowKind,
+            generatedAt: generatedAt,
+            validNightCount: validNightCount,
+            sourceWindowStart: sourceWindowStart,
+            sourceWindowEnd: sourceWindowEnd,
+            durationMean: durationMean,
+            durationStdDev: durationStdDev,
+            bedtimeMeanHour: bedtimeMeanHour,
+            bedtimeStdDev: bedtimeStdDev,
+            remRatioMean: remRatioMean,
+            deepRatioMean: deepRatioMean,
+            baselineData: baselineData
+        )
+    }
+}
+
+// MARK: - Chronotype snapshot cache (V4)
+
+/// Sendable value mirror of `StoredChronotypeSnapshot` — the type that crosses
+/// the `LocalDataRepository` actor boundary. The `@Model` stays inside the actor.
+nonisolated struct ChronotypeSnapshotRecord: Sendable {
+    var windowEndSleepDateKey: String
+    var generatedAt: Date
+    var estimateData: Data?
+    var coverageNightCount: Int
+    var windowDays: Int
+}
+
+/// One row per `windowEndSleepDateKey`. Caches the serialized `ChronotypeEstimate`
+/// (and coverage metadata) so the chronotype calculation is not re-run on every
+/// date selection. Wiped by `deleteAllHealthData`.
+@Model
+final class StoredChronotypeSnapshot {
+    @Attribute(.unique) var windowEndSleepDateKey: String
+    var generatedAt: Date
+    /// `PersistenceJSON.encode`-serialized `ChronotypeEstimate`. Optional so rows
+    /// with no computable estimate are still stored (coverage metadata is preserved).
+    var estimateData: Data?
+    var coverageNightCount: Int
+    var windowDays: Int
+
+    init(
+        windowEndSleepDateKey: String,
+        generatedAt: Date,
+        estimateData: Data?,
+        coverageNightCount: Int,
+        windowDays: Int
+    ) {
+        self.windowEndSleepDateKey = windowEndSleepDateKey
+        self.generatedAt = generatedAt
+        self.estimateData = estimateData
+        self.coverageNightCount = coverageNightCount
+        self.windowDays = windowDays
+    }
+
+    convenience init(domain: ChronotypeSnapshotRecord) {
+        self.init(
+            windowEndSleepDateKey: domain.windowEndSleepDateKey,
+            generatedAt: domain.generatedAt,
+            estimateData: domain.estimateData,
+            coverageNightCount: domain.coverageNightCount,
+            windowDays: domain.windowDays
+        )
+    }
+
+    func toDomain() -> ChronotypeSnapshotRecord {
+        ChronotypeSnapshotRecord(
+            windowEndSleepDateKey: windowEndSleepDateKey,
+            generatedAt: generatedAt,
+            estimateData: estimateData,
+            coverageNightCount: coverageNightCount,
+            windowDays: windowDays
         )
     }
 }

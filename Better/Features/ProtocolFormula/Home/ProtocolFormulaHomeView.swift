@@ -25,8 +25,8 @@ struct ProtocolFormulaHomeView: View {
                 }
                 
                 if let active = viewModel.activeVersion {
+                    dateNavigatorView
                     lastNightHeroCard(active)
-                    lastNightMetricsGrid
                     tonightInlineCard(active)
                     trendSection
                     quickNavRow
@@ -105,6 +105,43 @@ struct ProtocolFormulaHomeView: View {
 
     // MARK: - HOME: Last Night Hero Card
 
+    // MARK: - Date Navigator (hoisted from hero card)
+    
+    private var dateNavigatorView: some View {
+        HStack {
+            Button { Task { await viewModel.goToPreviousNight() } } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(ProtocolPalette.dimText)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Color.white.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
+            
+            Text(viewModel.lastNightSession?.sleepDateKey ?? "No session logged")
+                .font(.title3.weight(.black))
+                .foregroundStyle(BetterColors.text)
+            
+            Spacer()
+            
+            Button { Task { await viewModel.goToNextNight() } } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(ProtocolPalette.dimText)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Color.white.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isShowingLatestNight)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - HOME: Last Night Hero Card
+
     private func lastNightHeroCard(_ active: ProtocolFormulaVersion) -> some View {
         let color = viewModel.lastNightVersion.map { ProtocolPalette.versionColor(hex: $0.colorHex) } ?? ProtocolPalette.brandColor
         let snapshot = viewModel.lastNightSnapshot
@@ -115,35 +152,10 @@ struct ProtocolFormulaHomeView: View {
             // Header
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Last Night")
+                    Text("Last Night Summary")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(ProtocolPalette.dimText)
                         .textCase(.uppercase)
-
-                    HStack(spacing: 8) {
-                        Button { Task { await viewModel.goToPreviousNight() } } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(ProtocolPalette.dimText)
-                                .frame(width: 32, height: 32)
-                                .background(Circle().fill(Color.white.opacity(0.06)))
-                        }
-                        .buttonStyle(.plain)
-                        
-                        Text(viewModel.lastNightSession?.sleepDateKey ?? "No session logged")
-                            .font(.title3.weight(.black))
-                            .foregroundStyle(BetterColors.text)
-                        
-                        Button { Task { await viewModel.goToNextNight() } } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(ProtocolPalette.dimText)
-                                .frame(width: 32, height: 32)
-                                .background(Circle().fill(Color.white.opacity(0.06)))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(viewModel.isShowingLatestNight)
-                    }
 
                     HStack(spacing: 6) {
                         if let lastNightVer = viewModel.lastNightVersion {
@@ -180,20 +192,9 @@ struct ProtocolFormulaHomeView: View {
                 Spacer()
             }
 
-            // Hero split — ring shows the %, side shows label + minutes + interactive baseline
-            HStack(spacing: BetterSpacing.large) {
-                RestoreRing(
-                    pct: pct,
-                    color: color,
-                    size: 96,
-                    restorativeMin: snapshot?.restorativeSleepMinutes,
-                    totalInBedMin: snapshot?.restorativeDenominatorMinutes
-                )
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Total Restorative Sleep %")
-                .accessibilityValue("\(Int(pct.rounded())) percent")
-
-                VStack(alignment: .leading, spacing: 8) {
+            // Main metric details row
+            VStack(alignment: .leading, spacing: BetterSpacing.small) {
+                HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Total Restorative Sleep")
                             .font(.caption.weight(.bold))
@@ -217,19 +218,32 @@ struct ProtocolFormulaHomeView: View {
                                 .foregroundStyle(ProtocolPalette.dimText)
                         }
                     }
+                    Spacer()
+                    Text("\(Int(pct.rounded()))%")
+                        .font(.system(size: 32, weight: .black).monospacedDigit())
+                        .foregroundStyle(BetterColors.text)
+                }
+                
+                // Linear progress bar showing current value vs baseline
+                RestoreBar(
+                    pct: pct,
+                    baselinePct: viewModel.baseline?.meanRestorativePctOfInBed,
+                    color: color,
+                    height: 10
+                )
+                .padding(.vertical, 4)
 
-                    // Tappable baseline comparison pill
-                    if let impact = viewModel.impact, !impact.isLowData,
-                       let deltaPct = impact.deltaRestorativePctOfInBed {
-                        Button { impactDetailMetric = .restorativePct } label: {
-                            heroBaselinePill(delta: deltaPct, unit: "%")
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Text(baselineStatusText)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(ProtocolPalette.dimText)
+                // Tappable baseline comparison pill
+                if let impact = viewModel.impact, !impact.isLowData,
+                   let deltaPct = impact.deltaRestorativePctOfInBed {
+                    Button { impactDetailMetric = .restorativePct } label: {
+                        heroBaselinePill(delta: deltaPct, unit: "%")
                     }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(baselineStatusText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(ProtocolPalette.dimText)
                 }
             }
             .padding(.vertical, 4)
@@ -326,58 +340,98 @@ struct ProtocolFormulaHomeView: View {
     private func tonightInlineCard(_ active: ProtocolFormulaVersion) -> some View {
         let tonightVer = viewModel.selectedTonightVersionID.flatMap { viewModel.versionsByID[$0] } ?? active
         let color = ProtocolPalette.versionColor(hex: tonightVer.colorHex)
-        
-        return VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
+        let state = viewModel.tonightLogSaveState
+
+        return Group {
+            if case .saved(let savedStatus) = state {
+                HStack(spacing: 12) {
                     Text("Tonight")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(ProtocolPalette.dimText)
                         .textCase(.uppercase)
 
-                    HStack(spacing: 8) {
-                        Text("Schedule:")
+                    VersionChip(version: tonightVer, size: .small)
+                        .accessibilityLabel("Formula \(tonightVer.resolvedLabel)")
+
+                    Spacer()
+
+                    HStack(spacing: 6) {
+                        Image(systemName: savedIconName(for: savedStatus))
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(savedStatus == .taken ? ProtocolPalette.goodColor : ProtocolPalette.mutedText)
+                        Text(savedStatus == .taken ? "Taken" : "Didn't take")
                             .font(.subheadline.weight(.bold))
-                            .foregroundStyle(BetterColors.text)
-                        VersionChip(version: tonightVer, size: .small)
-                            .accessibilityLabel("Formula \(tonightVer.resolvedLabel)")
+                            .foregroundStyle(savedStatus == .taken ? ProtocolPalette.goodColor : BetterColors.text)
+                    }
+
+                    Button {
+                        Task { await viewModel.resetTonightLog() }
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(ProtocolPalette.mutedText)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Reset log status")
+                }
+                .padding(BetterSpacing.medium)
+                .background(ProtocolPalette.surfaceColor)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(savedStatus == .taken ? ProtocolPalette.goodColor.opacity(0.24) : ProtocolPalette.borderColor, lineWidth: 1))
+            } else {
+                VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Tonight")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(ProtocolPalette.dimText)
+                                .textCase(.uppercase)
+
+                            HStack(spacing: 8) {
+                                Text("Schedule:")
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(BetterColors.text)
+                                VersionChip(version: tonightVer, size: .small)
+                                    .accessibilityLabel("Formula \(tonightVer.resolvedLabel)")
+                            }
+                        }
+                        Spacer()
+                    }
+
+                    // Supplement log actions — show save-state banner when saving/saved/error
+                    tonightLogActionArea(color: color, compact: true)
+
+                    // Collapsible supplement expander button
+                    Button {
+                        withAnimation { showAddinEditor.toggle() }
+                    } label: {
+                        HStack {
+                            Image(systemName: showAddinEditor ? "minus" : "plus")
+                                .font(.caption.weight(.bold))
+                            Text(showAddinEditor ? "Hide add-on supplements" : "Add tonight's add-on supplements")
+                                .font(.caption.weight(.bold))
+                        }
+                        .font(.system(size: 13))
+                        .foregroundStyle(ProtocolPalette.addinColor)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(ProtocolPalette.borderColor, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if showAddinEditor {
+                        addinEditor
                     }
                 }
-                Spacer()
-            }
-
-            // Supplement log actions — show save-state banner when saving/saved/error
-            tonightLogActionArea(color: color, compact: true)
-
-            // Collapsible supplement expander button
-            Button {
-                withAnimation { showAddinEditor.toggle() }
-            } label: {
-                HStack {
-                    Image(systemName: showAddinEditor ? "minus" : "plus")
-                        .font(.caption.weight(.bold))
-                    Text(showAddinEditor ? "Hide add-on supplements" : "Add tonight's add-on supplements")
-                        .font(.caption.weight(.bold))
-                }
-                .font(.system(size: 13))
-                .foregroundStyle(ProtocolPalette.addinColor)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(ProtocolPalette.borderColor, lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-
-            if showAddinEditor {
-                addinEditor
+                .padding(BetterSpacing.medium)
+                .background(ProtocolPalette.surfaceColor)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
             }
         }
-        .padding(BetterSpacing.medium)
-        .background(ProtocolPalette.surfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ProtocolPalette.borderColor, lineWidth: 1))
     }
 
     // MARK: - Shared Trend Chart Sparkline Section
@@ -789,17 +843,9 @@ struct ProtocolFormulaHomeView: View {
                                         Circle()
                                             .fill(color)
                                             .frame(width: 10, height: 10)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(version.resolvedLabel)
-                                                .font(.system(size: 15, weight: .bold))
-                                                .foregroundStyle(BetterColors.text)
-                                            if !version.formulaText.isEmpty {
-                                                Text(version.formulaText)
-                                                    .font(.system(size: 12))
-                                                    .foregroundStyle(ProtocolPalette.mutedText)
-                                                    .lineLimit(1)
-                                            }
-                                        }
+                                        Text(version.resolvedLabel)
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundStyle(BetterColors.text)
                                         Spacer()
                                         Image(systemName: "chevron.right")
                                             .font(.system(size: 12, weight: .semibold))

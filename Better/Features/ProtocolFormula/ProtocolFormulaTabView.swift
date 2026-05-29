@@ -63,18 +63,24 @@ struct ProtocolFormulaTabView: View {
                 NavigationStack {
                     ProtocolFormulaHomeView(
                         viewModel: homeViewModel,
-                        onOpenFormulaSetup: { route = .formulaSetup },
+                        onOpenFormulaSetup: {
+                            if homeViewModel.versions.isEmpty {
+                                showOnboarding = true
+                            } else {
+                                route = .formulaSetup
+                            }
+                        },
                         onOpenEditLog: { route = .editLog },
                         onOpenTimeline: { route = .timeline },
                         onOpenAllMetrics: { route = .allMetrics },
                         onOpenVersionDive: { route = .versionDive }
                     )
-                    .navigationTitle("Protocol")
+                    .navigationTitle("Formula")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Menu {
-                                Button("Protocol versions") { route = .formulaSetup }
+                                Button("Formula versions") { route = .formulaSetup }
                                 Button("Edit log") { route = .editLog }
                                 Divider()
                                 Button("Timeline") { route = .timeline }
@@ -89,7 +95,7 @@ struct ProtocolFormulaTabView: View {
                         switch dest {
                         case .formulaSetup:
                             ProtocolFormulaSetupView(viewModel: setupViewModel)
-                                .navigationTitle("Protocol versions")
+                                .navigationTitle("Formula versions")
                         case .editLog:
                             ProtocolEditLogView(viewModel: editLogViewModel)
                                 .navigationTitle("Edit log")
@@ -137,12 +143,17 @@ enum ProtocolFormulaOnboardingGate {
             }
             return true
         } catch {
-            // If inventory cannot be read, avoid sending an existing user into the
-            // history-painting flow where they could duplicate/overwrite protocol setup.
-            if let versions = try? await repository.fetchAllFormulaVersions(), !versions.isEmpty {
-                userDefaults.set(true, forKey: completedKey)
+            // Inventory read failed. Show onboarding only when we can confirm no versions exist;
+            // if the version fetch also fails, default to showing onboarding (new install).
+            if let versions = try? await repository.fetchAllFormulaVersions() {
+                if versions.isEmpty {
+                    return true
+                } else {
+                    userDefaults.set(true, forKey: completedKey)
+                    return false
+                }
             }
-            return false
+            return true
         }
     }
 }

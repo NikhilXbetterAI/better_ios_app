@@ -89,7 +89,7 @@ actor MockLocalDataRepository: LocalDataRepositoryProtocol {
             .map {
                 SleepDaySummary(
                     sleepDateKey: $0.sleepDateKey,
-                    score: $0.qualityScore.overall,
+                    score: Double($0.appleScorePartial),
                     totalSleepTime: $0.totalSleepTime,
                     dataQuality: $0.dataQuality,
                     hasSession: true

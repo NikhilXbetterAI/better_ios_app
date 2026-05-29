@@ -225,8 +225,8 @@ nonisolated private extension SleepInsightService {
             return nil
         }
         let previousTwo = ordered[(latestIndex - 2)..<latestIndex]
-        let poorBefore = previousTwo.allSatisfy { $0.qualityScore.overall < 70 }
-        guard poorBefore, session.qualityScore.overall >= 75 else { return nil }
+        let poorBefore = previousTwo.allSatisfy { Double($0.appleScorePartial) < 70 }
+        guard poorBefore, Double(session.appleScorePartial) >= 75 else { return nil }
         return SleepInsight(
             id: "recovery-after-streak",
             title: "Sleep recovered after a lower stretch",

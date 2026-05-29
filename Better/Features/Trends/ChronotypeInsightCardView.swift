@@ -389,8 +389,10 @@ private extension ChronotypeInsightCardView {
             "High confidence"
         case .stable:
             "Stable"
+        case .goodEstimate:
+            "Good estimate"
         case .preview:
-            "Preview"
+            "Early estimate"
         case nil:
             "Building"
         }
@@ -402,6 +404,8 @@ private extension ChronotypeInsightCardView {
             BetterColors.success
         case .stable:
             BetterColors.brand
+        case .goodEstimate:
+            BetterColors.cyan
         case .preview:
             BetterColors.warning
         case nil:

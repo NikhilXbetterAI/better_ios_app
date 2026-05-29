@@ -39,12 +39,6 @@ final class SleepDashboardViewModel {
         selectedSleepDateKey == SleepDateKey.today(calendar: calendar)
     }
 
-    /// Pre-sorted by ascending end date. Computed once here so views never
-    /// call `.sorted { }` on the raw array (which re-runs O(n log n) on every render).
-    var sortedRecentSessions: [SleepSession] {
-        recentSessions.sorted { $0.endDate < $1.endDate }
-    }
-
     var baselineConfidenceLabel: String? {
         guard let validNights = selectedBaseline?.validNights else { return nil }
         switch validNights {
@@ -56,7 +50,7 @@ final class SleepDashboardViewModel {
     }
 
     /// True when the dashboard-specific 30/60 baseline doesn't have enough
-    /// valid nights to render a "vs your usual sleep" comparison.
+    /// valid nights to render a "vs your baseline sleep" comparison.
     var baselineIsBuilding: Bool {
         (selectedBaseline?.validNights ?? 0) < BaselineEngine.dashboardMinimumValidNights
     }
@@ -231,12 +225,32 @@ private extension SleepDashboardViewModel {
         self.biomarkerProvenance = provenance
     }
 
+    /// 7-day TTL for persisted baseline snapshots. Fresh enough that a week of
+    /// new sessions won't silently skew the "vs your usual sleep" comparison.
+    private static let baselineSnapshotTTL: TimeInterval = 7 * 86_400
+
     func baseline(asOfSleepDateKey key: String, windowDays: Int) async throws -> SleepBaseline {
         // The dashboard uses a dedicated 30-day primary / 60-day fallback
         // selector — the user's `profile.baselineWindowDays` is ignored here on
         // purpose (it still drives Trends and other consumers).
         _ = windowDays
         let selectedDate = SleepDateKey.date(from: key, calendar: calendar) ?? Date()
+
+        // Cache-first: try the persisted snapshot (primary 30-day, then 60-day fallback).
+        // Using `reconstructBaseline(from:)` on a fresh snapshot avoids the 60-day
+        // session fetch + BaselineEngine run on every date swipe.
+        for windowKind in ["dashboard30", "dashboard60"] {
+            if let snapshot = try? await localRepository.fetchBaselineSnapshot(
+                asOfSleepDateKey: key,
+                windowKind: windowKind
+            ),
+            Date().timeIntervalSince(snapshot.generatedAt) < Self.baselineSnapshotTTL,
+            let cached = BaselineEngine.reconstructBaseline(from: snapshot) {
+                return cached
+            }
+        }
+
+        // Cache miss: compute the full 60-day window, persist for next call.
         let fetchWindowDays = BaselineEngine.dashboardFallbackWindow
         let baselineStart = calendar.date(
             byAdding: .day,
@@ -252,11 +266,45 @@ private extension SleepDashboardViewModel {
             generatedAt: selectedDate
         )
 
-        return selection.activeBaseline ?? processor.computeBaseline(
+        let result = selection.activeBaseline ?? processor.computeBaseline(
             from: [],
             windowDays: BaselineEngine.dashboardPrimaryWindow,
             generatedAt: selectedDate
         )
+
+        // Persist the snapshot so subsequent date swipes hit the cache.
+        let windowKind = (result.windowDays == BaselineEngine.dashboardFallbackWindow)
+            ? "dashboard60" : "dashboard30"
+        await persistBaselineSnapshot(result, asOfSleepDateKey: key, windowKind: windowKind, generatedAt: selectedDate)
+
+        return result
+    }
+
+    /// Serialises a computed `SleepBaseline` into `DashboardBaselineSnapshotRecord`
+    /// and saves it.  Errors are swallowed — a failed cache write is non-fatal.
+    private func persistBaselineSnapshot(
+        _ baseline: SleepBaseline,
+        asOfSleepDateKey key: String,
+        windowKind: String,
+        generatedAt: Date
+    ) async {
+        let duration = baseline.totalSleepAverage
+        let snapshot = DashboardBaselineSnapshotRecord(
+            asOfSleepDateKey: key,
+            windowKind: windowKind,
+            generatedAt: generatedAt,
+            validNightCount: baseline.validNights,
+            sourceWindowStart: generatedAt.addingTimeInterval(-Double(baseline.windowDays) * 86_400),
+            sourceWindowEnd: generatedAt,
+            durationMean: duration,
+            durationStdDev: baseline.totalSleepStandardDeviation,
+            bedtimeMeanHour: baseline.bedtimeMinuteAverage / 60.0,
+            bedtimeStdDev: baseline.bedtimeMinuteStandardDeviation / 60.0,
+            remRatioMean: duration > 0 ? baseline.remAverage / duration : 0,
+            deepRatioMean: duration > 0 ? baseline.deepAverage / duration : 0,
+            baselineData: try? PersistenceJSON.encode(baseline)
+        )
+        try? await localRepository.saveBaselineSnapshot(snapshot)
     }
 
     func refreshIfNeededForToday() async {
@@ -289,7 +337,30 @@ private extension SleepDashboardViewModel {
         let endDate = calendar.date(byAdding: DateComponents(day: -1), to: monthInterval.end) ?? monthInterval.end
         let endKey = SleepDateKey.calendarDateKey(for: endDate, calendar: calendar)
         do {
-            selectedMonthSummaries = try await localRepository.fetchAvailableSleepDates(from: startKey, to: endKey)
+            let summaries = try await localRepository.fetchAvailableSleepDates(from: startKey, to: endKey)
+            // Recompute each day's score using the Apple formula + current baseline
+            // so the calendar rings match the hero dial exactly.
+            let baseline = selectedBaseline
+            let goal = sleepGoalHours
+            selectedMonthSummaries = summaries.map { summary in
+                var s = summary
+                guard let sleep = summary.totalSleepTime else { return s }
+                let durationPts = min(sleep / (goal * 3_600), 1.0) * 50.0
+                let wasoMin = summary.waso / 60.0
+                let interruptionsPts = max(0.0, (1.0 - wasoMin / 120.0) * 20.0)
+                let bedtimePts: Double
+                if let bedStart = summary.inBedStartDate, let b = baseline, b.validNights >= 5 {
+                    let bedMin = Double(calendar.component(.hour, from: bedStart) * 60 + calendar.component(.minute, from: bedStart))
+                    let baseMin = b.bedtimeMinuteAverage
+                    let raw = abs(bedMin - baseMin).truncatingRemainder(dividingBy: 1_440)
+                    let deviation = min(raw, 1_440 - raw)
+                    bedtimePts = max(0.0, (1.0 - deviation / 180.0) * 30.0)
+                } else {
+                    bedtimePts = 0
+                }
+                s.score = (durationPts + interruptionsPts + bedtimePts).rounded()
+                return s
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -324,25 +395,41 @@ private extension SleepDashboardViewModel {
     func loadBodyClockResult(endingAtSleepDateKey key: String) async throws -> ChronotypeCalculationResult? {
         guard let selectedDate = SleepDateKey.date(from: key, calendar: calendar) else { return nil }
         let windowEnd = calendar.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate.addingTimeInterval(86_400)
+        let windowEndKey = SleepDateKey.calendarDateKey(for: windowEnd, calendar: calendar)
+
+        // Cache-first: avoid the 90-day session/context/activity fetch on every date swipe.
+        if let cached = await chronotypeService.cachedEstimate(
+            windowEndSleepDateKey: windowEndKey,
+            localRepository: localRepository
+        ) {
+            return cached
+        }
+
+        // Cache miss — run the full computation.
         let windowStart = calendar.date(byAdding: .day, value: -91, to: windowEnd) ?? windowEnd.addingTimeInterval(-91 * 86_400)
         let startKey = SleepDateKey.calendarDateKey(for: windowStart, calendar: calendar)
-        let endKey = SleepDateKey.calendarDateKey(for: windowEnd, calendar: calendar)
 
         async let sessions = localRepository.fetchCachedSessions(from: windowStart, to: windowEnd)
-        async let contextEntries = localRepository.fetchContextEntries(from: startKey, to: endKey)
-        async let activityLogs = localRepository.fetchActivityStatusLogs(from: startKey, to: endKey)
+        async let contextEntries = localRepository.fetchContextEntries(from: startKey, to: windowEndKey)
+        async let activityLogs = localRepository.fetchActivityStatusLogs(from: startKey, to: windowEndKey)
         let (loadedSessions, loadedContextEntries, loadedActivityLogs) = try await (sessions, contextEntries, activityLogs)
 
         let service = chronotypeService
-        let calendar = calendar
-        return service.estimate(
+        let cal = calendar
+        let result = service.estimate(
             sessions: loadedSessions,
             contextEntries: loadedContextEntries,
             activityLogs: loadedActivityLogs,
             windowDays: 90,
             endingAt: windowEnd,
-            calendar: calendar
+            calendar: cal
         )
+        await service.saveSnapshot(
+            result: result,
+            windowEndSleepDateKey: windowEndKey,
+            localRepository: localRepository
+        )
+        return result
     }
 
     static func bodyClockAlignment(

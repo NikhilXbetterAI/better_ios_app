@@ -33,7 +33,7 @@ nonisolated struct ProtocolFormulaAnalysisService: Sendable {
         let awake = hasDetailed ? nonNegativeFiniteMinutes(session.awakeDuration) : nil
         let totalSleep = hasAnySleepData ? nonNegativeFiniteMinutes(session.totalSleepTime) : nil
         let latency = hasAnySleepData ? nonNegativeFiniteMinutes(session.sleepLatency) : nil
-        let score: Double? = hasAnySleepData ? nonNegativeFinite(session.qualityScore.overall) : nil
+        let score: Double? = hasAnySleepData ? nonNegativeFinite(Double(session.appleScorePartial)) : nil
         return ProtocolNightMetricSnapshot(
             sleepDateKey: session.sleepDateKey,
             versionID: log?.versionID,

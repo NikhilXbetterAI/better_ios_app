@@ -61,21 +61,21 @@ enum TrendMetric: String, CaseIterable, Identifiable, Sendable {
 }
 
 struct TrendChartPoint: Identifiable, Sendable, Equatable {
-    let id: UUID
+    let id: String
     let date: Date
     let dateKey: String
     let value: Double
     let details: TrendPointDetails
 
-    init(date: Date, dateKey: String, value: Double, details: TrendPointDetails) {
-        self.id = UUID()
+    init(date: Date, dateKey: String, value: Double, details: TrendPointDetails, metric: String = "") {
+        self.id = metric.isEmpty ? dateKey : "\(dateKey)_\(metric)"
         self.date = date
         self.dateKey = dateKey
         self.value = value
         self.details = details
     }
 
-    /// Semantic equality: UUID is a stable-per-init identity token, not a semantic key.
+    /// Semantic equality: id is a stable content-derived key, not a random UUID.
     /// Two points with the same dateKey, value, and details are the same data point.
     static func == (lhs: TrendChartPoint, rhs: TrendChartPoint) -> Bool {
         lhs.dateKey == rhs.dateKey && lhs.value == rhs.value && lhs.details == rhs.details
@@ -90,7 +90,7 @@ struct TrendPointDetails: Sendable, Hashable {
 }
 
 struct StageCompositionPoint: Identifiable, Sendable, Equatable {
-    let id: UUID
+    let id: String
     let date: Date
     let dateKey: String
     let deepPercent: Double
@@ -122,7 +122,7 @@ struct StageCompositionPoint: Identifiable, Sendable, Equatable {
         remDuration: TimeInterval,
         awakeDuration: TimeInterval
     ) {
-        self.id = UUID()
+        self.id = dateKey
         self.date = date
         self.dateKey = dateKey
         self.deepPercent = deepPercent
@@ -300,16 +300,30 @@ final class TrendsViewModel {
             sleepGoalHours = profile.sleepGoalHours
             baseline = try await localRepository.fetchLatestBaseline(windowDays: profile.baselineWindowDays)
             let adherence = try await localRepository.fetchAdherence(from: startDate, to: now)
-            let chronotypeStartKey = SleepDateKey.calendarDateKey(for: chronotypeStart, calendar: calendar)
             let chronotypeEndKey = SleepDateKey.calendarDateKey(for: now, calendar: calendar)
-            let contextEntries = try await localRepository.fetchContextEntries(from: chronotypeStartKey, to: chronotypeEndKey)
-            let activityLogs = try await localRepository.fetchActivityStatusLogs(from: chronotypeStartKey, to: chronotypeEndKey)
-            chronotypeResult = await calculateChronotype(
-                sessions: fetchedSessions,
-                contextEntries: contextEntries,
-                activityLogs: activityLogs,
-                endingAt: now
-            )
+            // Cache-first: skip 90-day session/context/activity fetch when snapshot is fresh.
+            if let cached = await chronotypeService.cachedEstimate(
+                windowEndSleepDateKey: chronotypeEndKey,
+                localRepository: localRepository
+            ) {
+                chronotypeResult = cached
+            } else {
+                let chronotypeStartKey = SleepDateKey.calendarDateKey(for: chronotypeStart, calendar: calendar)
+                let contextEntries = try await localRepository.fetchContextEntries(from: chronotypeStartKey, to: chronotypeEndKey)
+                let activityLogs = try await localRepository.fetchActivityStatusLogs(from: chronotypeStartKey, to: chronotypeEndKey)
+                let computed = await calculateChronotype(
+                    sessions: fetchedSessions,
+                    contextEntries: contextEntries,
+                    activityLogs: activityLogs,
+                    endingAt: now
+                )
+                chronotypeResult = computed
+                await chronotypeService.saveSnapshot(
+                    result: computed,
+                    windowEndSleepDateKey: chronotypeEndKey,
+                    localRepository: localRepository
+                )
+            }
             var byKey: [String: Bool] = [:]
             for record in adherence {
                 byKey[record.dateKey] = byKey[record.dateKey] == true || record.taken
@@ -409,6 +423,7 @@ private extension TrendsViewModel {
     }
 
     func updateChartPoints() {
+        let metricRaw = selectedMetric.rawValue
         chartPoints = sessions.compactMap { session in
             guard let value = metricValue(for: session) else { return nil }
             return TrendChartPoint(
@@ -420,7 +435,8 @@ private extension TrendsViewModel {
                     timeInBed: session.totalInBedTime,
                     efficiency: session.efficiency,
                     score: session.qualityScore
-                )
+                ),
+                metric: metricRaw
             )
         }
     }
@@ -430,6 +446,7 @@ private extension TrendsViewModel {
             secondaryChartPoints = []
             return
         }
+        let metricRaw = metric.rawValue
         secondaryChartPoints = sessions.compactMap { session -> TrendChartPoint? in
             guard let value = metricValue(for: session, metric: metric) else { return nil }
             return TrendChartPoint(
@@ -441,7 +458,8 @@ private extension TrendsViewModel {
                     timeInBed: session.totalInBedTime,
                     efficiency: session.efficiency,
                     score: session.qualityScore
-                )
+                ),
+                metric: metricRaw
             )
         }
     }
@@ -451,6 +469,7 @@ private extension TrendsViewModel {
             tertiaryChartPoints = []
             return
         }
+        let metricRaw = metric.rawValue
         tertiaryChartPoints = sessions.compactMap { session -> TrendChartPoint? in
             guard let value = metricValue(for: session, metric: metric) else { return nil }
             return TrendChartPoint(
@@ -462,7 +481,8 @@ private extension TrendsViewModel {
                     timeInBed: session.totalInBedTime,
                     efficiency: session.efficiency,
                     score: session.qualityScore
-                )
+                ),
+                metric: metricRaw
             )
         }
     }
@@ -639,7 +659,7 @@ private extension TrendsViewModel {
             guard !summary.blocks.isEmpty else { return nil }
             return summary.longestBlockDuration / 3_600
         case .score:
-            return session.qualityScore.overall
+            return Double(session.appleScorePartial)
         case .deepSleep:
             guard session.dataQuality == .detailedStages else { return nil }
             return session.deepDuration / 3_600

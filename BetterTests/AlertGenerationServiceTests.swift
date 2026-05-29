@@ -113,7 +113,7 @@ final class AlertGenerationServiceTests: XCTestCase {
         settings.notificationEnabledKinds = [.lowScore, .sleepDebt]
         let session = Self.session(
             score: 55,
-            totalSleep: 5 * 3_600,
+            totalSleep: 4.5 * 3_600,
             deep: 90 * 60,
             rem: 120 * 60,
             waso: 10 * 60,
@@ -134,8 +134,8 @@ final class AlertGenerationServiceTests: XCTestCase {
         let requests = await scheduler.requests()
         XCTAssertEqual(requests.count, 1)
         // The morning digest now uses a score-bucketed title and an alert-count body.
-        // Session score 55 falls into the "Fair night" bucket, with two notifiable insights.
-        XCTAssertEqual(requests[0].title, "Fair night — score 55")
+        // Session score 66 falls into the "Fair night" bucket, with two notifiable insights.
+        XCTAssertEqual(requests[0].title, "Fair night — score 66")
         XCTAssertTrue(requests[0].body.contains("2 insights are ready"))
     }
 
@@ -169,9 +169,9 @@ final class AlertGenerationServiceTests: XCTestCase {
 
         let requests = await scheduler.requests()
         XCTAssertEqual(requests.count, 1)
-        // Score 88 lands in the "Great night" bucket; only one notifiable alert (analysis ready)
+        // Score 98 lands in the "Great night" bucket; only one notifiable alert (analysis ready)
         // so the digest body uses the single-alert "Tap to see your analysis." copy.
-        XCTAssertEqual(requests[0].title, "Great night — score 88")
+        XCTAssertEqual(requests[0].title, "Great night — score 98")
         XCTAssertEqual(requests[0].body, "You slept 8h 0m. Tap to see your analysis.")
     }
 }

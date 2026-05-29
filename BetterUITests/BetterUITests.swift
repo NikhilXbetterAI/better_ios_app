@@ -12,7 +12,7 @@ final class BetterUITests: XCTestCase {
         app.launch()
 
         // Primary tabs are present
-        for tab in ["Sleep", "Insights", "Protocol"] {
+        for tab in ["Sleep", "Insights", "Chronotype", "Formula", "Settings"] {
             XCTAssertTrue(
                 app.tabBars.buttons[tab].waitForExistence(timeout: 5),
                 "Expected root tab '\(tab)' to exist"
@@ -24,17 +24,17 @@ final class BetterUITests: XCTestCase {
         // Sleep tab shows the real dashboard (BETTER SLEEP header label)
         XCTAssertTrue(app.staticTexts["BETTER SLEEP"].waitForExistence(timeout: 5))
 
-        // Root tabs render their real headers. The Protocol tab can render either its
-        // dashboard ("Protocol") or its onboarding ("Sleep Protocol Tracking") depending
+        // Root tabs render their real headers. The Formula tab can render either its
+        // dashboard ("Formula") or its onboarding ("Sleep Formula Tracking") depending
         // on whether any formula versions exist in the preview store.
         app.tabBars.buttons["Insights"].tap()
         XCTAssertTrue(app.staticTexts["Insights"].waitForExistence(timeout: 3))
-        app.tabBars.buttons["Protocol"].tap()
-        let protocolHeader = app.staticTexts["Protocol"]
-        let protocolOnboardingHeader = app.staticTexts["Sleep Protocol Tracking"]
+        app.tabBars.buttons["Formula"].tap()
+        let protocolHeader = app.staticTexts["Formula"]
+        let protocolOnboardingHeader = app.staticTexts["Sleep Formula Tracking"]
         XCTAssertTrue(
             protocolHeader.waitForExistence(timeout: 3) || protocolOnboardingHeader.waitForExistence(timeout: 3),
-            "Expected either the Protocol dashboard or its onboarding screen to appear"
+            "Expected either the Formula dashboard or its onboarding screen to appear"
         )
     }
 

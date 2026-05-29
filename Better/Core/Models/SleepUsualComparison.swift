@@ -7,9 +7,9 @@ enum SleepVerdict: Sendable, Hashable {
 
     var headline: String {
         switch self {
-        case .better: return "Last night was better than your usual sleep."
-        case .usual:  return "Last night was about usual."
-        case .harder: return "Last night was harder than usual."
+        case .better: return "Last night was better than your baseline sleep."
+        case .usual:  return "Last night was about baseline."
+        case .harder: return "Last night was harder than baseline."
         }
     }
 }
@@ -22,9 +22,9 @@ enum SleepRowStatus: Sendable, Hashable {
 
     var label: String {
         switch self {
-        case .moreThanUsual: return "More than usual"
-        case .aboutUsual:    return "About usual"
-        case .lessThanUsual: return "Less than usual"
+        case .moreThanUsual: return "More than baseline"
+        case .aboutUsual:    return "About baseline"
+        case .lessThanUsual: return "Less than baseline"
         case .fewerWakeUps:  return "Fewer wake-ups"
         }
     }

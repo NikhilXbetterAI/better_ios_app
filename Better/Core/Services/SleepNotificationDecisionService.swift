@@ -170,7 +170,7 @@ nonisolated private extension SleepNotificationDecisionService {
             .suffix(3)
         guard ordered.count >= 3 else { return [] }
 
-        let poorCount = ordered.filter { $0.qualityScore.overall < 70 || $0.totalSleepTime < input.baseline.totalSleepAverage - 45 * 60 }.count
+        let poorCount = ordered.filter { Double($0.appleScorePartial) < 70 || $0.totalSleepTime < input.baseline.totalSleepAverage - 45 * 60 }.count
         if poorCount >= 3 {
             guard !isCoolingDown(.poorSleepStreak, previousAlerts: input.previousAlerts, createdAt: input.createdAt, days: 3) else {
                 return [suppressed(.poorSleepStreak, title: "Poor streak cooldown", reason: "Poor streak notification cooldown is active.", confidence: confidence, createdAt: input.createdAt, cooldown: true)]
@@ -191,8 +191,8 @@ nonisolated private extension SleepNotificationDecisionService {
 
         let previousTwo = ordered.dropLast()
         if previousTwo.count == 2,
-           previousTwo.allSatisfy({ $0.qualityScore.overall < 70 }),
-           input.latestSession.qualityScore.overall >= 75 {
+           previousTwo.allSatisfy({ Double($0.appleScorePartial) < 70 }),
+           Double(input.latestSession.appleScorePartial) >= 75 {
             guard !isCoolingDown(.recoveryTrend, previousAlerts: input.previousAlerts, createdAt: input.createdAt, days: 2) else {
                 return [suppressed(.recovery, title: "Recovery cooldown", reason: "Recovery notification cooldown is active.", confidence: confidence, createdAt: input.createdAt, cooldown: true)]
             }

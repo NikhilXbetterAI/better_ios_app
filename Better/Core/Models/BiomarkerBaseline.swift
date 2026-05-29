@@ -245,6 +245,242 @@ nonisolated struct SleepBiomarkerReaction: Hashable, Sendable {
     }
 }
 
+// MARK: - First-screen body signal presentation
+
+nonisolated enum BiomarkerBodySignal: String, Codable, Hashable, Sendable {
+    case harder
+    case recovered
+    case steady
+    case building
+    case missing
+}
+
+nonisolated enum BiomarkerBodySignalMagnitude: String, Codable, Hashable, Sendable {
+    case same
+    case slight
+    case meaningful
+    case large
+
+    static func make(percentDelta: Double) -> BiomarkerBodySignalMagnitude {
+        let absolute = abs(percentDelta)
+        switch absolute {
+        case 0...5:
+            return .same
+        case 5...12:
+            return .slight
+        case 12...20:
+            return .meaningful
+        default:
+            return .large
+        }
+    }
+}
+
+nonisolated struct BiomarkerBodySignalPresentation: Hashable, Sendable {
+    var key: BiomarkerKey
+    var value: Double?
+    var baselineMean: Double?
+    var percentDelta: Double?
+    var percentText: String
+    var comparisonText: String
+    var statusText: String
+    var meaningText: String
+    var signal: BiomarkerBodySignal
+    var magnitude: BiomarkerBodySignalMagnitude
+
+    static func make(
+        key: BiomarkerKey,
+        tonight: Double?,
+        baseline: BiomarkerBaseline?,
+        reaction: SleepBiomarkerReaction?,
+        readiness: BiomarkerBaselineReadiness,
+        provenance: BiomarkerProvenance?
+    ) -> BiomarkerBodySignalPresentation {
+        guard let tonight else {
+            return BiomarkerBodySignalPresentation(
+                key: key,
+                value: nil,
+                baselineMean: nil,
+                percentDelta: nil,
+                percentText: "--",
+                comparisonText: provenance?.neutralTrustCopy ?? "No reading captured tonight",
+                statusText: "No reading",
+                meaningText: "No reading captured tonight.",
+                signal: .missing,
+                magnitude: .same
+            )
+        }
+
+        guard readiness.isReady, let mean = baseline?.means[key], mean != 0 else {
+            return BiomarkerBodySignalPresentation(
+                key: key,
+                value: tonight,
+                baselineMean: nil,
+                percentDelta: nil,
+                percentText: "--",
+                comparisonText: readiness.neutralCopy,
+                statusText: "Baseline building",
+                meaningText: "Need more nights for your baseline comparison.",
+                signal: .building,
+                magnitude: .same
+            )
+        }
+
+        let percentDelta = ((tonight - mean) / mean) * 100
+        let magnitude = Self.magnitude(for: key, percentDelta: percentDelta)
+        let signal = Self.signal(for: key, reaction: reaction, percentDelta: percentDelta, magnitude: magnitude)
+
+        return BiomarkerBodySignalPresentation(
+            key: key,
+            value: tonight,
+            baselineMean: mean,
+            percentDelta: percentDelta,
+            percentText: Self.percentText(for: percentDelta, magnitude: magnitude),
+            comparisonText: Self.comparisonText(for: percentDelta, magnitude: magnitude),
+            statusText: Self.statusText(for: key, signal: signal, magnitude: magnitude, percentDelta: percentDelta),
+            meaningText: Self.meaningText(for: key, signal: signal),
+            signal: signal,
+            magnitude: magnitude
+        )
+    }
+
+    static func comparisonText(for percentDelta: Double, magnitude: BiomarkerBodySignalMagnitude? = nil) -> String {
+        let magnitude = magnitude ?? Self.magnitude(for: .rhr, percentDelta: percentDelta)
+        let rounded = Int(abs(percentDelta).rounded())
+        guard magnitude != .same, rounded >= 1 else { return "same as baseline" }
+        return "\(rounded)% \(percentDelta > 0 ? "higher" : "lower") than baseline"
+    }
+
+    static func percentText(for percentDelta: Double, magnitude: BiomarkerBodySignalMagnitude? = nil) -> String {
+        let magnitude = magnitude ?? Self.magnitude(for: .rhr, percentDelta: percentDelta)
+        guard magnitude != .same else {
+            return "\(Int(percentDelta.rounded()))%"
+        }
+        return "\(percentDelta > 0 ? "+" : "-")\(Int(abs(percentDelta).rounded()))%"
+    }
+
+    private static func magnitude(
+        for key: BiomarkerKey,
+        percentDelta: Double
+    ) -> BiomarkerBodySignalMagnitude {
+        // Pulse-ox changes below 2% are usually device noise; breath needs a
+        // larger shift before it should affect the first-screen story.
+        switch key {
+        case .spo2:
+            if percentDelta <= -2 {
+                return abs(percentDelta) >= 5 ? .large : .meaningful
+            }
+            return .same
+        case .breath where abs(percentDelta) < 8:
+            return .same
+        default:
+            return BiomarkerBodySignalMagnitude.make(percentDelta: percentDelta)
+        }
+    }
+
+    private static func signal(
+        for key: BiomarkerKey,
+        reaction: SleepBiomarkerReaction?,
+        percentDelta: Double,
+        magnitude: BiomarkerBodySignalMagnitude
+    ) -> BiomarkerBodySignal {
+        if magnitude == .same {
+            return .steady
+        }
+
+        if let reaction {
+            switch reaction.direction {
+            case .worse:
+                return .harder
+            case .improved:
+                return .recovered
+            case .neutral:
+                return .steady
+            }
+        }
+
+        switch key {
+        case .rhr:
+            return percentDelta > 0 ? .harder : .recovered
+        case .hrv, .spo2:
+            return percentDelta > 0 ? .recovered : .harder
+        case .breath:
+            return .steady
+        }
+    }
+
+    private static func statusText(
+        for key: BiomarkerKey,
+        signal: BiomarkerBodySignal,
+        magnitude: BiomarkerBodySignalMagnitude,
+        percentDelta: Double
+    ) -> String {
+        guard signal != .steady else { return "Normal" }
+
+        let degree: String
+        switch magnitude {
+        case .large:
+            degree = "Much "
+        case .meaningful:
+            degree = ""
+        case .slight:
+            degree = "Slightly "
+        case .same:
+            degree = ""
+        }
+
+        switch (key, signal, percentDelta > 0) {
+        case (.rhr, .harder, true):
+            return "\(degree)above baseline"
+        case (.rhr, .recovered, false):
+            return "\(degree)calmer"
+        case (.hrv, .recovered, true):
+            return "\(degree)better than baseline"
+        case (.hrv, .harder, false):
+            return "\(degree)below baseline"
+        case (.spo2, .harder, false):
+            return "\(degree)below baseline"
+        case (.spo2, .recovered, true):
+            return "\(degree)strong"
+        case (.breath, .harder, _):
+            return "\(degree)off rhythm"
+        default:
+            return "Normal"
+        }
+    }
+
+    private static func meaningText(for key: BiomarkerKey, signal: BiomarkerBodySignal) -> String {
+        switch (key, signal) {
+        case (.rhr, .harder):
+            return "Higher heart rate can mean more strain."
+        case (.rhr, .recovered):
+            return "Lower heart rate can mean a calmer night."
+        case (.hrv, .recovered):
+            return "Higher HRV typically means better recovery."
+        case (.hrv, .harder):
+            return "Lower HRV can mean lighter recovery."
+        case (.spo2, .harder):
+            return "Oxygen dipped more than your baseline."
+        case (.spo2, .recovered):
+            return "Oxygen stayed strong overnight."
+        case (.breath, .harder):
+            return "Breathing moved away from your baseline rhythm."
+        case (.breath, .recovered):
+            return "Breathing stayed close to your best rhythm."
+        case (.spo2, _):
+            return "Oxygen stayed steady overnight."
+        case (.breath, _):
+            return "Breathing stayed close to your baseline rhythm."
+        case (_, .building):
+            return "Need more nights for your baseline comparison."
+        case (_, .missing):
+            return "No reading captured tonight."
+        case (_, .steady):
+            return "This stayed close to your baseline."
+        }
+    }
+}
+
 // MARK: - Plain-English education + sleep impact
 
 extension BiomarkerKey {
@@ -265,9 +501,9 @@ extension BiomarkerKey {
     nonisolated var simpleExplanation: String {
         switch self {
         case .rhr:
-            return "Your lowest heart rate while asleep. Lower usually means your body is calm and recovering."
+            return "Your lowest heart rate while asleep. Lower typically means your body is calm and recovering."
         case .hrv:
-            return "How well your heart adapts between beats. Higher numbers usually mean your body is well-rested."
+            return "How well your heart adapts between beats. Higher numbers typically mean your body is well-rested."
         case .spo2:
             return "How much oxygen your blood carries overnight. Steady, high values mean your breathing was easy."
         case .breath:
@@ -304,24 +540,24 @@ extension SleepBiomarkerReaction {
         }
         switch (key, direction) {
         case (.rhr, .improved):
-            return "\(delta) \(unit) below your usual — calmer night."
+            return "\(delta) \(unit) below your baseline — calmer night."
         case (.rhr, .worse):
-            return "\(delta) \(unit) above your usual — body worked harder."
+            return "\(delta) \(unit) above your baseline — body worked harder."
         case (.hrv, .improved):
-            return "\(delta) \(unit) above your usual — strong recovery signal."
+            return "\(delta) \(unit) above your baseline — strong recovery signal."
         case (.hrv, .worse):
-            return "\(delta) \(unit) below your usual — recovery looked light."
+            return "\(delta) \(unit) below your baseline — recovery looked light."
         case (.spo2, .improved):
-            return "\(delta) \(unit) above your usual — breathing felt easy."
+            return "\(delta) \(unit) above your baseline — breathing felt easy."
         case (.spo2, .worse):
-            return "\(delta) \(unit) below your usual — oxygen dipped more than usual."
+            return "\(delta) \(unit) below your baseline — oxygen dipped more than baseline."
         case (.breath, .worse):
             let direction = self.delta > 0 ? "faster" : "slower"
-            return "\(delta) \(unit) \(direction) than your usual — breathing drifted off."
+            return "\(delta) \(unit) \(direction) than your baseline — breathing drifted off."
         case (_, .neutral):
-            return "Tonight matched your usual range."
+            return "Tonight matched your baseline range."
         case (.breath, .improved):
-            return "Right on your usual breathing rhythm."
+            return "Right on your baseline breathing rhythm."
         }
     }
 }

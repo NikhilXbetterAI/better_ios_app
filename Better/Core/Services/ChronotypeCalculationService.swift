@@ -1,13 +1,13 @@
 import Foundation
 
 nonisolated struct ChronotypeCalculationService: Sendable {
-    static let minimumWindowDays = 30
+    static let minimumWindowDays = 7
     static let maximumWindowDays = 90
     static let minimumValidSleepDuration: TimeInterval = 3 * 3_600
     static let maximumValidSleepDuration: TimeInterval = 12 * 3_600
-    static let minimumTotalNights = 14
-    static let minimumWorkdayNights = 6
-    static let minimumFreeDayNights = 3
+    static let minimumTotalNights = 7
+    static let minimumPreferredWorkdayNights = 4
+    static let minimumPreferredFreeDayNights = 2
     static let stableBodyClockNightCount = 30
 
     func estimate(
@@ -73,10 +73,8 @@ nonisolated struct ChronotypeCalculationService: Sendable {
         )
 
         guard missingRequirements.isEmpty,
-              let workdayMidpointMinute = Self.circularMedianMinute(workdayNights.map(\.midpointMinute)),
-              let freeDayMidpointMinute = Self.circularMedianMinute(freeDayNights.map(\.midpointMinute)),
-              let workdayMedianDuration = Self.median(workdayNights.map(\.duration)),
-              let freeDayMedianDuration = Self.median(freeDayNights.map(\.duration))
+              let allMidpointMinute = Self.circularMedianMinute(includedNights.map(\.midpointMinute)),
+              let allMedianDuration = Self.median(includedNights.map(\.duration))
         else {
             return ChronotypeCalculationResult(
                 status: .insufficientData,
@@ -94,6 +92,10 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             )
         }
 
+        let workdayMidpointMinute = Self.circularMedianMinute(workdayNights.map(\.midpointMinute)) ?? allMidpointMinute
+        let freeDayMidpointMinute = Self.circularMedianMinute(freeDayNights.map(\.midpointMinute)) ?? allMidpointMinute
+        let workdayMedianDuration = Self.median(workdayNights.map(\.duration)) ?? allMedianDuration
+        let freeDayMedianDuration = Self.median(freeDayNights.map(\.duration)) ?? allMedianDuration
         let weeklyAverageDuration = ((5 * workdayMedianDuration) + (2 * freeDayMedianDuration)) / 7
         let correctedMidpointMinute: Int
         if freeDayMedianDuration > workdayMedianDuration {
@@ -105,6 +107,7 @@ nonisolated struct ChronotypeCalculationService: Sendable {
 
         let confidence = Self.confidence(
             validNightCount: includedNights.count,
+            workdayNightCount: workdayNights.count,
             freeDayNightCount: freeDayNights.count,
             excludedNightCount: excludedCountsByReason.values.reduce(0, +),
             candidateNightCount: candidateCount
@@ -115,6 +118,14 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             freeDayNightCount: freeDayNights.count,
             excludedCountsByReason: excludedCountsByReason,
             candidateNightCount: candidateCount
+        )
+        let socialJetlag = workdayNights.count >= 2 && freeDayNights.count >= 2
+            ? abs(Self.signedCircularDelta(from: workdayMidpointMinute, to: freeDayMidpointMinute))
+            : nil
+        let (nightsUntilNextTier, nextTierName) = Self.nextTierProgress(
+            validNightCount: includedNights.count,
+            readiness: readiness,
+            confidence: confidence
         )
         let estimate = ChronotypeEstimate(
             bucket: Self.bucket(for: correctedMidpointMinute),
@@ -132,7 +143,10 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             confidence: confidence,
             bodyClockReadiness: readiness,
             bodyClockCaveats: caveats,
-            optimalSleepWindow: Self.sleepWindow(centerMinute: correctedMidpointMinute, duration: weeklyAverageDuration)
+            optimalSleepWindow: Self.sleepWindow(centerMinute: correctedMidpointMinute, duration: weeklyAverageDuration),
+            socialJetlagMinutes: socialJetlag,
+            nightsUntilNextTier: nightsUntilNextTier,
+            nextTierName: nextTierName
         )
 
         return ChronotypeCalculationResult(
@@ -149,6 +163,83 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             windowStart: windowStart,
             windowEnd: endingAt
         )
+    }
+
+    // MARK: - Snapshot cache helpers (Phase 4)
+
+    /// Cache TTL: 7 days. If the stored snapshot is older it is treated as a miss.
+    static let snapshotTTL: TimeInterval = 7 * 86_400
+
+    /// Returns a cached `ChronotypeCalculationResult` for `windowEndSleepDateKey` if
+    /// the snapshot is present and within `snapshotTTL`. Returns `nil` on miss.
+    ///
+    /// On a hit the returned result contains only the `estimate` and window metadata
+    /// that can be reconstructed from the stored data; `includedNights` is empty
+    /// (callers that need per-night detail must compute fresh).
+    func cachedEstimate(
+        windowEndSleepDateKey: String,
+        localRepository: LocalDataRepositoryProtocol
+    ) async -> ChronotypeCalculationResult? {
+        guard let stored = try? await localRepository.fetchChronotypeSnapshot(
+            windowEndSleepDateKey: windowEndSleepDateKey
+        ) else { return nil }
+
+        guard Date().timeIntervalSince(stored.generatedAt) <= Self.snapshotTTL else { return nil }
+
+        guard
+            let estimateData = stored.estimateData,
+            let estimate = try? PersistenceJSON.decode(ChronotypeEstimate.self, from: estimateData)
+        else {
+            // Snapshot exists but has no decodable estimate (insufficient-data row).
+            return ChronotypeCalculationResult(
+                status: .insufficientData,
+                estimate: nil,
+                includedNights: [],
+                excludedCountsByReason: [:],
+                totalCandidateNightCount: stored.coverageNightCount,
+                validNightCount: stored.coverageNightCount,
+                workdayNightCount: 0,
+                freeDayNightCount: 0,
+                missingRequirements: [.totalNights],
+                windowDays: stored.windowDays,
+                windowStart: stored.generatedAt.addingTimeInterval(Double(-stored.windowDays) * 86_400),
+                windowEnd: stored.generatedAt
+            )
+        }
+
+        return ChronotypeCalculationResult(
+            status: .estimated,
+            estimate: estimate,
+            includedNights: [],
+            excludedCountsByReason: estimate.excludedCountsByReason,
+            totalCandidateNightCount: stored.coverageNightCount,
+            validNightCount: estimate.validNightCount,
+            workdayNightCount: estimate.workdayNightCount,
+            freeDayNightCount: estimate.freeDayNightCount,
+            missingRequirements: [],
+            windowDays: stored.windowDays,
+            windowStart: stored.generatedAt.addingTimeInterval(Double(-stored.windowDays) * 86_400),
+            windowEnd: stored.generatedAt
+        )
+    }
+
+    /// Persists a freshly-computed result to the snapshot cache.
+    ///
+    /// Silently swallows encode/save errors — cache writes are best-effort.
+    func saveSnapshot(
+        result: ChronotypeCalculationResult,
+        windowEndSleepDateKey: String,
+        localRepository: LocalDataRepositoryProtocol
+    ) async {
+        let estimateData = result.estimate.flatMap { try? PersistenceJSON.encode($0) }
+        let snapshot = ChronotypeSnapshotRecord(
+            windowEndSleepDateKey: windowEndSleepDateKey,
+            generatedAt: Date(),
+            estimateData: estimateData,
+            coverageNightCount: result.totalCandidateNightCount,
+            windowDays: result.windowDays
+        )
+        try? await localRepository.saveChronotypeSnapshot(snapshot)
     }
 
     func alignment(
@@ -259,25 +350,35 @@ nonisolated struct ChronotypeCalculationService: Sendable {
         freeDayNightCount: Int
     ) -> [ChronotypeMinimumRequirement] {
         var requirements: [ChronotypeMinimumRequirement] = []
-        if validNightCount < minimumTotalNights { requirements.append(.totalNights) }
-        if workdayNightCount < minimumWorkdayNights { requirements.append(.workdayNights) }
-        if freeDayNightCount < minimumFreeDayNights { requirements.append(.freeDayNights) }
+        if validNightCount < minimumTotalNights {
+            requirements.append(.totalNights)
+            if workdayNightCount < minimumPreferredWorkdayNights {
+                requirements.append(.workdayNights)
+            }
+            if freeDayNightCount < minimumPreferredFreeDayNights {
+                requirements.append(.freeDayNights)
+            }
+        }
         return requirements
     }
 
     private static func confidence(
         validNightCount: Int,
+        workdayNightCount: Int,
         freeDayNightCount: Int,
         excludedNightCount: Int,
         candidateNightCount: Int
     ) -> ComparisonConfidence {
         let excludedRatio = candidateNightCount > 0 ? Double(excludedNightCount) / Double(candidateNightCount) : 0
 
-        if validNightCount >= 45 && freeDayNightCount >= 8 && excludedRatio < 0.2 {
+        if validNightCount >= 45
+            && workdayNightCount >= minimumPreferredWorkdayNights
+            && freeDayNightCount >= minimumPreferredFreeDayNights
+            && excludedRatio < 0.2 {
             return .high
         }
 
-        if validNightCount >= 21 && freeDayNightCount >= 5 {
+        if validNightCount >= 30 || (validNightCount >= 14 && freeDayNightCount >= minimumPreferredFreeDayNights) {
             return .medium
         }
 
@@ -288,7 +389,7 @@ nonisolated struct ChronotypeCalculationService: Sendable {
         validNightCount: Int,
         confidence: ComparisonConfidence
     ) -> BodyClockReadiness {
-        if confidence == .high && validNightCount >= stableBodyClockNightCount {
+        if confidence == .high && validNightCount >= 45 {
             return .highConfidence
         }
 
@@ -296,7 +397,29 @@ nonisolated struct ChronotypeCalculationService: Sendable {
             return .stable
         }
 
+        if validNightCount >= 14 {
+            return .goodEstimate
+        }
+
         return .preview
+    }
+
+    private static func nextTierProgress(
+        validNightCount: Int,
+        readiness: BodyClockReadiness,
+        confidence: ComparisonConfidence
+    ) -> (nightsUntilNextTier: Int?, nextTierName: String?) {
+        switch readiness {
+        case .preview:
+            return (max(0, 14 - validNightCount), "Good Estimate")
+        case .goodEstimate:
+            return (max(0, stableBodyClockNightCount - validNightCount), "Stable")
+        case .stable:
+            let needed = max(0, 45 - validNightCount)
+            return (needed, "High Confidence")
+        case .highConfidence:
+            return (nil, nil)
+        }
     }
 
     private static func bodyClockCaveats(

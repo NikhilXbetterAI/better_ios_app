@@ -159,7 +159,7 @@ struct SleepTabView: View {
                         SleepStagesCard(
                             session: session,
                             baseline: activeBaseline,
-                            recentSessions: viewModel.sortedRecentSessions
+                            recentSessions: viewModel.recentSessions
                         )
                         .frame(maxWidth: .infinity)
                         if activeBaseline == nil {
@@ -510,7 +510,6 @@ struct SleepTabView: View {
 
     @ViewBuilder
     private func scoreBreakdownPopover(score: HealthSleepScoreEstimate, session: SleepSession) -> some View {
-        let hasStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
         let travelExempt = viewModel.selectedContextEntry?.travel == true
 
         VStack(alignment: .leading, spacing: BetterSpacing.medium) {
@@ -518,12 +517,10 @@ struct SleepTabView: View {
                 .font(BetterTypography.subheadline)
                 .foregroundStyle(BetterColors.text)
 
-            // Four-component pill row (detailedStages); three-component when partial
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    scoreBreakdownPill(label: "Duration", value: "\(score.duration)/\(hasStages ? 40 : 50)")
+                    scoreBreakdownPill(label: "Duration", value: "\(score.duration)/50")
                     pillDivider
-                    // Bedtime: locked, travel-exempt, or scored
                     if travelExempt {
                         HStack(spacing: 4) {
                             Image(systemName: "airplane").font(.system(size: 9))
@@ -531,42 +528,16 @@ struct SleepTabView: View {
                             scoreBreakdownPill(label: "Bedtime", value: "exempt")
                         }
                     } else if viewModel.baselineIsBuilding {
-                        lockedScorePill(label: "Bedtime", maxPts: 25)
+                        lockedScorePill(label: "Bedtime", maxPts: 30)
                     } else {
-                        scoreBreakdownPill(label: "Bedtime", value: "\(score.bedtime)/25")
+                        scoreBreakdownPill(label: "Bedtime", value: "\(score.bedtime)/30")
                     }
                     pillDivider
-                    scoreBreakdownPill(label: "Continuity", value: "\(score.interruptions)/\(hasStages ? 15 : 30)")
-                    if hasStages {
-                        pillDivider
-                        scoreBreakdownPill(label: "Restorative", value: "\(score.restorative)/20")
-                    }
+                    scoreBreakdownPill(label: "Interruptions", value: "\(score.interruptions)/20")
                 }
             }
 
-            // Recovery index row — surfaces deep+REM-weighted SleepQualityScore
-            if hasStages {
-                Divider().padding(.vertical, 2)
-                HStack(spacing: 8) {
-                    Image(systemName: "moon.zzz.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(BetterColors.stageDeep)
-                    Text("Recovery index")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
-                    Spacer()
-                    Text("\(Int(session.qualityScore.overall.rounded()))")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(BetterColors.text)
-                    Text("/ 100  ·  deep+REM weighted")
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
-                }
-            }
-
-            Text(hasStages
-                 ? "Duration 40 · Bedtime 25 · Continuity 15 · Restorative 20. Bedtime unlocks after \(BaselineEngine.dashboardMinimumValidNights) nights. Restorative scores deep+REM vs your baseline."
-                 : "Duration 50 · Continuity 30. Stage data unavailable — score is partial.")
+            Text("Duration 50 · Bedtime 30 · Interruptions 20. Same weights as Apple Health Sleep Score. Bedtime unlocks after \(BaselineEngine.dashboardMinimumValidNights) nights.")
                 .font(BetterTypography.micro)
                 .foregroundStyle(BetterColors.subtext)
                 .fixedSize(horizontal: false, vertical: true)
@@ -681,7 +652,7 @@ struct SleepTabView: View {
         let direction = bedtimeDelta < 0 ? "earlier" : "later"
         let abs = Swift.abs(bedtimeDelta)
         let formatted = abs >= 60 ? "\(abs / 60)h \(abs % 60)m" : "\(abs)m"
-        return "Bedtime was \(formatted) \(direction) than your usual."
+        return "Bedtime was \(formatted) \(direction) than your baseline."
     }
 
     /// Plain-text version of the primary recommendation. Used by `combinedInsightLine`
@@ -693,11 +664,11 @@ struct SleepTabView: View {
         if score.overall >= 85 {
             return "Keep the same bedtime window."
         }
-        if score.duration < 38 {
+        if score.duration < 43 {
             return "Protect bedtime first — duration is the largest score input."
         }
-        if score.bedtime < 20 {
-            return "Aim within 30 min of your usual bedtime."
+        if score.bedtime < 24 {
+            return "Aim within 30 min of your baseline bedtime."
         }
         return "Keep timing steady and avoid adding extra variables."
     }
@@ -834,7 +805,7 @@ struct SleepTabView: View {
             BiomarkerSourceRow(provenance: viewModel.biomarkerProvenance)
             SleepBiomarkerReactionsCard(
                 biometrics: biometrics,
-                recentSessions: viewModel.sortedRecentSessions,
+                recentSessions: viewModel.recentSessions,
                 baseline: viewModel.biomarkerBaseline,
                 reactions: viewModel.biomarkerReactions,
                 readiness: viewModel.biomarkerReadiness,
@@ -1028,25 +999,21 @@ private struct SleepHistoryCalendarSheet: View {
     private var calendar: Calendar { .current }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                BetterColors.background.ignoresSafeArea()
-
-                VStack(spacing: BetterSpacing.large) {
-                    monthHeader
-                    weekdayHeader
-                    dayGrid
-                    Spacer(minLength: 0)
-                }
-                .padding(BetterSpacing.screen)
+        VStack(spacing: BetterSpacing.large) {
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(BetterColors.brand)
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(BetterColors.brand)
-                }
-            }
+            monthHeader
+            weekdayHeader
+            dayGrid
+            Spacer(minLength: 0)
         }
+        .padding(BetterSpacing.screen)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(BetterColors.background.ignoresSafeArea())
         .preferredColorScheme(.dark)
     }
 
@@ -1131,7 +1098,7 @@ private struct SleepHistoryCalendarSheet: View {
                     if let score = summary?.score {
                         Circle()
                             .trim(from: 0, to: CGFloat(min(max(score / 100, 0), 1)))
-                            .stroke(summary?.dataQuality == .unspecifiedSleepOnly ? BetterColors.warning : BetterColors.brand, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            .stroke(ringColor(score: score, dataQuality: summary?.dataQuality), style: StrokeStyle(lineWidth: 5, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                             .frame(width: 34, height: 34)
                     }
@@ -1159,6 +1126,16 @@ private struct SleepHistoryCalendarSheet: View {
         }
         .buttonStyle(.plain)
         .disabled(isFuture)
+    }
+
+    private func ringColor(score: Double, dataQuality: SleepDataQuality?) -> Color {
+        if dataQuality == .unspecifiedSleepOnly { return BetterColors.warning }
+        switch Int(score) {
+        case 85...: return BetterColors.success
+        case 70...: return BetterColors.brand
+        case 55...: return BetterColors.warning
+        default:    return BetterColors.danger
+        }
     }
 
     private var monthDays: [Date?] {
@@ -1399,7 +1376,7 @@ private enum SleepVitalTab: String, CaseIterable {
     var education: String {
         switch self {
         case .rhr:
-            return "Your lowest heart rate while asleep. Lower usually means your body is calm and recovering; sharp increases can point to strain."
+            return "Your lowest heart rate while asleep. Lower typically means your body is calm and recovering; sharp increases can point to strain."
         case .hrv:
             return "HRV reflects how well your body adapts and recovers. Higher values often align with stronger recovery readiness and lower nervous-system strain."
         case .spo2:
@@ -1534,29 +1511,34 @@ private struct SleepBiomarkerReactionsCard: View {
     let baseline: BiomarkerBaseline?
     let reactions: [BiomarkerKey: SleepBiomarkerReaction]
 
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     let readiness: [BiomarkerKey: BiomarkerBaselineReadiness]
     let provenance: [BiomarkerKey: BiomarkerProvenance]
 
     @State private var presentedKey: BiomarkerKey?
+    @State private var selectedFeedbackKey: BiomarkerKey?
 
     private static let order: [BiomarkerKey] = [.rhr, .hrv, .spo2, .breath]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: BetterSpacing.medium) {
+        VStack(alignment: .leading, spacing: BetterSpacing.large) {
             headerRow
-            VStack(spacing: BetterSpacing.small) {
-                ForEach(Self.order, id: \.self) { key in
-                    reactionRow(for: key)
+            VStack(spacing: 0) {
+                ForEach(Array(Self.order.enumerated()), id: \.element) { index, key in
+                    bodySignalRow(for: key)
+                    if index < Self.order.count - 1 {
+                        Divider()
+                            .background(BetterColors.border)
+                            .padding(.leading, 52)
+                    }
                 }
             }
-            footerSynthesis
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(BetterSpacing.large)
         .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(BetterColors.border, lineWidth: 1))
+        .sensoryFeedback(.impact(weight: .light), trigger: selectedFeedbackKey)
         .sheet(item: $presentedKey) { key in
             BiomarkerDetailSheet(
                 tab: key.asTab,
@@ -1573,91 +1555,147 @@ private struct SleepBiomarkerReactionsCard: View {
     }
 
     private var headerRow: some View {
-        HStack(alignment: .firstTextBaseline) {
-            HStack(spacing: 6) {
-                Image(systemName: "heart.text.square.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(BetterColors.brandLight)
-                Text(headerHeadline)
-                    .font(BetterTypography.subheadline)
-                    .foregroundStyle(BetterColors.text)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            if let baseline {
-                Text("vs your usual · \(baseline.windowDays)-night avg")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.white.opacity(0.04), in: Capsule())
-            } else {
-                Text("personal ranges building")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(BetterColors.subtext)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.white.opacity(0.04), in: Capsule())
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Text(headerEyebrow)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(BetterColors.brandLight)
+                .tracking(0.7)
+                .textCase(.uppercase)
+            Text(headerHeadline)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(BetterColors.text)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(headerSubtitle)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var headerHeadline: String {
-        guard !reactions.isEmpty else {
-            let captured = Self.order.filter { $0.asTab.currentValue(from: biometrics) != nil }.count
-            return captured == 0
-                ? "Biomarker readings not captured tonight"
-                : "Personal biomarker ranges are building"
+        let rows = presentations
+        let captured = rows.filter { $0.signal != .missing }.count
+        guard captured > 0 else {
+            return "Biomarker readings were not captured last night"
         }
-
-        let worse = reactions.values.filter { $0.direction == .worse }
-        let improved = reactions.values.filter { $0.direction == .improved }
-
-        if worse.isEmpty && improved.isEmpty {
-            return "Biomarkers tracked your usual tonight"
+        let ready = rows.filter { $0.signal != .building && $0.signal != .missing }
+        guard !ready.isEmpty else {
+            return "Your baseline body signals are still building"
         }
-        if worse.isEmpty {
-            return "Some recovery signals improved tonight"
+        let harder = ready.filter { $0.signal == .harder }.count
+        let recovered = ready.filter { $0.signal == .recovered }.count
+        let steady = ready.filter { $0.signal == .steady }.count
+        let rhr = presentation(for: .rhr)
+        let hrv = presentation(for: .hrv)
+        if rhr.signal == .harder && hrv.signal == .recovered {
+            return "Your heart worked harder, but recovery still improved"
         }
-        if improved.isEmpty {
-            return "Some biomarkers moved outside your usual range"
+        if rhr.signal == .harder {
+            return "Your heart worked harder last night"
         }
-        return "Mixed biomarker signals tonight"
+        if hrv.signal == .harder {
+            return "Recovery looked lighter last night"
+        }
+        if harder > recovered && harder >= steady {
+            return "Your body worked harder than baseline last night"
+        }
+        if recovered > harder && recovered >= steady {
+            return "Your body recovered better than baseline last night"
+        }
+        return "Your body stayed close to baseline last night"
     }
 
-    private func reactionRow(for key: BiomarkerKey) -> some View {
+    private var headerEyebrow: String {
+        if let baseline {
+            return "Compared with \(baseline.windowDays)-night baseline"
+        }
+        return "Personal baseline building"
+    }
+
+    private var headerSubtitle: String {
+        let rows = presentations
+        let rhr = presentation(for: .rhr)
+        let hrv = presentation(for: .hrv)
+        let spo2 = presentation(for: .spo2)
+        let breath = presentation(for: .breath)
+
+        if rows.allSatisfy({ $0.signal == .missing }) {
+            return "No overnight heart, oxygen, or breathing readings were captured."
+        }
+        if rows.allSatisfy({ $0.signal == .building || $0.signal == .missing }) {
+            return "Keep wearing your device overnight to unlock your baseline comparison."
+        }
+        if rhr.signal == .harder && hrv.signal == .recovered {
+            return "Resting heart rate was above baseline. HRV improved. Oxygen and breathing stayed normal."
+        }
+        if rhr.signal == .harder {
+            return "Resting heart rate was the main change. Oxygen, breathing, and HRV add context below."
+        }
+        if hrv.signal == .harder {
+            return "HRV was below baseline. Heart rate, oxygen, and breathing add context below."
+        }
+        if rhr.signal == .steady && hrv.signal == .steady && spo2.signal == .steady && breath.signal == .steady {
+            return "Heart rate, HRV, oxygen, and breathing stayed in your normal range."
+        }
+        return "A few readings shifted, but oxygen and breathing stayed easy to scan below."
+    }
+
+    private var presentations: [BiomarkerBodySignalPresentation] {
+        Self.order.map { presentation(for: $0) }
+    }
+
+    private func presentation(for key: BiomarkerKey) -> BiomarkerBodySignalPresentation {
         let tab = key.asTab
         let tonight = tab.currentValue(from: biometrics)
         let reaction = reactions[key]
         let keyReadiness = readiness[key] ?? .unavailable(minimumCount: 5)
         let keyProvenance = provenance[key]
 
+        return BiomarkerBodySignalPresentation.make(
+            key: key,
+            tonight: tonight,
+            baseline: baseline,
+            reaction: reaction,
+            readiness: keyReadiness,
+            provenance: keyProvenance
+        )
+    }
+
+    private func bodySignalRow(for key: BiomarkerKey) -> some View {
+        let tab = key.asTab
+        let item = presentation(for: key)
+
         return Button {
-            presentedKey = key
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                selectedFeedbackKey = key
+                presentedKey = key
+            }
         } label: {
-            HStack(spacing: BetterSpacing.small) {
+            HStack(alignment: .center, spacing: 12) {
                 ZStack {
                     Circle()
-                        .fill(tab.color.opacity(0.16))
-                        .frame(width: 36, height: 36)
+                        .fill(tab.color.opacity(0.15))
+                        .frame(width: 38, height: 38)
                     Image(systemName: tab.educationIcon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(tab.color)
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(tab.fullName)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(BetterColors.text)
-                    if let reaction, let tonight {
-                        MiniDeltaBar(
-                            tab: tab,
-                            reaction: reaction,
-                            tonight: tonight,
-                            style: .compact
-                        )
-                    } else {
-                        Text(subtitle(for: key, tonight: tonight, reaction: reaction, readiness: keyReadiness, provenance: keyProvenance))
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                    HStack(spacing: 6) {
+                        Text(item.statusText)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(signalColor(item.signal))
+                            .lineLimit(1)
+                        Text(item.percentText)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(BetterColors.subtext)
                             .lineLimit(1)
                     }
@@ -1665,107 +1703,44 @@ private struct SleepBiomarkerReactionsCard: View {
 
                 Spacer(minLength: 8)
 
-                if let tonight {
-                    Text(formatted(value: tonight, tab: tab))
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(BetterColors.text)
-                        .contentTransition(.numericText())
-                    Text(tab.unit)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
-                } else {
-                    Text("—")
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(BetterColors.subtext)
-                }
-
-                statusDot(reaction: reaction, tab: tab, tonight: tonight)
-
-                readinessPill(keyReadiness)
+                valueGroup(item: item, tab: tab)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(BetterColors.subtext.opacity(0.7))
+                    .foregroundStyle(BetterColors.subtext.opacity(0.58))
             }
-            .padding(.horizontal, BetterSpacing.small)
-            .padding(.vertical, 10)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(tab.fullName) detail")
-    }
-
-    private func readinessPill(_ readiness: BiomarkerBaselineReadiness) -> some View {
-        Text(readiness.shortLabel)
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(readiness.isReady ? BetterColors.text : BetterColors.subtext)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Color.white.opacity(readiness.isReady ? 0.07 : 0.035), in: Capsule())
+        .buttonStyle(BodySignalButtonStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel(item: item, tab: tab))
+        .accessibilityHint("Double tap to open \(tab.fullName) details")
     }
 
     @ViewBuilder
-    private func statusDot(reaction: SleepBiomarkerReaction?, tab: SleepVitalTab, tonight: Double?) -> some View {
-        let color: Color = {
-            if let reaction {
-                switch reaction.direction {
-                case .improved: return BetterColors.success
-                case .worse:    return BetterColors.danger
-                case .neutral:  return BetterColors.subtext.opacity(0.7)
-                }
-            } else if let tonight {
-                return tab.statusColor(for: tonight)
-            } else {
-                return BetterColors.subtext.opacity(0.4)
-            }
-        }()
-        Circle()
-            .fill(color)
-            .frame(width: 9, height: 9)
-            .overlay {
-                if differentiateWithoutColor {
-                    Circle()
-                        .stroke(Color.white.opacity(0.8), lineWidth: 1)
-                }
-            }
+    private func valueGroup(item: BiomarkerBodySignalPresentation, tab: SleepVitalTab) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(item.value.map { formatted(value: $0, tab: tab) } ?? "—")
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundStyle(BetterColors.text)
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+            Text(compactUnit(for: tab))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(BetterColors.subtext)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
     }
 
-    private func subtitle(
-        for key: BiomarkerKey,
-        tonight: Double?,
-        reaction: SleepBiomarkerReaction?,
-        readiness: BiomarkerBaselineReadiness,
-        provenance: BiomarkerProvenance?
-    ) -> String {
-        guard let tonight else { return provenance?.neutralTrustCopy ?? "No reading captured tonight" }
-        guard let reaction else {
-            if !readiness.isReady {
-                return readiness.neutralCopy
-            }
-            return key.asTab.statusLabel(for: tonight)
-        }
-        let tab = key.asTab
-        let usual = formatted(value: reaction.baselineMean, tab: tab)
-        let diff = abs(reaction.delta)
-        // SpO₂ pulse-ox accuracy is ±2% — collapse sub-1% deltas to the
-        // neutral copy rather than implying false precision.
-        if tab == .spo2, diff < 1.0 {
-            return "in your usual range · \(usual) \(tab.unit) avg"
-        }
-        let diffStr: String
+    private func compactUnit(for tab: SleepVitalTab) -> String {
         switch tab {
-        case .rhr, .hrv:     diffStr = String(format: "%.0f", diff)
-        case .spo2:          diffStr = String(format: "%.0f", diff)
-        case .breath:        diffStr = String(format: "%.1f", diff)
-        }
-        switch reaction.direction {
-        case .improved:
-            return "improved · \(diffStr) \(tab.unit) better than usual (\(usual))"
-        case .worse:
-            return "off usual · \(diffStr) \(tab.unit) from \(usual)"
-        case .neutral:
-            return "in your usual range · \(usual) \(tab.unit) avg"
+        case .breath:
+            return "/min"
+        default:
+            return tab.unit
         }
     }
 
@@ -1780,40 +1755,31 @@ private struct SleepBiomarkerReactionsCard: View {
         }
     }
 
-    @ViewBuilder
-    private var footerSynthesis: some View {
-        let line = synthesis()
-        HStack(alignment: .top, spacing: BetterSpacing.small) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(BetterColors.brandLight)
-                .padding(.top, 1)
-            Text(line)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(BetterColors.subtext)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+    private func signalColor(_ signal: BiomarkerBodySignal) -> Color {
+        switch signal {
+        case .harder:
+            return BetterColors.warning
+        case .recovered:
+            return BetterColors.success
+        case .steady:
+            return BetterColors.hrv
+        case .building, .missing:
+            return BetterColors.subtext
         }
-        .padding(BetterSpacing.small)
-        .background(BetterColors.brand.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private func synthesis() -> String {
-        let improved = reactions.values.filter { $0.direction == .improved }.map { $0.key.asTab.label }
-        let worse = reactions.values.filter { $0.direction == .worse }.map { $0.key.asTab.label }
-        if improved.isEmpty && worse.isEmpty {
-            if reactions.isEmpty {
-                return "Personal comparisons appear per row once enough nights are available."
-            }
-            return "All four biomarkers tracked your usual range tonight."
-        }
-        if !improved.isEmpty && worse.isEmpty {
-            return "\(improved.joined(separator: ", ")) shifted favorably versus your usual range tonight."
-        }
-        if improved.isEmpty && !worse.isEmpty {
-            return "\(worse.joined(separator: ", ")) moved outside your usual range tonight."
-        }
-        return "Mixed biomarker changes: \(improved.joined(separator: ", ")) shifted favorably, while \(worse.joined(separator: ", ")) moved outside your usual range."
+    private func accessibilityLabel(item: BiomarkerBodySignalPresentation, tab: SleepVitalTab) -> String {
+        let value = item.value.map { "\(formatted(value: $0, tab: tab)) \(tab.unit)" } ?? "No reading"
+        return "\(tab.fullName), \(value), \(item.statusText), \(item.percentText). \(item.meaningText)"
+    }
+}
+
+private struct BodySignalButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(.spring(response: 0.22, dampingFraction: 0.82), value: configuration.isPressed)
     }
 }
 
@@ -1915,7 +1881,7 @@ private struct MiniDeltaBar: View {
             case .improved:
                 return "\(arrow)\(diff) better"
             case .worse:
-                return "\(arrow)\(diff) off usual"
+                return "\(arrow)\(diff) off baseline"
             }
         }()
 
@@ -1925,8 +1891,10 @@ private struct MiniDeltaBar: View {
             // baseline and the relative shift (≈ 12 chars max).
             return AnyView(
                 HStack(spacing: 4) {
-                    (Text("usual ").foregroundStyle(BetterColors.subtext)
-                    + Text(usual).foregroundStyle(BetterColors.text))
+                    HStack(spacing: 0) {
+                        Text("baseline ").foregroundStyle(BetterColors.subtext)
+                        Text(usual).foregroundStyle(BetterColors.text)
+                    }
                     Text("·").foregroundStyle(BetterColors.subtext)
                     Text(deltaText).foregroundStyle(deltaColor)
                 }
@@ -1937,11 +1905,15 @@ private struct MiniDeltaBar: View {
             // Expanded (detail sheet baseline panel) — show full context.
             return AnyView(
                 HStack(spacing: 6) {
-                    (Text("usual ").foregroundStyle(BetterColors.subtext)
-                    + Text(usual).foregroundStyle(BetterColors.text))
+                    HStack(spacing: 0) {
+                        Text("baseline ").foregroundStyle(BetterColors.subtext)
+                        Text(usual).foregroundStyle(BetterColors.text)
+                    }
                     Text("·").foregroundStyle(BetterColors.subtext)
-                    (Text("tonight ").foregroundStyle(BetterColors.subtext)
-                    + Text(tonightStr).foregroundStyle(BetterColors.text))
+                    HStack(spacing: 0) {
+                        Text("tonight ").foregroundStyle(BetterColors.subtext)
+                        Text(tonightStr).foregroundStyle(BetterColors.text)
+                    }
                     Text("(\(deltaText))").foregroundStyle(deltaColor)
                 }
                 .font(labelFont)
@@ -2025,7 +1997,7 @@ private struct SingleBiomarkerChartView: View {
     }
 
     private var points: [SleepBiometricPoint] {
-        // recentSessions is pre-sorted by the view model (sortedRecentSessions)
+        // recentSessions is pre-sorted ascending by sleepDateKey from loadRecentSessions
         // before being passed in — no re-sort needed here.
         return recentSessions.suffix(timeline.dayCount).compactMap { session in
             guard let value = tab.value(from: session),
@@ -2331,15 +2303,15 @@ private struct BiomarkerDetailSheet: View {
             // moved relative to the user's usual range.
             let label: String = {
                 switch (tab, reaction.direction) {
-                case (.rhr,  .improved): return "Lower than usual"
-                case (.rhr,  .worse):    return "Higher than usual"
-                case (.hrv,  .improved): return "Higher than usual"
-                case (.hrv,  .worse):    return "Lower than usual"
-                case (.spo2, .improved): return "Higher than usual"
-                case (.spo2, .worse):    return "Lower than usual"
-                case (.breath, .improved): return "In usual range"
-                case (.breath, .worse):    return "Outside usual range"
-                case (_,     .neutral):  return "In usual range"
+                case (.rhr,  .improved): return "Lower than baseline"
+                case (.rhr,  .worse):    return "Higher than baseline"
+                case (.hrv,  .improved): return "Higher than baseline"
+                case (.hrv,  .worse):    return "Lower than baseline"
+                case (.spo2, .improved): return "Higher than baseline"
+                case (.spo2, .worse):    return "Lower than baseline"
+                case (.breath, .improved): return "In baseline range"
+                case (.breath, .worse):    return "Outside baseline range"
+                case (_,     .neutral):  return "In baseline range"
                 }
             }()
             // Icon direction follows the physical delta (↓ if tonight < baseline,
@@ -2388,7 +2360,7 @@ private struct BiomarkerDetailSheet: View {
         if tonight == nil {
             return "No reading captured tonight."
         }
-        return "Tonight matched your usual range."
+        return "Tonight matched your baseline range."
     }
 
     // MARK: Education panel
@@ -2445,13 +2417,13 @@ private struct BiomarkerDetailSheet: View {
     private var baselinePanel: some View {
         if hasBaseline, let baseline, let mean = baseline.means[key], let tonight, let reaction {
             VStack(alignment: .leading, spacing: BetterSpacing.medium) {
-                Text("Tonight vs your usual")
+                Text("Tonight vs your baseline")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(BetterColors.subtext)
                     .tracking(0.6)
 
                 HStack(alignment: .top, spacing: BetterSpacing.medium) {
-                    column(title: "Your usual",
+                    column(title: "Your baseline",
                            value: formattedValue(mean),
                            sub: "±\(formattedValue(baseline.stdDevs[key] ?? 0)) \(tab.unit) · \(sampleCount) night\(sampleCount == 1 ? "" : "s")")
                     Spacer(minLength: 0)
@@ -2495,16 +2467,16 @@ private struct BiomarkerDetailSheet: View {
 
     private func deltaSubLine(reaction: SleepBiomarkerReaction) -> String {
         if reaction.direction == .neutral {
-            return "in your usual range"
+            return "in your baseline range"
         }
         // SpO₂ pulse-ox accuracy is ±2% — suppress sub-1% deltas instead of
-        // showing values like "↑0.4 % vs usual" that imply false precision.
+        // showing values like "↑0.4 % vs baseline" that imply false precision.
         if tab == .spo2, abs(reaction.delta) < 1.0 {
-            return "in your usual range"
+            return "in your baseline range"
         }
         let arrow = reaction.delta > 0 ? "↑" : "↓"
         let diff = formattedValue(abs(reaction.delta))
-        return "\(arrow)\(diff) \(tab.unit) vs usual"
+        return "\(arrow)\(diff) \(tab.unit) vs baseline"
     }
 
     private func tickColor(for direction: BiomarkerReactionDirection) -> Color {
@@ -2671,7 +2643,7 @@ private struct SleepBiometricZoneChart: View {
                 if let baselineValue, let y = baselineYPosition(value: baselineValue, height: size.height) {
                     HStack {
                         Spacer(minLength: 0)
-                        Text("Your usual \(formattedBaseline(baselineValue))")
+                        Text("Your baseline \(formattedBaseline(baselineValue))")
                             .font(.system(size: 10, weight: .semibold, design: .rounded))
                             .foregroundStyle(BetterColors.subtext)
                             .padding(.horizontal, 6)

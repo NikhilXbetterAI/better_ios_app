@@ -92,6 +92,98 @@ struct BiomarkerBaselineServiceTests {
     }
 
     @Test
+    func bodySignalPresentation_formatsPercentDeltaAndStatusForAllBiomarkers() {
+        let baseline = BiomarkerBaseline(
+            computedAt: Date(),
+            windowDays: 30,
+            sampleCounts: [.rhr: 20, .hrv: 20, .spo2: 20, .breath: 20],
+            means:        [.rhr: 50,  .hrv: 80,  .spo2: 96,  .breath: 16],
+            stdDevs:      [.rhr: 4,   .hrv: 8,   .spo2: 1,   .breath: 1]
+        )
+
+        let rhr = presentation(key: .rhr, tonight: 60, baseline: baseline)
+        let hrv = presentation(key: .hrv, tonight: 100, baseline: baseline)
+        let spo2 = presentation(key: .spo2, tonight: 94.08, baseline: baseline)
+        let breath = presentation(key: .breath, tonight: 17.6, baseline: baseline)
+
+        #expect(rhr.statusText == "above baseline")
+        #expect(rhr.percentText == "+20%")
+        #expect(hrv.statusText == "Much better than baseline")
+        #expect(hrv.percentText == "+25%")
+        #expect(spo2.statusText == "below baseline")
+        #expect(spo2.percentText == "-2%")
+        #expect(breath.statusText == "Slightly off rhythm")
+        #expect(breath.percentText == "+10%")
+    }
+
+    @Test
+    func bodySignalPresentation_mapsRhrAndHrvToUserFacingMeaning() {
+        let baseline = BiomarkerBaseline(
+            computedAt: Date(),
+            windowDays: 30,
+            sampleCounts: [.rhr: 20, .hrv: 20],
+            means:        [.rhr: 50,  .hrv: 80],
+            stdDevs:      [.rhr: 4,   .hrv: 8]
+        )
+
+        let rhr = presentation(key: .rhr, tonight: 60, baseline: baseline)
+        let hrv = presentation(key: .hrv, tonight: 100, baseline: baseline)
+
+        #expect(rhr.signal == .harder)
+        #expect(rhr.meaningText == "Higher heart rate can mean more strain.")
+        #expect(hrv.signal == .recovered)
+        #expect(hrv.meaningText == "Higher HRV typically means better recovery.")
+    }
+
+    @Test
+    func bodySignalPresentation_neutralDeltaSaysSameAsUsual() {
+        let baseline = BiomarkerBaseline(
+            computedAt: Date(),
+            windowDays: 30,
+            sampleCounts: [.rhr: 20, .breath: 20, .spo2: 20],
+            means: [.rhr: 50, .breath: 16, .spo2: 97],
+            stdDevs: [.rhr: 4, .breath: 1, .spo2: 1]
+        )
+
+        let tinyRHR = presentation(key: .rhr, tonight: 50.2, baseline: baseline)
+        let breathFourPercentHigher = presentation(key: .breath, tonight: 16.64, baseline: baseline)
+        let stableOxygen = presentation(key: .spo2, tonight: 97, baseline: baseline)
+
+        #expect(tinyRHR.signal == .steady)
+        #expect(tinyRHR.comparisonText == "same as baseline")
+        #expect(breathFourPercentHigher.signal == .steady)
+        #expect(breathFourPercentHigher.statusText == "Normal")
+        #expect(breathFourPercentHigher.percentText == "4%")
+        #expect(stableOxygen.statusText == "Normal")
+        #expect(stableOxygen.percentText == "0%")
+    }
+
+    @Test
+    func bodySignalPresentation_handlesMissingBaselineAndMissingValue() {
+        let building = BiomarkerBodySignalPresentation.make(
+            key: .hrv,
+            tonight: 72,
+            baseline: nil,
+            reaction: nil,
+            readiness: .building(sampleCount: 2, minimumCount: 5),
+            provenance: nil
+        )
+        let missing = BiomarkerBodySignalPresentation.make(
+            key: .hrv,
+            tonight: nil,
+            baseline: nil,
+            reaction: nil,
+            readiness: .unavailable(minimumCount: 5),
+            provenance: nil
+        )
+
+        #expect(building.signal == .building)
+        #expect(building.comparisonText == "Needs 3 more nights for a personal comparison.")
+        #expect(missing.signal == .missing)
+        #expect(missing.meaningText == "No reading captured tonight.")
+    }
+
+    @Test
     func breath_requiresBothZScoreAndAbsDeltaForWorse() {
         // stdDev = 0.5 br/min, mean = 15.
         // tonight = 15.5 → delta = +0.5, z = +1.0 (exceeds 0.75 threshold) BUT
@@ -174,6 +266,35 @@ struct BiomarkerBaselineServiceTests {
         #expect(missing.neutralTrustCopy == "No reading captured")
     }
 
+    /// Regression fixture for the stddev convention in BiomarkerBaselineService.
+    ///
+    /// BiomarkerBaselineService uses Bessel-corrected sample stddev (÷n-1) because it
+    /// estimates population parameters from a small nightly window.
+    /// SleepDataProcessor uses population stddev (÷n) for its descriptive baseline stats.
+    ///
+    /// This test pins the CURRENT (n-1) behavior so any accidental convention change is caught.
+    /// Values: [55, 65, 60] → mean = 60, Σ(xi−μ)² = 50 → sample stddev = √(50/2) ≈ 5.0
+    @Test
+    func stdDevConvention_isSampleStdDev_notPopulation() {
+        // Three sessions, HRV values [55, 65, 60].
+        let sessions: [SleepSession] = [
+            makeSession(date: Date(timeIntervalSince1970: 0),  hrv: 55),
+            makeSession(date: Date(timeIntervalSince1970: 86400), hrv: 65),
+            makeSession(date: Date(timeIntervalSince1970: 172800), hrv: 60)
+        ]
+        let baseline = BiomarkerBaselineService.computeBaseline(
+            from: sessions,
+            windowDays: 30,
+            computedAt: Date(timeIntervalSince1970: 0)
+        )
+        let sd = baseline.stdDevs[.hrv] ?? 0
+        // Sample stddev (n-1): √((25+25+0)/2) = √25 = 5.0
+        // Population stddev (n): √((25+25+0)/3) ≈ 4.082
+        // Assert sample stddev (within floating-point tolerance).
+        #expect(abs(sd - 5.0) < 0.001,
+                "BiomarkerBaselineService must use sample stddev (÷n-1); got \(sd), expected 5.0")
+    }
+
     @Test
     func emptyBiometrics_doNotPoisonMean() {
         let now = Date()
@@ -231,6 +352,21 @@ struct BiomarkerBaselineServiceTests {
                 oxygenSaturationAverage: spo2,
                 respiratoryRateAverage: breath
             )
+        )
+    }
+
+    private func presentation(
+        key: BiomarkerKey,
+        tonight: Double?,
+        baseline: BiomarkerBaseline
+    ) -> BiomarkerBodySignalPresentation {
+        BiomarkerBodySignalPresentation.make(
+            key: key,
+            tonight: tonight,
+            baseline: baseline,
+            reaction: SleepBiomarkerReaction.make(key: key, tonight: tonight, baseline: baseline),
+            readiness: baseline.readiness(for: key),
+            provenance: nil
         )
     }
 }

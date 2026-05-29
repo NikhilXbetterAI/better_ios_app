@@ -156,7 +156,7 @@ final class ResearchAnalysisServiceTests: XCTestCase {
         XCTAssertEqual(any.takenNightCount, 5)
         XCTAssertEqual(any.missedNightCount, 5)
         XCTAssertEqual(any.sleepDifferenceHours ?? 0, 2, accuracy: 0.001)
-        XCTAssertEqual(perProtocol.scoreDifference ?? 0, 16, accuracy: 0.001)
+        XCTAssertEqual(perProtocol.scoreDifference ?? 0, 18, accuracy: 0.001)
         XCTAssertEqual(perProtocol.jetLagAdjustedSleepDifferenceHours ?? 0, 2, accuracy: 0.001)
         // 5 taken / 5 missed nights now lands in the .moderate confidence bucket (4...6).
         XCTAssertEqual(perProtocol.confidence, .moderate)

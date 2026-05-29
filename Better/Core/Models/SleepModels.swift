@@ -150,6 +150,16 @@ nonisolated struct SleepSession: Codable, Hashable, Sendable, Identifiable {
     var qualityScore: SleepQualityScore
     var biometrics: NightlyBiometricSummary?
 
+    /// Apple-formula score using only duration + interruptions (no baseline needed).
+    /// Normalized to 0–100 so it's on the same scale as the full hero score.
+    /// Services (alerts, insights) use this instead of the old qualityScore.overall.
+    var appleScorePartial: Int {
+        let duration = min(totalSleepTime / (8.0 * 3_600), 1.0) * 50.0
+        let wasoMin = waso / 60.0
+        let interruptions = max(0.0, (1.0 - wasoMin / 120.0) * 20.0)
+        return Int(((duration + interruptions) / 70.0 * 100.0).rounded())
+    }
+
     init(
         id: UUID = UUID(),
         sleepDateKey: String,
@@ -211,6 +221,8 @@ nonisolated struct SleepDaySummary: Codable, Hashable, Sendable, Identifiable {
     var sleepDateKey: String
     var score: Double?
     var totalSleepTime: TimeInterval?
+    var waso: TimeInterval          // needed to recompute Apple score in ViewModel
+    var inBedStartDate: Date?       // needed for bedtime component
     var dataQuality: SleepDataQuality
     var hasSession: Bool
 
@@ -218,38 +230,34 @@ nonisolated struct SleepDaySummary: Codable, Hashable, Sendable, Identifiable {
         sleepDateKey: String,
         score: Double? = nil,
         totalSleepTime: TimeInterval? = nil,
+        waso: TimeInterval = 0,
+        inBedStartDate: Date? = nil,
         dataQuality: SleepDataQuality = .noData,
         hasSession: Bool = false
     ) {
         self.sleepDateKey = sleepDateKey
         self.score = score
         self.totalSleepTime = totalSleepTime
+        self.waso = waso
+        self.inBedStartDate = inBedStartDate
         self.dataQuality = dataQuality
         self.hasSession = hasSession
     }
 }
 
-nonisolated struct HealthSleepScoreEstimate: Hashable, Sendable {
+nonisolated struct HealthSleepScoreEstimate: Codable, Hashable, Sendable {
     var overall: Int
-    var duration: Int       // 0-40 pts (detailedStages) / 0-50 pts (partial)
-    var bedtime: Int        // 0-25 pts; 0 when baseline not ready or travel suppressed
-    var interruptions: Int  // 0-15 pts (detailedStages) / 0-30 pts (partial)
-    var restorative: Int    // 0-20 pts deep+REM contribution; 0 when isPartial
+    var duration: Int       // 0-50 pts — actual sleep vs goal
+    var bedtime: Int        // 0-30 pts; 0 when baseline not ready or travel suppressed
+    var interruptions: Int  // 0-20 pts — WASO penalty
 }
 
 nonisolated enum HealthSleepScoreEstimator {
-    /// Formula (detailedStages):
-    ///   Duration    40 pts  — actual sleep vs goal
-    ///   Bedtime     25 pts  — deviation from personal baseline; 0 if baseline not ready
-    ///   Continuity  15 pts  — WASO penalty
-    ///   Restorative 20 pts  — deep+REM contribution vs target/baseline
+    /// Apple-style formula (same weights as Apple Health Sleep Score):
+    ///   Duration      50 pts  — actual sleep / goal (linear, capped at 1.0)
+    ///   Bedtime       30 pts  — deviation from personal baseline; 0 if baseline not ready
+    ///   Interruptions 20 pts  — WASO penalty (0 pts at ≥120 min wake time)
     ///   Total = 100
-    ///
-    /// Formula (unspecifiedSleepOnly / isPartial = true):
-    ///   Duration    50 pts
-    ///   Continuity  30 pts
-    ///   Restorative  0 pts  — no stage data
-    ///   Total max = 80 pts, `isPartial` marks it as incomplete
     static func estimate(
         session: SleepSession,
         baseline: SleepBaseline?,
@@ -257,88 +265,52 @@ nonisolated enum HealthSleepScoreEstimator {
         contextEntry: SleepContextEntry? = nil,
         calendar: Calendar = .current
     ) -> HealthSleepScoreEstimate {
-        let hasStages = session.dataQuality == .detailedStages || session.dataQuality == .mixedSources
-
         let duration = durationComponent(
             totalSleepTime: session.totalSleepTime,
-            sleepGoalHours: sleepGoalHours,
-            maxPts: hasStages ? 40 : 50
+            sleepGoalHours: sleepGoalHours
         )
         let bedtime = bedtimeComponent(
             session: session,
             baseline: baseline,
             contextEntry: contextEntry,
-            maxPts: hasStages ? 25 : 0,
             calendar: calendar
         )
-        let interruptions = interruptionsComponent(
-            session: session,
-            maxPts: hasStages ? 15 : 30
-        )
-        let restorative = hasStages
-            ? restorativeComponent(session: session, baseline: baseline)
-            : 0
+        let interruptions = interruptionsComponent(session: session)
 
         return HealthSleepScoreEstimate(
-            overall: duration + bedtime + interruptions + restorative,
+            overall: duration + bedtime + interruptions,
             duration: duration,
             bedtime: bedtime,
-            interruptions: interruptions,
-            restorative: restorative
+            interruptions: interruptions
         )
     }
 
-    private static func durationComponent(
-        totalSleepTime: TimeInterval,
-        sleepGoalHours: Double,
-        maxPts: Int
-    ) -> Int {
-        let targetSleepSeconds = sleepGoalHours * 3_600
-        return clamp(Int((totalSleepTime / targetSleepSeconds * Double(maxPts)).rounded()), lower: 0, upper: maxPts)
+    // Duration: 0-50 pts — proportional to sleep/goal, capped.
+    private static func durationComponent(totalSleepTime: TimeInterval, sleepGoalHours: Double) -> Int {
+        let ratio = totalSleepTime / (sleepGoalHours * 3_600)
+        return clamp(Int((min(ratio, 1.0) * 50).rounded()), lower: 0, upper: 50)
     }
 
+    // Bedtime: 0-30 pts — linear decay, 0 pts at ≥3h deviation from baseline.
     private static func bedtimeComponent(
         session: SleepSession,
         baseline: SleepBaseline?,
         contextEntry: SleepContextEntry?,
-        maxPts: Int,
         calendar: Calendar
     ) -> Int {
-        guard maxPts > 0 else { return 0 }
         // Invariant #2: travel == true (not != false) — nil means unknown, not safe-to-penalize.
-        if contextEntry?.travel == true { return maxPts }  // travel exemption — full pts
+        if contextEntry?.travel == true { return 30 }
         guard let baseline, baseline.validNights >= 5 else { return 0 }
 
         let bedMinute = minuteOfDay(for: session.inBedStartDate ?? session.startDate, calendar: calendar)
         let deviation = circularMinuteDistance(bedMinute, baseline.bedtimeMinuteAverage)
-        // 166-minute boundary: at ≥2h46m deviation the component reaches 0.
-        return clamp(Int(((1 - deviation / 166) * Double(maxPts)).rounded()), lower: 0, upper: maxPts)
+        return clamp(Int(((1.0 - deviation / 180.0) * 30.0).rounded()), lower: 0, upper: 30)
     }
 
-    private static func interruptionsComponent(session: SleepSession, maxPts: Int) -> Int {
-        // Grace period: 5 min WASO = no penalty. Full penalty at 55 min WASO.
-        let wasoPenalty = min(Double(maxPts), max(0, (session.waso - 5 * 60) / (55 * 60) * Double(maxPts)))
-        return clamp(Int((Double(maxPts) - wasoPenalty).rounded()), lower: 0, upper: maxPts)
-    }
-
-    /// 0–20 pts based on combined deep+REM ratio vs personal baseline.
-    /// Falls back to absolute target (40% combined) when baseline isn't ready.
-    private static func restorativeComponent(session: SleepSession, baseline: SleepBaseline?) -> Int {
-        guard session.totalSleepTime > 0 else { return 0 }
-        let combined = session.deepDuration + session.remDuration
-        let ratio = combined / session.totalSleepTime
-
-        if let baseline, baseline.validNights >= 5, baseline.totalSleepAverage > 0 {
-            let baselineRatio = (baseline.deepAverage + baseline.remAverage) / baseline.totalSleepAverage
-            // ±delta around baseline: 10 pts at parity, up to 20 pts for +20% above baseline.
-            let delta = ratio - baselineRatio
-            return clamp(Int((10.0 + delta * 50.0).rounded()), lower: 0, upper: 20)
-        } else {
-            // Absolute target: 40% combined (18% deep + 22% REM).
-            // 20 pts at ≥40%, 0 pts at ≤0%.
-            let target = 0.40
-            return clamp(Int((ratio / target * 20.0).rounded()), lower: 0, upper: 20)
-        }
+    // Interruptions: 0-20 pts — linear decay, 0 pts at ≥120 min WASO.
+    private static func interruptionsComponent(session: SleepSession) -> Int {
+        let wasoMinutes = session.waso / 60.0
+        return clamp(Int(((1.0 - wasoMinutes / 120.0) * 20.0).rounded()), lower: 0, upper: 20)
     }
 
     private static func minuteOfDay(for date: Date, calendar: Calendar) -> Double {

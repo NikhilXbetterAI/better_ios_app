@@ -126,7 +126,33 @@ final class ChronotypeCalculationServiceTests: XCTestCase {
         XCTAssertEqual(result.excludedCountsByReason[.travelOrJetLag], 3)
     }
 
-    func testReturnsInsufficientDataWhenFreeDayNightsAreMissing() {
+    func testReturnsInsufficientDataBelowSevenValidNights() {
+        let result = service.estimate(
+            sessions: Array(fillerSessions.prefix(6)),
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertEqual(result.status, .insufficientData)
+        XCTAssertTrue(result.missingRequirements.contains(.totalNights))
+    }
+
+    func testSevenToThirteenNightsReturnsEarlyEstimate() {
+        let result = service.estimate(
+            sessions: Array(fillerSessions.prefix(7)),
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertEqual(result.status, .estimated)
+        XCTAssertEqual(result.estimate?.bodyClockReadiness, .preview)
+    }
+
+    func testReturnsEstimateWhenFreeDayNightsAreMissing() {
         let result = service.estimate(
             sessions: (0..<14).map { index in
                 makeSession(onset: "2026-04-\(String(format: "%02d", 5 + index))T00:30:00Z", durationHours: 7, midpointMinute: 240)
@@ -139,8 +165,8 @@ final class ChronotypeCalculationServiceTests: XCTestCase {
             calendar: Self.calendar
         )
 
-        XCTAssertEqual(result.status, .insufficientData)
-        XCTAssertTrue(result.missingRequirements.contains(.freeDayNights))
+        XCTAssertEqual(result.status, .estimated)
+        XCTAssertTrue(result.missingRequirements.isEmpty)
     }
 
     func testDoesNotApplyCatchUpCorrectionWhenFreeDaySleepIsNotLonger() {
@@ -258,7 +284,7 @@ final class ChronotypeCalculationServiceTests: XCTestCase {
             calendar: Self.calendar
         )
 
-        XCTAssertEqual(preview.estimate?.bodyClockReadiness, .preview)
+        XCTAssertEqual(preview.estimate?.bodyClockReadiness, .goodEstimate)
         XCTAssertEqual(stable.estimate?.bodyClockReadiness, .stable)
         XCTAssertEqual(high.estimate?.bodyClockReadiness, .highConfidence)
     }
@@ -286,6 +312,94 @@ final class ChronotypeCalculationServiceTests: XCTestCase {
         XCTAssertEqual(alignment(onset: "2026-04-04T23:29:00Z", durationHours: 8, estimate: estimate)?.category, .slightlyEarly)
         XCTAssertEqual(alignment(onset: "2026-04-05T01:15:00Z", durationHours: 8, estimate: estimate)?.category, .slightlyLate)
         XCTAssertEqual(alignment(onset: "2026-04-05T01:16:00Z", durationHours: 8, estimate: estimate)?.category, .late)
+    }
+
+    func testSocialJetlagMinutesNilWhenInsufficientData() {
+        let onlyWorkdaySessions = fillerSessions.filter { session in
+            Self.calendar.component(.weekday, from: session.startDate) <= 5
+        }
+
+        let result = service.estimate(
+            sessions: Array(onlyWorkdaySessions.prefix(7)),
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertNil(result.estimate?.socialJetlagMinutes)
+    }
+
+    func testSocialJetlagMinutesCircularDelta() {
+        let sessions = [
+            makeSession(onset: "2026-04-05T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-06T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-07T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-08T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-09T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-12T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-13T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-14T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-15T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-16T00:30:00Z", durationHours: 7, midpointMinute: 240),
+            makeSession(onset: "2026-04-10T01:30:00Z", durationHours: 8, midpointMinute: 330),
+            makeSession(onset: "2026-04-11T01:30:00Z", durationHours: 8, midpointMinute: 330),
+            makeSession(onset: "2026-04-17T01:30:00Z", durationHours: 8, midpointMinute: 330),
+            makeSession(onset: "2026-04-18T01:30:00Z", durationHours: 8, midpointMinute: 330)
+        ]
+
+        let result = service.estimate(
+            sessions: sessions,
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertNotNil(result.estimate?.socialJetlagMinutes)
+        XCTAssertEqual(result.estimate?.socialJetlagMinutes ?? 0, 90, accuracy: 5)
+    }
+
+    func testNightsUntilNextTierPreview() {
+        let result = service.estimate(
+            sessions: Array(fillerSessions.prefix(7)),
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertEqual(result.estimate?.bodyClockReadiness, .preview)
+        XCTAssertEqual(result.estimate?.nightsUntilNextTier, 7)
+        XCTAssertEqual(result.estimate?.nextTierName, "Good Estimate")
+    }
+
+    func testNightsUntilNextTierNilAtHighConfidence() {
+        let result = service.estimate(
+            sessions: highConfidenceSessions,
+            contextEntries: [],
+            activityLogs: [],
+            endingAt: date("2026-05-01T00:00:00Z"),
+            calendar: Self.calendar
+        )
+
+        XCTAssertEqual(result.estimate?.bodyClockReadiness, .highConfidence)
+        XCTAssertNil(result.estimate?.nightsUntilNextTier)
+        XCTAssertNil(result.estimate?.nextTierName)
+    }
+
+    func testSocialJetlagCategoryBands() {
+        func makeEstimateWithJetlag(_ minutes: Int?) -> ChronotypeEstimate {
+            var est = makeEstimate(targetMidpointMinute: 240)
+            est.socialJetlagMinutes = minutes
+            return est
+        }
+
+        XCTAssertEqual(makeEstimateWithJetlag(15).socialJetlagCategory, .low)
+        XCTAssertEqual(makeEstimateWithJetlag(30).socialJetlagCategory, .moderate)
+        XCTAssertEqual(makeEstimateWithJetlag(60).socialJetlagCategory, .high)
+        XCTAssertEqual(makeEstimateWithJetlag(91).socialJetlagCategory, .severe)
+        XCTAssertNil(makeEstimateWithJetlag(nil).socialJetlagCategory)
     }
 
     func testBodyClockAlignmentHandlesMidnightWraparound() {

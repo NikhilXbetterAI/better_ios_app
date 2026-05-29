@@ -1,12 +1,29 @@
 # Sleep Chronotype Calculation Implementation Plan
 
-Last updated: 2026-05-18
+Last updated: 2026-05-28
+
+## 2026-05-28 Product Update
+
+The original chronotype calculation layer has been implemented. The next product shape is no longer a small Body Clock card inside Sleep Insights. Cronotype now belongs in its own bottom-tab section between Insights and Protocol.
+
+Current direction:
+
+- Add a dedicated `Cronotype` tab.
+- Keep Sleep Insights lighter with only a compact Cronotype preview/link.
+- Use a 7-90 day wearable data window.
+- Return an early estimate with at least 7 valid wearable nights.
+- Treat 30+ valid nights as stable, and 45+ valid nights with enough weekday/weekend coverage and low exclusions as high confidence.
+- Explain the feature in plain language around the user's best sleep window, usual sleep, and the gap between them.
+- Recommend Better Sleep Formula timing as 60 minutes before the best sleep window.
+- Show when to avoid starting sleep: more than 2 hours before or after the best window start.
+- Compare nights inside the best sleep window against nights outside it for sleep score, restorative sleep, deep sleep, REM sleep, wake time, and total sleep.
+- Keep sleep-window impact language observational, not causal.
 
 ## Goal
 
 Calculate each user's estimated sleep chronotype from recent wearable sleep data using the provided MSFsc method:
 
-- Use the last 30-90 days of sleep sessions.
+- Use the last 7-90 days of sleep sessions.
 - Split nights into workdays and free days.
 - Exclude travel/time-zone disruption, poor-quality wearable data, and implausible durations.
 - Calculate MSW, MSF, SDw, SDf, SDweek, corrected MSFsc, chronotype bucket, and an optimal sleep window.
@@ -134,10 +151,11 @@ Chronotype bucket:
 
 Use explicit confidence rather than silently returning a label:
 
-- Minimum viable result: at least 14 valid nights total, at least 6 workday nights, and at least 3 free-day nights.
-- Low confidence: 14-20 valid nights or only 3-4 free-day nights.
-- Medium confidence: 21-44 valid nights with at least 5 free-day nights.
-- High confidence: 45+ valid nights with at least 8 free-day nights and fewer than 20% excluded nights.
+- Minimum viable result: at least 7 valid nights total.
+- Early estimate: 7-13 valid nights.
+- Good estimate: 14-29 valid nights.
+- Stable: 30-44 valid nights.
+- High confidence: 45+ valid nights with enough weekday/weekend coverage and fewer than 20% excluded nights.
 
 If the user has fewer than the minimum viable inputs, return an `.insufficientData` result with counts and exclusion reasons.
 
@@ -261,9 +279,31 @@ ViewModel -> LocalDataRepositoryProtocol -> ChronotypeCalculationService -> doma
 
 Do not make `ChronotypeCalculationService` depend directly on repositories.
 
-## UI Plan
+## Dedicated Cronotype Tab Plan
 
-Phase 1 UI should be compact:
+Add:
+
+```text
+Better/Features/Cronotype/
+├── CronotypeViewModel.swift
+├── CronotypeTabView.swift
+└── ChronotypeInsightsPreviewCard.swift
+```
+
+The new tab should show:
+
+- Best sleep window vs usual sleep timing.
+- Whether the user is early, late, or on track.
+- Better Sleep Formula timing: best window start minus 60 minutes.
+- Avoid-sleep range: best window start minus/plus 2 hours.
+- Best and worst nights from the current 90-day set.
+- Sleep-window impact on score, restorative, deep, REM, wake time, and duration.
+
+Sleep Insights should only keep a compact preview card that opens the Cronotype tab.
+
+## Previous Compact UI Plan
+
+This was the previous plan and is now superseded by the dedicated tab.
 
 - Add `ChronotypeSummaryCardView` to the Sleep tab or Trends tab.
 - Show:

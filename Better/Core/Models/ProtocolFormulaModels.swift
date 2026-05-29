@@ -14,12 +14,16 @@ nonisolated struct ProtocolFormulaComponent: Codable, Hashable, Sendable, Identi
     var name: String
     var dose: String
     var role: Role
+    /// How many minutes before optimal sleep start to take this supplement.
+    /// Nil means "before bed" (no specific time shown).
+    var sleepTimingOffsetMinutes: Int?
 
-    init(id: UUID = UUID(), name: String, dose: String = "", role: Role = .base) {
+    init(id: UUID = UUID(), name: String, dose: String = "", role: Role = .base, sleepTimingOffsetMinutes: Int? = nil) {
         self.id = id
         self.name = name
         self.dose = dose
         self.role = role
+        self.sleepTimingOffsetMinutes = sleepTimingOffsetMinutes
     }
 }
 

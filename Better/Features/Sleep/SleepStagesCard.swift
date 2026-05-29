@@ -479,7 +479,7 @@ struct SleepStageDetailSheet: View {
                         
                         if let deltaLabel, let avg = baselineAvgSeconds {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("VS USUAL (\(SleepStagesCard.formatHHMM(avg)))")
+                                Text("VS BASELINE (\(SleepStagesCard.formatHHMM(avg)))")
                                     .font(.system(size: 10, weight: .bold, design: .rounded))
                                     .foregroundStyle(BetterColors.mutedText)
                                     .tracking(1.2)
@@ -686,7 +686,7 @@ struct StageHistoryLineChart: View {
                         }
                         .stroke(Color.white.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                         
-                        Text("usual \(Int(baselinePct.rounded()))\(kind == .latency ? "m" : "%")")
+                        Text("baseline \(Int(baselinePct.rounded()))\(kind == .latency ? "m" : "%")")
                             .font(.system(size: 9, weight: .bold, design: .rounded))
                             .foregroundStyle(BetterColors.subtext)
                             .padding(.horizontal, 4)

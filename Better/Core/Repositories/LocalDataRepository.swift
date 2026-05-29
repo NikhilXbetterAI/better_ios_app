@@ -75,11 +75,15 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
             sortBy: [SortDescriptor(\.sleepDateKey)]
         )
 
-        return try modelContext.fetch(descriptor).map { stored in
-            SleepDaySummary(
+        return try modelContext.fetch(descriptor).compactMap { stored in
+            // Store raw scalars needed for the ViewModel to recompute the full
+            // Apple score (with bedtime) once the baseline is available.
+            return SleepDaySummary(
                 sleepDateKey: stored.sleepDateKey,
-                score: try stored.toDomain().qualityScore.overall,
+                score: stored.qualityScoreOverall,
                 totalSleepTime: stored.totalSleepTime,
+                waso: stored.waso,
+                inBedStartDate: stored.inBedStartDate ?? stored.startDate,
                 dataQuality: SleepDataQuality(rawValue: stored.dataQualityRawValue) ?? .noData,
                 hasSession: true
             )
@@ -786,6 +790,78 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.save()
     }
 
+    // MARK: - Dashboard baseline snapshot cache (V4)
+
+    func saveBaselineSnapshot(_ snapshot: DashboardBaselineSnapshotRecord) async throws {
+        let compositeID = "\(snapshot.asOfSleepDateKey)_\(snapshot.windowKind)"
+        let descriptor = FetchDescriptor<StoredDashboardBaselineSnapshot>(
+            predicate: #Predicate { row in row.id == compositeID }
+        )
+        if let existing = try modelContext.fetch(descriptor).first {
+            existing.generatedAt = snapshot.generatedAt
+            existing.validNightCount = snapshot.validNightCount
+            existing.sourceWindowStart = snapshot.sourceWindowStart
+            existing.sourceWindowEnd = snapshot.sourceWindowEnd
+            existing.durationMean = snapshot.durationMean
+            existing.durationStdDev = snapshot.durationStdDev
+            existing.bedtimeMeanHour = snapshot.bedtimeMeanHour
+            existing.bedtimeStdDev = snapshot.bedtimeStdDev
+            existing.remRatioMean = snapshot.remRatioMean
+            existing.deepRatioMean = snapshot.deepRatioMean
+            existing.baselineData = snapshot.baselineData
+        } else {
+            modelContext.insert(StoredDashboardBaselineSnapshot(domain: snapshot))
+        }
+        try modelContext.save()
+    }
+
+    func fetchBaselineSnapshot(asOfSleepDateKey: String, windowKind: String) async throws -> DashboardBaselineSnapshotRecord? {
+        let compositeID = "\(asOfSleepDateKey)_\(windowKind)"
+        var descriptor = FetchDescriptor<StoredDashboardBaselineSnapshot>(
+            predicate: #Predicate { row in row.id == compositeID }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first?.toDomain()
+    }
+
+    func deleteBaselineSnapshots(containingSleepDateKey: String) async throws {
+        let key = containingSleepDateKey
+        let descriptor = FetchDescriptor<StoredDashboardBaselineSnapshot>(
+            predicate: #Predicate { row in row.asOfSleepDateKey == key }
+        )
+        for row in try modelContext.fetch(descriptor) {
+            modelContext.delete(row)
+        }
+        try modelContext.save()
+    }
+
+    // MARK: - Chronotype snapshot cache (V4)
+
+    func saveChronotypeSnapshot(_ snapshot: ChronotypeSnapshotRecord) async throws {
+        let key = snapshot.windowEndSleepDateKey
+        let descriptor = FetchDescriptor<StoredChronotypeSnapshot>(
+            predicate: #Predicate { row in row.windowEndSleepDateKey == key }
+        )
+        if let existing = try modelContext.fetch(descriptor).first {
+            existing.generatedAt = snapshot.generatedAt
+            existing.estimateData = snapshot.estimateData
+            existing.coverageNightCount = snapshot.coverageNightCount
+            existing.windowDays = snapshot.windowDays
+        } else {
+            modelContext.insert(StoredChronotypeSnapshot(domain: snapshot))
+        }
+        try modelContext.save()
+    }
+
+    func fetchChronotypeSnapshot(windowEndSleepDateKey: String) async throws -> ChronotypeSnapshotRecord? {
+        let key = windowEndSleepDateKey
+        var descriptor = FetchDescriptor<StoredChronotypeSnapshot>(
+            predicate: #Predicate { row in row.windowEndSleepDateKey == key }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first?.toDomain()
+    }
+
     func pruneDataOlderThan(days: Int) async throws {
         let cutoff = Date.now.addingTimeInterval(Double(-days) * 86_400)
         let cutoffKey = Self.dateKey(for: cutoff)
@@ -847,6 +923,8 @@ actor LocalDataRepository: LocalDataRepositoryProtocol {
         try modelContext.delete(model: StoredProtocolLogEdit.self)
         try modelContext.delete(model: StoredProtocolBaselineSnapshot.self)
         try modelContext.delete(model: StoredInterventionWindow.self)
+        try modelContext.delete(model: StoredDashboardBaselineSnapshot.self)
+        try modelContext.delete(model: StoredChronotypeSnapshot.self)
 
         // Clear health-sensitive profile fields; keep non-sensitive preferences.
         for profile in try modelContext.fetch(FetchDescriptor<StoredUserProfile>()) {
